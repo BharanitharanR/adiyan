@@ -24,8 +24,10 @@ logs/
 .env
 .env.*
 
-# Installer build artifacts (rebuilt by installer/build_python.sh)
+# Installer build artifacts (rebuilt by installer/build_*.sh)
 installer/build_venv/
 installer/build/
 installer/dist/
 installer/*.spec
+installer/dist_openwa/
+installer/node-runtime/
