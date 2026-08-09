@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Adiyan Control Panel</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #667eea;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .agent {
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .agent:last-child {
+            border-bottom: none;
+        }
+
+        .agent-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .agent-name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .agent-config {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            display: none;
+        }
+
+        .agent-config.open {
+            display: block;
+        }
+
+        .config-row {
+            margin: 8px 0;
+            font-size: 12px;
+        }
+
+        .config-row label {
+            display: block;
+            margin-bottom: 3px;
+            font-weight: 500;
+            color: #667eea;
+        }
+
+        .config-row select,
+        .config-row input {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .config-row input {
+            width: 80px;
+        }
+
+        .config-buttons {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .config-buttons button {
+            flex: 1;
+            padding: 6px 12px;
+            font-size: 11px;
+        }
+
+        .toggle {
+            width: 50px;
+            height: 28px;
+            background: #ccc;
+            border-radius: 14px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.3s;
+        }
+
+        .toggle.enabled {
+            background: #4CAF50;
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s;
+        }
+
+        .toggle.enabled::after {
+            left: 24px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+
+        .logs {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Monaco', monospace;
+            font-size: 12px;
+            height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+
+        .log-line {
+            margin: 2px 0;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-badge.enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-badge.disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background: #764ba2;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 Adiyan Control Panel</h1>
+        <p>Orchestrator Pipeline Management</p>
+    </div>
+
+    <div class="container">
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value" id="agent-count">7</div>
+                <div class="stat-label">Agents</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="enabled-count">7</div>
+                <div class="stat-label">Enabled</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="interaction-count">0</div>
+                <div class="stat-label">Interactions</div>
+            </div>
+        </div>
+
+        <div id="message" style="display: none;"></div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>📱 WhatsApp Connection</h2>
+                <div id="whatsapp-status" style="text-align: center; padding: 20px;">
+                    <p id="wa-status-text">Connecting...</p>
+                    <div id="qr-code-container" style="margin: 20px 0; min-height: 300px; display: flex; align-items: center; justify-content: center; background: #f5f5f5; border-radius: 10px;">
+                        <p style="color: #999;">Waiting for QR code...</p>
+                    </div>
+                    <p style="font-size: 12px; color: #999;">Scan with WhatsApp to connect</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>📊 Pipeline Agents</h2>
+                <div id="agents-list"></div>
+                <button onclick="location.reload()">🔄 Refresh</button>
+            </div>
+
+            <div class="card">
+                <h2>⚙️ System Settings</h2>
+                <div style="font-size: 12px;">
+                    <p><strong>Ollama URL:</strong> <span id="ollama-url">-</span></p>
+                    <p><strong>Qdrant URL:</strong> <span id="qdrant-url">-</span></p>
+                    <p><strong>RabbitMQ URL:</strong> <span id="rabbitmq-url">-</span></p>
+                    <p><strong>Whitelist Enabled:</strong> <span id="whitelist-enabled">-</span></p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>📝 Recent Interactions</h2>
+                <div id="history-list" style="font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Live Logs</h2>
+            <div class="logs" id="logs-container">
+                <div class="log-line">Connecting to orchestrator...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5001/api';
+        let availableModels = [];
+
+        async function loadOllamaModels() {
+            try {
+                const response = await fetch(`${API_URL}/ollama/models`);
+                const data = await response.json();
+                availableModels = data.models || [];
+
+                // Update all model dropdowns
+                document.querySelectorAll('[id^="model-"]').forEach(select => {
+                    const currentValue = select.value;
+                    select.innerHTML = availableModels.map(m =>
+                        `<option value="${m}" ${m === currentValue ? 'selected' : ''}>${m}</option>`
+                    ).join('');
+                });
+
+                if (availableModels.length === 0) {
+                    document.querySelectorAll('[id^="model-"]').forEach(select => {
+                        select.innerHTML = '<option value="">No models available - check Ollama</option>';
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load Ollama models:', error);
+            }
+        }
+
+        async function loadAgents() {
+            try {
+                console.log('Fetching agents from:', `${API_URL}/agents`);
+                const response = await fetch(`${API_URL}/agents`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const agents = await response.json();
+                console.log('Agents loaded:', agents);
+
+                const list = document.getElementById('agents-list');
+                let enabledCount = 0;
+
+                list.innerHTML = Object.entries(agents).map(([id, agent]) => {
+                    if (agent.enabled) enabledCount++;
+                    const temp = agent.temperature !== undefined ? agent.temperature : 0.7;
+                    const timeout = agent.timeout !== undefined ? agent.timeout : 60;
+                    return `
+                        <div class="agent">
+                            <div class="agent-header">
+                                <div>
+                                    <div class="agent-name">${agent.name}</div>
+                                    <div style="font-size: 11px; color: #999;">Tools: ${agent.tools.join(', ')}</div>
+                                </div>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <span class="status-badge ${agent.enabled ? 'enabled' : 'disabled'}">
+                                        ${agent.enabled ? '✓ ON' : '○ OFF'}
+                                    </span>
+                                    <div class="toggle ${agent.enabled ? 'enabled' : ''}"
+                                         onclick="toggleAgent('${id}', this)"></div>
+                                    <button onclick="toggleConfig('${id}')" style="padding: 4px 10px; font-size: 11px;">⚙️</button>
+                                </div>
+                            </div>
+                            <div class="agent-config" id="config-${id}">
+                                <div class="config-row">
+                                    <label>Model</label>
+                                    <select id="model-${id}" onchange="updateAgentModel('${id}')">
+                                        <option value="">Loading models...</option>
+                                    </select>
+                                </div>
+                                <div class="config-row">
+                                    <label>Temperature</label>
+                                    <input type="number" id="temp-${id}" min="0" max="1" step="0.1" value="${temp}" />
+                                </div>
+                                <div class="config-row">
+                                    <label>Timeout (s)</label>
+                                    <input type="number" id="timeout-${id}" min="10" max="600" value="${timeout}" />
+                                </div>
+                                <div class="config-buttons">
+                                    <button onclick="saveAgentConfig('${id}')">💾 Save</button>
+                                    <button onclick="toggleConfig('${id}')" style="background: #999;">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                document.getElementById('enabled-count').textContent = enabledCount;
+                document.getElementById('agent-count').textContent = Object.keys(agents).length;
+
+            } catch (error) {
+                console.error('Failed to load agents:', error);
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch(`${API_URL}/config`);
+                const config = await response.json();
+
+                document.getElementById('ollama-url').textContent = config.ollama_url;
+                document.getElementById('qdrant-url').textContent = config.qdrant_url;
+                document.getElementById('rabbitmq-url').textContent = config.rabbitmq_url;
+                document.getElementById('whitelist-enabled').textContent = config.whitelist_enabled ? '✓' : '✗';
+
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const response = await fetch(`${API_URL}/history?limit=5`);
+                const data = await response.json();
+
+                const list = document.getElementById('history-list');
+                if (data.records.length === 0) {
+                    list.innerHTML = '<p style="color: #999;">No interactions yet</p>';
+                } else {
+                    list.innerHTML = data.records.map(r => `
+                        <div style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <strong>${r.contact_name}</strong>
+                            <br><span style="color: #999;">→ ${r.persona || 'system'}</span>
+                            <br><span style="color: #ccc; font-size: 11px;">${new Date(r.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                    `).join('');
+
+                    document.getElementById('interaction-count').textContent = data.records.length;
+                }
+
+            } catch (error) {
+                console.error('Failed to load history:', error);
+            }
+        }
+
+        async function loadLogs() {
+            try {
+                const response = await fetch(`${API_URL}/logs`);
+                const data = await response.json();
+
+                const container = document.getElementById('logs-container');
+                container.innerHTML = data.logs.map(log =>
+                    `<div class="log-line">${log.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`
+                ).join('');
+
+                container.scrollTop = container.scrollHeight;
+
+            } catch (error) {
+                console.error('Failed to load logs:', error);
+            }
+        }
+
+        async function toggleAgent(agentId, element) {
+            const isEnabled = element.classList.contains('enabled');
+            const endpoint = isEnabled ? 'disable' : 'enable';
+
+            try {
+                const response = await fetch(`${API_URL}/agents/${agentId}/${endpoint}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showMessage(`Agent ${isEnabled ? 'disabled' : 'enabled'}`, 'success');
+                    element.classList.toggle('enabled');
+                    loadAgents();
+                } else {
+                    showMessage('Failed to toggle agent', 'error');
+                }
+
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        function showMessage(text, type) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = type;
+            msg.style.display = 'block';
+            setTimeout(() => msg.style.display = 'none', 3000);
+        }
+
+        function toggleConfig(agentId) {
+            const config = document.getElementById(`config-${agentId}`);
+            config.classList.toggle('open');
+        }
+
+        async function saveAgentConfig(agentId) {
+            const model = document.getElementById(`model-${agentId}`).value;
+            const temperature = parseFloat(document.getElementById(`temp-${agentId}`).value);
+            const timeout = parseInt(document.getElementById(`timeout-${agentId}`).value);
+
+            if (!model) {
+                showMessage('Please select a model', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/agents/${agentId}/model`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model, temperature, timeout })
+                });
+
+                if (response.ok) {
+                    showMessage(`✓ Configured ${agentId} to use ${model}`, 'success');
+                    toggleConfig(agentId);
+                    loadAgents();
+                } else {
+                    showMessage('Failed to save configuration', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function updateAgentModel(agentId) {
+            const model = document.getElementById(`model-${agentId}`).value;
+            if (!model) return;
+
+            const temperature = parseFloat(document.getElementById(`temp-${agentId}`).value);
+            const timeout = parseInt(document.getElementById(`timeout-${agentId}`).value);
+
+            try {
+                await fetch(`${API_URL}/agents/${agentId}/model`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model, temperature, timeout })
+                });
+            } catch (error) {
+                console.error('Failed to update model:', error);
+            }
+        }
+
+        // WhatsApp QR loader - fetch from Node.js service
+        function loadWhatsAppQR() {
+            fetch(`${API_URL}/whatsapp/status`)
+                .then(r => r.json())
+                .then(status => {
+                    const container = document.getElementById('qr-code-container');
+                    const statusText = document.getElementById('wa-status-text');
+
+                    if (status.connected) {
+                        statusText.textContent = '✅ WhatsApp Connected!';
+                        statusText.style.color = '#4CAF50';
+                        container.innerHTML = '<p style="color: #4CAF50; font-weight: bold;">✓ Ready to receive messages</p>';
+                    } else if (status.hasQR) {
+                        statusText.textContent = '📱 Scan QR Code';
+                        statusText.style.color = '#1976D2';
+                        console.log('🔍 Fetching QR image from:', `${API_URL}/whatsapp/qr/image`);
+
+                        // Fetch the actual QR image
+                        fetch(`${API_URL}/whatsapp/qr/image?t=${Date.now()}`)
+                            .then(r => {
+                                console.log('📥 API response status:', r.status);
+                                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                                return r.json();
+                            })
+                            .then(data => {
+                                console.log('📦 API response data:', { hasQR: !!data.qr, length: data.qr ? data.qr.length : 0 });
+                                if (data.qr) {
+                                    console.log('✨ Creating img element...');
+                                    const img = document.createElement('img');
+                                    img.src = data.qr;
+                                    img.alt = 'WhatsApp QR Code';
+                                    img.style.maxWidth = '250px';
+                                    img.style.maxHeight = '250px';
+                                    img.style.border = '2px solid #ddd';
+                                    img.style.borderRadius = '8px';
+                                    img.onload = () => console.log('✅ QR image loaded successfully');
+                                    img.onerror = (e) => console.error('❌ Failed to load QR image:', e);
+                                    container.innerHTML = '';
+                                    container.appendChild(img);
+                                    console.log('✨ IMG appended to container');
+                                } else {
+                                    console.error('❌ No QR data in response:', data);
+                                    container.innerHTML = '<p style="color: #999;">No QR data received</p>';
+                                }
+                            })
+                            .catch(err => {
+                                console.error('❌ QR image fetch error:', err.message);
+                                container.innerHTML = `<p style="color: #d32f2f;">Error: ${err.message}</p>`;
+                            });
+                    } else {
+                        statusText.textContent = '⏳ Initializing...';
+                        container.innerHTML = '<p style="color: #999;">Starting WhatsApp Web...</p>';
+                    }
+                })
+                .catch(err => {
+                    console.error('Status Error:', err);
+                    document.getElementById('qr-code-container').innerHTML = '<p style="color: #d32f2f;">⚠️ WhatsApp service not running on port 3001</p>';
+                    document.getElementById('wa-status-text').textContent = '❌ Service offline';
+                });
+        }
+
+        // Load data on startup (order matters!)
+        loadAgents().then(() => loadOllamaModels());
+        loadConfig();
+        loadHistory();
+        loadLogs();
+        loadWhatsAppQR();
+
+        // Refresh logs every 2 seconds
+        setInterval(loadLogs, 2000);
+        setInterval(loadHistory, 5000);
+        // Refresh WhatsApp QR every 3 seconds
+        setInterval(loadWhatsAppQR, 3000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Third-party clone (has its own git history, ~1.5GB with node_modules)
+penwa/
+
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local runtime data / logs
+logs/
+*.log
+.wwebjs_auth*/
+.wwebjs_cache/
+
+# OS
+.DS_Store
+
+# Secrets
+.env
+.env.*

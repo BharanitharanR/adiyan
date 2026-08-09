@@ -1,0 +1,299 @@
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
+from config.control_plane import ControlPlane
+import logging
+from pathlib import Path
+import requests
+import pika
+import json
+import uuid
+import time
+import io
+import qrcode
+
+# Setup
+app = Flask(__name__, static_folder=str(Path(__file__).parent), static_url_path='')
+CORS(app)
+control_plane = ControlPlane()
+
+logger = logging.getLogger('ControlPanel')
+
+def get_ollama_models():
+    """Fetch available models from Ollama"""
+    try:
+        ollama_url = control_plane.config.ollama_url
+        response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return [model['name'] for model in data.get('models', [])]
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to fetch Ollama models: {e}")
+        return []
+
+# ============= API ENDPOINTS =============
+
+@app.route('/', methods=['GET'])
+def dashboard():
+    """Serve dashboard"""
+    dashboard_path = Path(__file__).parent / 'dashboard.html'
+    return send_file(dashboard_path, mimetype='text/html')
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check"""
+    return jsonify({'status': 'ok', 'service': 'Adiyan Control Plane'})
+
+@app.route('/webhook/openwa', methods=['POST'])
+def openwa_webhook():
+    """Receive webhooks from OpenWA and process through orchestrator"""
+    try:
+        webhook_data = request.get_json()
+
+        if not webhook_data:
+            logger.warning("Empty webhook data received")
+            return jsonify({'status': 'received'}), 202
+
+        # Log webhook received
+        event = webhook_data.get('event', 'unknown')
+        logger.info(f"📬 Received OpenWA webhook: {event}")
+
+        # For now, just acknowledge
+        # TODO: Process through orchestrator asynchronously
+        return jsonify({'status': 'received', 'event': event}), 202
+
+    except Exception as e:
+        logger.error(f"❌ Webhook error: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ollama/models', methods=['GET'])
+def get_models():
+    """Get list of available Ollama models"""
+    models = get_ollama_models()
+    return jsonify({'models': models})
+
+@app.route('/api/agents', methods=['GET'])
+def get_agents():
+    """Get all agents and their configuration"""
+    agents = {}
+    for name, config in control_plane.get_all_configs().items():
+        agents[name] = {
+            'name': config.name,
+            'enabled': config.enabled,
+            'tools': config.tools,
+            'model': config.model,
+            'temperature': config.temperature,
+            'timeout': config.timeout
+        }
+    return jsonify(agents)
+
+@app.route('/api/agents/<agent_name>', methods=['GET'])
+def get_agent(agent_name):
+    """Get single agent configuration"""
+    config = control_plane.get_agent_config(agent_name)
+    if not config:
+        return jsonify({'error': f'Agent {agent_name} not found'}), 404
+
+    return jsonify({
+        'name': config.name,
+        'enabled': config.enabled,
+        'tools': config.tools,
+        'model': config.model,
+        'temperature': config.temperature,
+        'timeout': config.timeout,
+        'custom_params': config.custom_params
+    })
+
+@app.route('/api/agents/<agent_name>/enable', methods=['POST'])
+def enable_agent(agent_name):
+    """Enable agent"""
+    if control_plane.enable_agent(agent_name):
+        return jsonify({'status': 'enabled', 'agent': agent_name})
+    return jsonify({'error': 'Failed to enable agent'}), 400
+
+@app.route('/api/agents/<agent_name>/disable', methods=['POST'])
+def disable_agent(agent_name):
+    """Disable agent"""
+    if control_plane.disable_agent(agent_name):
+        return jsonify({'status': 'disabled', 'agent': agent_name})
+    return jsonify({'error': 'Failed to disable agent'}), 400
+
+@app.route('/api/agents/<agent_name>/tools', methods=['PUT'])
+def update_agent_tools(agent_name):
+    """Update agent tools"""
+    data = request.json
+    tools = data.get('tools', [])
+
+    if control_plane.update_agent_tools(agent_name, tools):
+        return jsonify({'status': 'updated', 'agent': agent_name, 'tools': tools})
+    return jsonify({'error': 'Failed to update tools'}), 400
+
+@app.route('/api/agents/<agent_name>/model', methods=['PUT'])
+def update_agent_model(agent_name):
+    """Update agent model configuration"""
+    data = request.json
+    model = data.get('model')
+    temperature = data.get('temperature', 0.7)
+    timeout = data.get('timeout', 60)
+
+    config = control_plane.get_agent_config(agent_name)
+    if config:
+        config.model = model
+        config.temperature = temperature
+        config.timeout = timeout
+        control_plane.save_config()
+        return jsonify({
+            'status': 'updated',
+            'agent': agent_name,
+            'model': model,
+            'temperature': temperature,
+            'timeout': timeout
+        })
+    return jsonify({'error': 'Agent not found'}), 404
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """Get entire pipeline configuration"""
+    return jsonify(control_plane.config.to_dict())
+
+@app.route('/api/config/system', methods=['PUT'])
+def update_system_config():
+    """Update system-level settings"""
+    data = request.json
+
+    for key, value in data.items():
+        if control_plane.update_system_setting(key, value):
+            pass
+
+    return jsonify({'status': 'updated', 'config': control_plane.config.to_dict()})
+
+@app.route('/api/config/export', methods=['GET'])
+def export_config():
+    """Export configuration as JSON"""
+    return jsonify(control_plane.config.to_dict())
+
+@app.route('/api/test-message', methods=['POST'])
+def test_message():
+    """Test endpoint - send a message through the orchestrator"""
+    data = request.json
+
+    # Validate input
+    if not data or 'message_body' not in data:
+        return jsonify({'error': 'message_body is required'}), 400
+
+    contact_name = data.get('contact_name', 'TestUser')
+    lid = data.get('lid', 'test_' + str(int(time.time())))
+    message_body = data.get('message_body')
+
+    # Publish to RabbitMQ for processing
+    try:
+        connection = pika.BlockingConnection(
+            pika.URLParameters(control_plane.config.rabbitmq_url)
+        )
+        channel = connection.channel()
+        channel.exchange_declare(exchange='adiyan', exchange_type='topic', durable=True)
+
+        message = {
+            'message_id': str(uuid.uuid4()),
+            'contact_name': contact_name,
+            'lid': lid,
+            'message_body': message_body
+        }
+
+        channel.basic_publish(
+            exchange='adiyan',
+            routing_key='messages.incoming',
+            body=json.dumps(message),
+            properties=pika.BasicProperties(delivery_mode=2)
+        )
+
+        connection.close()
+
+        return jsonify({
+            'status': 'sent',
+            'message_id': message['message_id'],
+            'contact': contact_name,
+            'message': message_body
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to send test message: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    """Get recent logs"""
+    log_file = Path.home() / '.Adiyan' / 'orchestrator.log'
+    if log_file.exists():
+        with open(log_file, 'r') as f:
+            lines = f.readlines()[-50:]  # Last 50 lines
+            return jsonify({'logs': lines})
+    return jsonify({'logs': []})
+
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    """Get interaction history"""
+    limit = request.args.get('limit', 10, type=int)
+    history_file = Path.home() / '.Adiyan' / 'interaction_history.jsonl'
+
+    if history_file.exists():
+        import json
+        with open(history_file, 'r') as f:
+            lines = f.readlines()
+            records = [json.loads(line) for line in lines[-limit:]]
+            return jsonify({'records': records})
+
+    return jsonify({'records': []})
+
+# ============= ERROR HANDLERS =============
+
+@app.route('/api/whatsapp/status', methods=['GET'])
+def whatsapp_status():
+    """Check WhatsApp Node.js service status"""
+    try:
+        response = requests.get('http://localhost:3001/api/status', timeout=5)
+        if response.status_code == 200:
+            return jsonify(response.json())
+        return jsonify({'connected': False, 'hasQR': False, 'message': 'Service error'}), 503
+    except:
+        return jsonify({'connected': False, 'hasQR': False, 'message': 'Service not running'}), 503
+
+@app.route('/api/whatsapp/qr/image', methods=['GET'])
+def whatsapp_qr_image():
+    """Fetch QR code from Node.js WhatsApp service"""
+    try:
+        # Fetch QR from Node.js service
+        response = requests.get('http://localhost:3001/api/qr', timeout=5)
+        if response.status_code != 200:
+            return jsonify({'error': 'WhatsApp service unavailable'}), 503
+
+        data = response.json()
+
+        # If connected, return connected status
+        if data.get('connected'):
+            return jsonify({'error': 'Already connected'}), 200
+
+        # If QR available, return as data URL
+        if data.get('qr'):
+            # Return the data URL directly as JSON
+            return jsonify({'qr': data['qr']})
+
+        return jsonify({'error': 'No QR available yet'}), 503
+
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': 'WhatsApp service not running on port 3001'}), 503
+    except Exception as e:
+        logger.error(f"Failed to fetch QR image: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({'error': 'Server error', 'message': str(error)}), 500
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    app.run(host='0.0.0.0', port=5000, debug=False)

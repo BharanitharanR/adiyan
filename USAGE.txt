@@ -1,0 +1,145 @@
+ADIYAN CONTROL PANEL - MODEL CONFIGURATION GUIDE
+================================================
+
+1. START THE ORCHESTRATOR
+
+   Terminal 1: Start Ollama
+   $ ollama serve
+
+   Terminal 2: Start Adiyan
+   $ cd /Users/bharani/Desktop/aiAgentCompaction/Adiyan
+   $ python main.py
+
+   Terminal 3 (optional): Start RabbitMQ
+   $ rabbitmq-server
+
+2. OPEN DASHBOARD
+
+   Open browser: http://localhost:5000
+
+3. CONFIGURE AGENTS
+
+   For each Agent (Parser, Validator, Router, LLM, Synthesizer, Storage, Publisher):
+
+   a) Click the ⚙️ button next to the agent
+
+   b) A configuration panel opens with:
+      - Model dropdown (shows all available Ollama models)
+      - Temperature slider (0.0 - 1.0)
+      - Timeout setting (seconds)
+
+   c) Select a model from dropdown
+      (If dropdown is empty, check that Ollama is running)
+
+   d) Adjust temperature and timeout if needed
+      (Most agents use LLM Agent's config)
+
+   e) Click "💾 Save" button
+
+   f) Agent will now use your selected configuration
+
+4. ENABLE/DISABLE AGENTS
+
+   Click the toggle switch next to each agent to enable/disable
+   - Green = Enabled (✓)
+   - Gray = Disabled (○)
+
+5. MONITOR EXECUTION
+
+   - View recent interactions in "Recent Interactions" section
+   - Watch live logs at bottom of dashboard
+   - Logs update every 2 seconds
+
+6. AVAILABLE MODELS
+
+   The dashboard automatically fetches available models from Ollama.
+   Common models:
+   - qwen3:8b-16k
+   - qwen3:8b-64k
+   - qwen3-hermes (if you created it)
+   - mistral
+   - llama2
+
+   To see your local models, run in terminal:
+   $ ollama list
+
+7. CONFIGURATION PERSISTENCE
+
+   All configurations are saved to:
+   ~/.Adiyan/pipeline.json
+
+   This file is auto-updated when you save agent configurations.
+
+8. TESTING ORCHESTRATOR
+
+   Send a test message via cURL:
+
+   $ curl -X POST http://localhost:5000/api/test-message \
+     -H "Content-Type: application/json" \
+     -d '{
+       "contact_name": "TestUser",
+       "lid": "1234567890",
+       "message_body": "How can I improve my productivity?"
+     }'
+
+   Watch the dashboard logs to see the 7-stage pipeline execute.
+
+9. TROUBLESHOOTING
+
+   Q: Models dropdown is empty
+   A: Make sure Ollama is running (ollama serve)
+
+   Q: Agent configuration not saving
+   A: Check that http://localhost:5000/api/agents/LLMAgent/model is accessible
+
+   Q: Agent using wrong model
+   A: Refresh page (Ctrl+R) to reload latest config
+
+   Q: Logs not updating
+   A: Check that ~/.Adiyan/orchestrator.log exists and is writable
+
+10. CUSTOMIZING AGENTS
+
+    To create new models with custom contexts:
+
+    $ ollama create my-model -f /path/to/modelfile
+
+    Then reload dashboard - new model will appear in dropdowns.
+
+    Example Modelfile:
+    FROM qwen3:8b-16k
+    SYSTEM "You are a helpful assistant focused on..."
+
+PIPELINE FLOW
+=============
+
+Message Input
+    ↓
+[Stage 1: Parser Agent]
+  - Extract contact_name, lid, message
+    ↓
+[Stage 2: Validator Agent]
+  - Check if registered
+  - Detect register/unregister commands
+    ↓
+[Stage 3: Router Agent]
+  - Select persona
+  - Load system prompt
+    ↓
+[Stage 4: LLM Agent] ← Uses CONFIGURED MODEL
+  - Call Ollama with system prompt
+  - Generate response
+    ↓
+[Stage 5: Synthesizer Agent]
+  - Format response
+  - Split into chunks
+    ↓
+[Stage 6: Storage Agent]
+  - Save to file
+  - Store in Qdrant
+    ↓
+[Stage 7: Publisher Agent]
+  - Send WhatsApp reply
+  - Publish to RabbitMQ
+    ↓
+Response Output
