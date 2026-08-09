@@ -87,9 +87,10 @@ class ControlPlane:
         # Default config with 7 agents
         return self._create_default_config()
 
-    def _create_default_config(self) -> PipelineConfig:
-        """Create default 7-agent configuration"""
-        agents = {
+    @staticmethod
+    def _default_agents() -> Dict[str, AgentConfig]:
+        """The canonical 7-agent defaults - the only place this schema is defined."""
+        return {
             'parser': AgentConfig(
                 name='Parser Agent',
                 enabled=True,
@@ -128,15 +129,25 @@ class ControlPlane:
             )
         }
 
-        config = PipelineConfig(agents=agents)
+    def _create_default_config(self) -> PipelineConfig:
+        """Create default 7-agent configuration"""
+        config = PipelineConfig(agents=self._default_agents())
         self.save_config(config)
         return config
 
     def _dict_to_config(self, data: Dict) -> PipelineConfig:
-        """Convert dict to PipelineConfig"""
-        agents = {}
+        """Convert dict to PipelineConfig.
+
+        Agent entries are merged over the defaults rather than required to be complete: a
+        pre-seeded file (e.g. the installer writing just {"agents": {"llm": {"model": "..."}}}
+        before this ever runs) is a valid partial config, not a broken one - only the fields it
+        actually specifies should override the default for that agent.
+        """
+        defaults = self._default_agents()
+        agents = dict(defaults)
         for name, agent_data in data.get('agents', {}).items():
-            agents[name] = AgentConfig(**agent_data)
+            base = asdict(defaults[name]) if name in defaults else {}
+            agents[name] = AgentConfig(**{**base, **agent_data})
 
         return PipelineConfig(
             agents=agents,
