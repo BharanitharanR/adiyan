@@ -39,6 +39,13 @@ def http_json(method, url, api_key=None, body=None, timeout=10):
         # discards it by default and just raises the status code, which isn't enough to debug with.
         detail = e.read().decode(errors='replace')
         raise RuntimeError(f"{method} {url} -> HTTP {e.code}: {detail}") from None
+    except (urllib.error.URLError, OSError) as e:
+        # Connection-level failure (refused, reset, timed out) rather than an HTTP error response -
+        # most commonly the OpenWA process itself dying mid-request (e.g. killed by the OS under
+        # memory pressure while launching Chromium for a session). Not an HTTPError, so it has to be
+        # caught separately - otherwise it crashes with a raw traceback and skips the retry loop
+        # in ensure_started() entirely instead of getting a chance to recover.
+        raise RuntimeError(f"{method} {url} -> connection failed: {e}") from None
 
 
 def wait_for_openwa(base_url, timeout_s=60):
@@ -88,7 +95,22 @@ def ensure_started(base_url, api_key, session_id, status):
         except RuntimeError as e:
             if attempt == attempts:
                 raise
-            log(f"Start attempt {attempt}/{attempts} failed ({e}) - retrying in 2s...")
+            # Tell a transient app-level hiccup (still up, briefly 500s) apart from the process
+            # actually being gone (e.g. killed by the OS under memory pressure while launching
+            # Chromium) - the latter needs a very different diagnosis than "just retrying".
+            try:
+                http_json('GET', f'{base_url}/api/health', timeout=3)
+                still_up = True
+            except Exception:
+                still_up = False
+            if not still_up:
+                log(f"Start attempt {attempt}/{attempts} failed ({e}) - and OpenWA's health check "
+                    f"is ALSO failing, meaning the process itself died (not just this request). On an "
+                    f"8GB machine this is most likely the OS killing it under memory pressure while it "
+                    f"tries to launch Chromium for the session. Retrying anyway in case something "
+                    f"restarts it, but this may need more free RAM (close other apps) to succeed.")
+            else:
+                log(f"Start attempt {attempt}/{attempts} failed ({e}) - retrying in 2s...")
             time.sleep(2)
 
 
