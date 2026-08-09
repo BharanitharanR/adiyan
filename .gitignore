@@ -23,3 +23,9 @@ logs/
 # Secrets
 .env
 .env.*
+
+# Installer build artifacts (rebuilt by installer/build_python.sh)
+installer/build_venv/
+installer/build/
+installer/dist/
+installer/*.spec
