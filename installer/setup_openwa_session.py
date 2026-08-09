@@ -62,16 +62,31 @@ def wait_for_bootstrap_key(openwa_dir: Path, timeout_s=30) -> str:
     raise RuntimeError(f"Bootstrap key file did not appear within {timeout_s}s: {key_file}")
 
 
+def ensure_started(base_url, api_key, session_id, status):
+    # A session sits in CREATED (or DISCONNECTED/ACTION_REQUIRED) until
+    # explicitly started - it will never produce a QR code otherwise.
+    # AUTO_START_SESSIONS only reconnects sessions that were PREVIOUSLY
+    # authenticated; it does nothing for a session that's never been linked.
+    if status in ('ready', 'qr_ready', 'initializing', 'authenticating'):
+        log(f"Session status is '{status}' - already starting/started")
+        return
+    log(f"Session status is '{status}' - starting it...")
+    http_json('POST', f'{base_url}/api/sessions/{session_id}/start', api_key=api_key)
+    log("Start requested")
+
+
 def find_or_create_session(base_url, api_key, session_name) -> str:
     sessions = http_json('GET', f'{base_url}/api/sessions', api_key=api_key)
     for s in sessions:
         if s.get('name') == session_name:
-            log(f"Session '{session_name}' already exists (id={s['id']})")
+            log(f"Session '{session_name}' already exists (id={s['id']}, status={s.get('status')})")
+            ensure_started(base_url, api_key, s['id'], s.get('status'))
             return s['id']
 
     log(f"Creating session '{session_name}'...")
     created = http_json('POST', f'{base_url}/api/sessions', api_key=api_key, body={'name': session_name})
     log(f"Created session '{session_name}' (id={created['id']})")
+    ensure_started(base_url, api_key, created['id'], created.get('status'))
     return created['id']
 
 

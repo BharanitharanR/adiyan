@@ -247,41 +247,88 @@ def get_history():
 
 # ============= ERROR HANDLERS =============
 
+_openwa_session_id_cache = None
+
+def _resolve_openwa_session_id():
+    """Resolve and cache the OpenWA session UUID for the configured session name."""
+    global _openwa_session_id_cache
+    if _openwa_session_id_cache:
+        return _openwa_session_id_cache
+
+    cfg = control_plane.config
+    resp = requests.get(
+        f"{cfg.openwa_url}/api/sessions",
+        headers={'X-API-Key': cfg.openwa_api_key},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    for s in resp.json():
+        if s.get('name') == cfg.openwa_session_name:
+            _openwa_session_id_cache = s['id']
+            return s['id']
+    raise RuntimeError(f"No OpenWA session named '{cfg.openwa_session_name}'")
+
+def _openwa_session_status():
+    cfg = control_plane.config
+    session_id = _resolve_openwa_session_id()
+    resp = requests.get(
+        f"{cfg.openwa_url}/api/sessions/{session_id}",
+        headers={'X-API-Key': cfg.openwa_api_key},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 @app.route('/api/whatsapp/status', methods=['GET'])
 def whatsapp_status():
-    """Check WhatsApp Node.js service status"""
+    """Check the OpenWA session's connection status"""
     try:
-        response = requests.get('http://localhost:3001/api/status', timeout=5)
-        if response.status_code == 200:
-            return jsonify(response.json())
-        return jsonify({'connected': False, 'hasQR': False, 'message': 'Service error'}), 503
-    except:
-        return jsonify({'connected': False, 'hasQR': False, 'message': 'Service not running'}), 503
+        session = _openwa_session_status()
+        status = session.get('status')
+        return jsonify({
+            'connected': status == 'ready',
+            'hasQR': status == 'qr_ready',
+            'status': status,
+            'phone': session.get('phone'),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to fetch OpenWA session status: {e}")
+        return jsonify({'connected': False, 'hasQR': False, 'message': 'OpenWA not reachable'}), 503
 
 @app.route('/api/whatsapp/qr/image', methods=['GET'])
 def whatsapp_qr_image():
-    """Fetch QR code from Node.js WhatsApp service"""
+    """Fetch the current QR code from OpenWA, as a ready-to-display data URL"""
     try:
-        # Fetch QR from Node.js service
-        response = requests.get('http://localhost:3001/api/qr', timeout=5)
-        if response.status_code != 200:
-            return jsonify({'error': 'WhatsApp service unavailable'}), 503
+        cfg = control_plane.config
+        session_id = _resolve_openwa_session_id()
 
-        data = response.json()
+        status_resp = requests.get(
+            f"{cfg.openwa_url}/api/sessions/{session_id}",
+            headers={'X-API-Key': cfg.openwa_api_key},
+            timeout=5,
+        )
+        status_resp.raise_for_status()
+        status = status_resp.json().get('status')
 
-        # If connected, return connected status
-        if data.get('connected'):
+        if status == 'ready':
             return jsonify({'error': 'Already connected'}), 200
+        if status != 'qr_ready':
+            return jsonify({'error': f'QR not ready yet (status: {status})'}), 503
 
-        # If QR available, return as data URL
-        if data.get('qr'):
-            # Return the data URL directly as JSON
-            return jsonify({'qr': data['qr']})
+        qr_resp = requests.get(
+            f"{cfg.openwa_url}/api/sessions/{session_id}/qr",
+            headers={'X-API-Key': cfg.openwa_api_key},
+            timeout=5,
+        )
+        qr_resp.raise_for_status()
+        qr_code = qr_resp.json().get('qrCode')
+        if not qr_code:
+            return jsonify({'error': 'No QR available yet'}), 503
 
-        return jsonify({'error': 'No QR available yet'}), 503
+        return jsonify({'qr': qr_code})
 
     except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'WhatsApp service not running on port 3001'}), 503
+        return jsonify({'error': f'OpenWA not reachable at {control_plane.config.openwa_url}'}), 503
     except Exception as e:
         logger.error(f"Failed to fetch QR image: {e}")
         return jsonify({'error': str(e)}), 500
