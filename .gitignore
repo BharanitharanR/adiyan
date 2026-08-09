@@ -31,3 +31,5 @@ installer/dist/
 installer/*.spec
 installer/dist_openwa/
 installer/node-runtime/
+installer/release_stage/
+installer/*.zip

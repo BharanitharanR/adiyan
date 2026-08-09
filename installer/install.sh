@@ -120,7 +120,7 @@ main() {
 
     log ""
     log "Installation complete."
-    log "Open 'Adiyan' from Applications to start, then scan the QR code to link WhatsApp."
+    log "Run: bash \"$INSTALLER_DIR/launch_adiyan.sh\" to start, then scan the QR code to link WhatsApp."
 }
 
 main "$@"
