@@ -70,7 +70,9 @@ def main():
         write_model_to_pipeline_config(chosen['name'])
         print(f"Wrote model choice to {PIPELINE_FILE}", file=sys.stderr)
 
-    print(chosen['name'])
+    # setup_ollama.sh consumes this: pulls `base`, then builds the local
+    # `name` variant (extended context) from it.
+    print(f"{chosen['base']} {chosen['name']}")
 
 
 if __name__ == '__main__':
