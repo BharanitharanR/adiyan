@@ -47,7 +47,7 @@ class LLMAgent(BaseAgent):
 
             response = await self._call_ollama(
                 prompt=state.message_body,
-                system_prompt=self.config.get('system_prompt', '')
+                system_prompt=state.metadata.get('system_prompt', '')
             )
 
             elapsed = time.time() - start_time
