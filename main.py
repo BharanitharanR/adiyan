@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger('Adiyan')
 
 # Import components
-from config.control_plane import ControlPlane
+from config.control_plane import ControlPlane, AGENT_CLASS_TO_KEY
 from core.orchestrator import Orchestrator
 from core.base_agent import AgentState
 from agents.parser_agent import ParserAgent
@@ -69,7 +69,7 @@ class AdiyanService:
         config_dict = self.control_plane.config.__dict__
 
         # Get agent-specific configs
-        llm_config = self.control_plane.get_agent_config('LLMAgent')
+        llm_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY['LLMAgent'])
 
         agents = [
             ParserAgent(config_dict),
@@ -84,7 +84,7 @@ class AdiyanService:
         self.orchestrator = Orchestrator(agents, self.control_plane)
         logger.info("✅ All 7 agents initialized")
         for agent in agents:
-            agent_cfg = self.control_plane.get_agent_config(agent.name)
+            agent_cfg = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY.get(agent.name, agent.name))
             if agent_cfg:
                 logger.info(f"   {agent.name}: model={agent_cfg.model}, temp={agent_cfg.temperature}")
         return agents

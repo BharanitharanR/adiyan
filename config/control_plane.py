@@ -8,6 +8,20 @@ from pathlib import Path
 DATA_DIR = Path.home() / '.Adiyan'
 DATA_DIR.mkdir(exist_ok=True)
 
+# PipelineConfig.agents is keyed by these short lowercase names, but every
+# BaseAgent instance identifies itself by its class-style name (agent.name,
+# e.g. 'LLMAgent') - callers that look up config by agent.name need this map
+# rather than using agent.name as the dict key directly.
+AGENT_CLASS_TO_KEY = {
+    'ParserAgent': 'parser',
+    'ValidatorAgent': 'validator',
+    'RouterAgent': 'router',
+    'LLMAgent': 'llm',
+    'SynthesizerAgent': 'synthesizer',
+    'StorageAgent': 'storage',
+    'PublisherAgent': 'publisher',
+}
+
 @dataclass
 class AgentConfig:
     """Configuration for each agent"""

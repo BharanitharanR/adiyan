@@ -1,6 +1,6 @@
 from typing import List, Callable, Optional
 from core.base_agent import BaseAgent, AgentState
-from config.control_plane import ControlPlane
+from config.control_plane import ControlPlane, AGENT_CLASS_TO_KEY
 import logging
 
 logger = logging.getLogger('Orchestrator')
@@ -19,7 +19,7 @@ class Orchestrator:
 
         for agent in self.agents:
             # Check if agent is enabled in control plane
-            agent_config = self.control_plane.get_agent_config(agent.name)
+            agent_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY.get(agent.name, agent.name))
             if agent_config and not agent_config.enabled:
                 self.logger.info(f"[Pipeline] Skipping disabled agent: {agent.name}")
                 continue
@@ -43,14 +43,14 @@ class Orchestrator:
 
     def get_agent_status(self) -> dict:
         """Get status of all agents"""
-        return {
-            agent.name: {
-                'enabled': self.control_plane.get_agent_config(agent.name).enabled
-                    if self.control_plane.get_agent_config(agent.name) else True,
+        result = {}
+        for agent in self.agents:
+            cfg = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY.get(agent.name, agent.name))
+            result[agent.name] = {
+                'enabled': cfg.enabled if cfg else True,
                 'tools': agent.tools
             }
-            for agent in self.agents
-        }
+        return result
 
     def update_agent_tools(self, agent_name: str, tools: List[str]) -> bool:
         """Update agent tools (called by UI)"""
