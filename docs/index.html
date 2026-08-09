@@ -47,22 +47,8 @@
   --bubble-in-text:var(--ink);
   --shadow-soft:0 1px 2px rgba(36,31,20,.07), 0 10px 28px -14px rgba(36,31,20,.28);
 }
-@media (prefers-color-scheme: dark){
-  :root{
-    --paper:#1B160D;
-    --paper-2:#272013;
-    --ink:#ECE2CA;
-    --ink-soft:rgba(236,226,202,.68);
-    --ink-faint:rgba(236,226,202,.42);
-    --accent:#D6AD5F;
-    --line:rgba(236,226,202,.16);
-    --bubble-out:#D6AD5F;
-    --bubble-out-text:#1B160D;
-    --bubble-in:var(--paper-2);
-    --bubble-in-text:var(--ink);
-    --shadow-soft:0 1px 2px rgba(0,0,0,.32), 0 14px 34px -16px rgba(0,0,0,.55);
-  }
-}
+/* Beige is the default regardless of OS theme - no @media (prefers-color-scheme)
+   auto-switch. Dark is opt-in only, via the toggle button, which sets data-theme. */
 :root[data-theme="dark"]{
   --paper:#1B160D;
   --paper-2:#272013;
@@ -395,6 +381,30 @@ h1,h2,h3{
   max-width:20ch;
 }
 
+.theme-toggle{
+  position:fixed;
+  top:clamp(1rem,3vw,2.2rem);
+  right:clamp(1rem,3vw,2.2rem);
+  z-index:6;
+  width:2.3rem;
+  height:2.3rem;
+  border-radius:50%;
+  border:1px solid var(--line);
+  background:var(--paper-2);
+  color:var(--ink);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  padding:0;
+  transition:background .15s ease, border-color .15s ease;
+}
+.theme-toggle:hover{ border-color:var(--accent); }
+.theme-toggle svg{ width:1.05rem; height:1.05rem; display:block; }
+.theme-toggle .icon-dark{ display:none; }
+:root[data-theme="dark"] .theme-toggle .icon-light{ display:none; }
+:root[data-theme="dark"] .theme-toggle .icon-dark{ display:block; }
+
 .counter{
   position:fixed;
   right:clamp(1rem,3vw,2.2rem);
@@ -441,6 +451,10 @@ h1,h2,h3{
 </style>
 
 <div class="wordmark"><span class="name">Adi<span>y</span>an</span><span class="tamil">அடியேன்</span></div>
+<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">
+  <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+  <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+</button>
 <div class="counter"><b id="cnum">01</b> / 11</div>
 
 <main class="deck">
@@ -614,6 +628,35 @@ h1,h2,h3{
 </main>
 
 <script>
+(function(){
+  // Beige is the default look regardless of OS theme - dark is opt-in only,
+  // via this toggle. Choice persists across visits; first-ever visit is
+  // always beige, never guessed from prefers-color-scheme.
+  var root = document.documentElement;
+  var toggle = document.getElementById('theme-toggle');
+  var STORAGE_KEY = 'adiyan-deck-theme';
+
+  function applyTheme(theme){
+    if(theme === 'dark'){
+      root.setAttribute('data-theme', 'dark');
+      toggle.setAttribute('aria-label', 'Switch to light theme');
+    } else {
+      root.setAttribute('data-theme', 'light');
+      toggle.setAttribute('aria-label', 'Switch to dark theme');
+    }
+  }
+
+  var saved = null;
+  try { saved = localStorage.getItem(STORAGE_KEY); } catch(e){}
+  applyTheme(saved === 'dark' ? 'dark' : 'light');
+
+  toggle.addEventListener('click', function(){
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    try { localStorage.setItem(STORAGE_KEY, next); } catch(e){}
+  });
+})();
+
 (function(){
   var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
   var cnum = document.getElementById('cnum');
