@@ -44,7 +44,12 @@ check_prereqs() {
 }
 
 copy_bundled_app() {
-    if [ -x "$APP_DIR/adiyan" ] && [ -x "$OPENWA_DIR/dist/main.js" ] 2>/dev/null; then
+    # main.js is a plain JS file run via `node dist/main.js`, not directly executable - it never
+    # has the +x bit set, so checking -x on it was always false and this short-circuit never fired.
+    # Every run (including a retry after a failed bootstrap) fell through to the reinstall below,
+    # which rm -rf'd $OPENWA_DIR - destroying data/ (bootstrap key, session DB, linked WhatsApp
+    # auth) on every single re-run. Checked for existence (-f) instead.
+    if [ -x "$APP_DIR/adiyan" ] && [ -f "$OPENWA_DIR/dist/main.js" ] 2>/dev/null; then
         log "App already installed at $APP_DIR"
         return
     fi
@@ -59,9 +64,24 @@ copy_bundled_app() {
     cp "$INSTALLER_DIR/dist/adiyan" "$APP_DIR/adiyan"
     chmod +x "$APP_DIR/adiyan"
 
+    # Preserve any existing data/ (bootstrap key, session DB, linked WhatsApp auth) across a
+    # reinstall - only the app code itself should ever be replaced.
+    local data_backup=""
+    if [ -d "$OPENWA_DIR/data" ]; then
+        data_backup="$(mktemp -d)/data"
+        mv "$OPENWA_DIR/data" "$data_backup"
+    fi
+
     rm -rf "$OPENWA_DIR"
     cp -r "$INSTALLER_DIR/dist_openwa/app" "$OPENWA_DIR"
-    mkdir -p "$OPENWA_DIR/data"
+
+    if [ -n "$data_backup" ]; then
+        rm -rf "$OPENWA_DIR/data"
+        mv "$data_backup" "$OPENWA_DIR/data"
+        rmdir "$(dirname "$data_backup")" 2>/dev/null || true
+    else
+        mkdir -p "$OPENWA_DIR/data"
+    fi
 
     rm -rf "$APP_DIR/node-runtime"
     cp -r "$INSTALLER_DIR/node-runtime" "$APP_DIR/node-runtime"
@@ -86,8 +106,27 @@ STORAGE_LOCAL_PATH=./data/media
 EOF
 }
 
+kill_port() {
+    local port="$1"
+    local pids
+    pids="$(lsof -ti ":$port" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        echo "$pids" | xargs kill 2>/dev/null || true
+        sleep 1
+        pids="$(lsof -ti ":$port" 2>/dev/null || true)"
+        [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
+    fi
+}
+
 start_openwa_temporarily() {
-    if curl -s -m 2 -o /dev/null http://localhost:2785/api/health; then
+    # Bootstrap never finished (no api key recorded yet) - anything already on this port must be an
+    # orphaned process from an earlier failed attempt, left running by a previous `&` background
+    # start that this script never tracked or cleaned up. It may be bound to a data/ directory from
+    # before a reinstall, so it never comes up correctly (in particular: never writes a bootstrap
+    # key) - kill it and start clean rather than trusting it's actually usable.
+    if ! grep -q '"openwa_api_key"' "$ADIYAN_DIR/pipeline.json" 2>/dev/null; then
+        kill_port 2785
+    elif curl -s -m 2 -o /dev/null http://localhost:2785/api/health; then
         log "OpenWA already running"
         return
     fi
