@@ -50,6 +50,16 @@ ensure_homebrew() {
     fi
     log "Homebrew not found - installing it first (this may prompt for your password)..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+    # A fresh Homebrew install only adds itself to PATH via ~/.zprofile, which the CURRENT shell
+    # never re-sources - so `brew`/`command -v brew` can still miss it right after install, in this
+    # same script run. Export its env directly into this process rather than relying on a new shell.
+    if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+
     command -v brew >/dev/null 2>&1 || [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] || \
         { log "ERROR: Homebrew install did not complete"; exit 1; }
     log "Homebrew installed"
