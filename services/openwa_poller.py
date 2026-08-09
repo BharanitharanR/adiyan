@@ -15,6 +15,11 @@ from services.openwa_service import OpenWAService, OpenWASessionNotFound
 
 logger = logging.getLogger('OpenWAPoller')
 
+# WhatsApp's own chat-id convention: group chats always end in "@g.us";
+# individual chats end in "@c.us" or "@lid". This is how we tell them apart -
+# there's no separate "isGroup" flag on the message record itself.
+GROUP_CHAT_SUFFIX = '@g.us'
+
 
 class OpenWAPoller:
     """Polls OpenWA for new incoming messages and dispatches them to the orchestrator."""
@@ -102,6 +107,13 @@ class OpenWAPoller:
             return
 
         self._processed_ids.add(message_id)
+
+        chat_id = message.get('chatId') or ''
+        if chat_id.endswith(GROUP_CHAT_SUFFIX):
+            logger.info(
+                f"⏭️  Skipping group message in {chat_id} — Adiyan only responds in 1:1 chats"
+            )
+            return
 
         adiyan_message = OpenWAAdapter.polled_message_to_adiyan(
             message, session_name=self.openwa.session_name
