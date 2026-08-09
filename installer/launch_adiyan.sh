@@ -68,14 +68,31 @@ start_openwa() {
         log "WARNING: OpenWA did not come up within 30s - check $ADIYAN_DIR/openwa.log"
 }
 
+find_ollama_binary() {
+    # Ollama is installed via Homebrew - resolve its bin dir directly rather than assuming
+    # PATH is current (a Homebrew installed earlier in the same login session might not be).
+    if command -v brew >/dev/null 2>&1 && [ -x "$(brew --prefix)/bin/ollama" ]; then
+        echo "$(brew --prefix)/bin/ollama"
+    elif [ -x /opt/homebrew/bin/ollama ]; then
+        echo "/opt/homebrew/bin/ollama"
+    elif [ -x /usr/local/bin/ollama ]; then
+        echo "/usr/local/bin/ollama"
+    elif command -v ollama >/dev/null 2>&1; then
+        command -v ollama
+    else
+        echo ""
+    fi
+}
+
 start_ollama() {
     if is_up "http://localhost:11434/api/version"; then
         log "Ollama already running"
         return
     fi
-    local ollama_bin="$ADIYAN_DIR/bin/ollama-runtime/ollama"
-    if [ ! -x "$ollama_bin" ]; then
-        log "WARNING: Ollama not found at $ollama_bin - did installation complete?"
+    local ollama_bin
+    ollama_bin="$(find_ollama_binary)"
+    if [ -z "$ollama_bin" ]; then
+        log "WARNING: Ollama not found - did installation complete?"
         return
     fi
     log "Starting Ollama..."

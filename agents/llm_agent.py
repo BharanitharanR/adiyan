@@ -78,7 +78,11 @@ class LLMAgent(BaseAgent):
             )
 
             if response.status_code != 200:
-                raise Exception(f"Ollama returned {response.status_code}")
+                # Ollama's error body (e.g. "requires more system memory than is available") is the
+                # actual diagnostic - discarding it down to just the status code hides exactly the
+                # detail needed to tell a memory-ceiling failure apart from anything else.
+                detail = response.text.strip()
+                raise Exception(f"Ollama returned {response.status_code}: {detail}")
 
             data = response.json()
             return data.get('response', '').strip()

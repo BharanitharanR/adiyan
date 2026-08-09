@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# Install (if needed), start, and pull a model into a self-contained Ollama runtime.
-# Idempotent - safe to re-run. Does not require Homebrew or admin privileges;
-# everything lives under ~/.Adiyan/bin/ollama-runtime.
+# Install (if needed) via Homebrew, start, and pull a model into Ollama.
+# Idempotent - safe to re-run. Installs Homebrew itself first if it isn't
+# already present, so this still works as a one-line, hands-off install.
 set -euo pipefail
 
 ADIYAN_DIR="$HOME/.Adiyan"
-OLLAMA_DIR="$ADIYAN_DIR/bin/ollama-runtime"
-OLLAMA_BIN="$OLLAMA_DIR/ollama"
-OLLAMA_URL="https://github.com/ollama/ollama/releases/latest/download/ollama-darwin.tgz"
 OLLAMA_PORT=11434
 LOG_FILE="$ADIYAN_DIR/ollama.log"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,11 +17,26 @@ is_server_up() {
     curl -s -m 2 -o /dev/null "http://localhost:${OLLAMA_PORT}/api/version"
 }
 
+brew_prefix_bin() {
+    # Homebrew's own bin dir isn't guaranteed to be on PATH yet within this same
+    # script run (a just-installed Homebrew only updates shell profiles for the
+    # *next* shell) - ask brew directly instead of assuming PATH is current.
+    if command -v brew >/dev/null 2>&1; then
+        echo "$(brew --prefix)/bin"
+    elif [ -x /opt/homebrew/bin/brew ]; then
+        echo "/opt/homebrew/bin"
+    elif [ -x /usr/local/bin/brew ]; then
+        echo "/usr/local/bin"
+    else
+        echo ""
+    fi
+}
+
 find_ollama_binary() {
-    # Prefer our own bundled copy so behavior is consistent regardless of
-    # what else is installed on the machine; fall back to one already on PATH.
-    if [ -x "$OLLAMA_BIN" ]; then
-        echo "$OLLAMA_BIN"
+    local brew_bin
+    brew_bin="$(brew_prefix_bin)"
+    if [ -n "$brew_bin" ] && [ -x "$brew_bin/ollama" ]; then
+        echo "$brew_bin/ollama"
     elif command -v ollama >/dev/null 2>&1; then
         command -v ollama
     else
@@ -32,24 +44,31 @@ find_ollama_binary() {
     fi
 }
 
+ensure_homebrew() {
+    if command -v brew >/dev/null 2>&1 || [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ]; then
+        return
+    fi
+    log "Homebrew not found - installing it first (this may prompt for your password)..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    command -v brew >/dev/null 2>&1 || [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ] || \
+        { log "ERROR: Homebrew install did not complete"; exit 1; }
+    log "Homebrew installed"
+}
+
 install_ollama() {
-    if [ -x "$OLLAMA_BIN" ]; then
-        log "Ollama already installed at $OLLAMA_BIN"
+    local existing
+    existing="$(find_ollama_binary)"
+    if [ -n "$existing" ]; then
+        log "Ollama already installed at $existing"
         return
     fi
 
-    log "Downloading Ollama runtime..."
-    mkdir -p "$OLLAMA_DIR"
-    local tmp_tgz
-    tmp_tgz="$(mktemp)"
-    curl -sL -o "$tmp_tgz" "$OLLAMA_URL"
-
-    log "Extracting..."
-    tar -xzf "$tmp_tgz" -C "$OLLAMA_DIR"
-    rm -f "$tmp_tgz"
-    chmod +x "$OLLAMA_BIN"
-
-    log "Ollama installed at $OLLAMA_BIN"
+    ensure_homebrew
+    local brew_bin
+    brew_bin="$(brew_prefix_bin)"
+    log "Installing Ollama via Homebrew..."
+    "$brew_bin/brew" install ollama
+    log "Ollama installed at $("$brew_bin/brew" --prefix ollama)/bin/ollama"
 }
 
 start_server() {
