@@ -103,6 +103,7 @@ DATABASE_TYPE=sqlite
 DATABASE_NAME=./data/openwa.sqlite
 STORAGE_TYPE=local
 STORAGE_LOCAL_PATH=./data/media
+PUPPETEER_CACHE_DIR=./.chromium-cache
 EOF
 }
 

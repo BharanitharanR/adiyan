@@ -14,6 +14,7 @@ NODE_VERSION="v22.23.2"  # matches penwa's package.json engines: node >=22.13
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-darwin-arm64.tar.gz"
 
 log() { echo "[build_openwa] $*" >&2; }
+fail() { log "ERROR: $*"; exit 1; }
 
 download_node_runtime() {
     if [ -x "$NODE_RUNTIME_DIR/bin/node" ]; then
@@ -60,10 +61,33 @@ package_app() {
     log "Bundle staged at $OUT_DIR"
 }
 
+bundle_chromium() {
+    # whatsapp-web.js launches Chromium via Puppeteer to run the actual WhatsApp Web session -
+    # this is what /api/sessions/:id/start needs working, and it's the step that was 500ing on a
+    # fresh machine. `npm install` alone does NOT reliably fetch it (it's commonly already cached
+    # at ~/.cache/puppeteer on a dev machine, so the download silently no-ops during build and
+    # nothing ships). Explicitly install it into a location INSIDE the bundle, using puppeteer's own
+    # version-pinned installer so the binary always matches this exact puppeteer version.
+    local cache_dir="$OUT_DIR/app/.chromium-cache"
+    if [ -d "$cache_dir/chrome" ]; then
+        log "Chromium already bundled at $cache_dir"
+        return
+    fi
+    log "Bundling Chromium for Puppeteer (this is what actually runs the WhatsApp session)..."
+    (
+        cd "$OUT_DIR/app"
+        PUPPETEER_CACHE_DIR="$cache_dir" "$NODE_RUNTIME_DIR/bin/node" \
+            node_modules/puppeteer/lib/cjs/puppeteer/node/cli.js browsers install chrome
+    )
+    [ -d "$cache_dir/chrome" ] || fail "Chromium install reported success but $cache_dir/chrome wasn't created"
+    log "Chromium bundled: $(du -sh "$cache_dir" | cut -f1)"
+}
+
 main() {
     download_node_runtime
     build_app
     package_app
+    bundle_chromium
 
     local size
     size="$(du -sh "$OUT_DIR" | cut -f1)"
