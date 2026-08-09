@@ -70,9 +70,12 @@ def main():
         write_model_to_pipeline_config(chosen['name'])
         print(f"Wrote model choice to {PIPELINE_FILE}", file=sys.stderr)
 
-    # setup_ollama.sh consumes this: pulls `base`, then builds the local
-    # `name` variant (extended context) from it.
-    print(f"{chosen['base']} {chosen['name']}")
+    # setup_ollama.sh consumes this: pulls `base`, then builds the local `name`
+    # variant with `num_ctx` context if the chosen tier specifies one. A tier
+    # with no `num_ctx` (the tightest-RAM one) runs the stock model as-is -
+    # 'none' as a placeholder field, not a real context value.
+    num_ctx = chosen.get('num_ctx', 'none')
+    print(f"{chosen['base']} {chosen['name']} {num_ctx}")
 
 
 if __name__ == '__main__':

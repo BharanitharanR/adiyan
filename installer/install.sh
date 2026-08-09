@@ -137,12 +137,13 @@ start_openwa_temporarily() {
 
 select_and_pull_model() {
     log "Selecting a model for this machine..."
-    local result base final_name
+    local result base final_name num_ctx
     result="$(python3 "$INSTALLER_DIR/select_model.py")"
     base="$(echo "$result" | awk '{print $1}')"
     final_name="$(echo "$result" | awk '{print $2}')"
+    num_ctx="$(echo "$result" | awk '{print $3}')"
 
-    bash "$INSTALLER_DIR/setup_ollama.sh" "$base" "$final_name"
+    bash "$INSTALLER_DIR/setup_ollama.sh" "$base" "$final_name" "$num_ctx"
 }
 
 bootstrap_openwa_session() {

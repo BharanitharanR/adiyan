@@ -132,6 +132,7 @@ model_exists() {
 build_context_variant() {
     local base="$1"
     local final_name="$2"
+    local num_ctx="$3"
     local bin
     bin="$(find_ollama_binary)"
 
@@ -139,9 +140,6 @@ build_context_variant() {
         log "$final_name already exists locally, skipping build"
         return
     fi
-
-    local num_ctx
-    num_ctx="$(python3 -c "import json; print(json.load(open('$MODEL_CTX_FILE'))['context']['num_ctx'])")"
 
     log "Building $final_name from $base (num_ctx=$num_ctx)..."
     local tmp_modelfile
@@ -156,15 +154,20 @@ build_context_variant() {
 main() {
     local base="${1:-}"
     local final_name="${2:-}"
+    local num_ctx="${3:-none}"
     if [ -z "$base" ] || [ -z "$final_name" ]; then
-        log "ERROR: usage: setup_ollama.sh <base-model> <final-model-name>"
+        log "ERROR: usage: setup_ollama.sh <base-model> <final-model-name> [num_ctx]"
         exit 1
     fi
 
     install_ollama
     start_server
     pull_model "$base"
-    build_context_variant "$base" "$final_name"
+    if [ "$num_ctx" = "none" ] || [ "$base" = "$final_name" ]; then
+        log "Using $final_name as-is (stock context window, no extended-context variant built)"
+    else
+        build_context_variant "$base" "$final_name" "$num_ctx"
+    fi
     log "Ollama setup complete. Adiyan will use: $final_name"
 }
 
