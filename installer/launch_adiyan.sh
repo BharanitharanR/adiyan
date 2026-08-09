@@ -85,6 +85,15 @@ find_ollama_binary() {
 }
 
 start_ollama() {
+    # A `brew services start`-registered Ollama is a persistent launchd agent outside Adiyan's own
+    # process tracking - stop it so what's actually serving requests is a process this run started
+    # (and can therefore also stop on exit), consistent with "nothing runs unless Adiyan started it".
+    if command -v brew >/dev/null 2>&1 && brew services list 2>/dev/null | grep -qE "^ollama +started"; then
+        log "Found Ollama running as a Homebrew background service - stopping it..."
+        brew services stop ollama >/dev/null 2>&1 || true
+        sleep 1
+    fi
+
     if is_up "http://localhost:11434/api/version"; then
         log "Ollama already running"
         return

@@ -68,20 +68,41 @@ ensure_homebrew() {
 install_ollama() {
     local existing
     existing="$(find_ollama_binary)"
-    if [ -n "$existing" ]; then
-        log "Ollama already installed at $existing"
-        return
-    fi
 
     ensure_homebrew
     local brew_bin
     brew_bin="$(brew_prefix_bin)"
-    log "Installing Ollama via Homebrew..."
-    "$brew_bin/brew" install ollama
-    log "Ollama installed at $("$brew_bin/brew" --prefix ollama)/bin/ollama"
+
+    if [ -n "$existing" ]; then
+        # `brew install` on an already-installed formula is a silent no-op - it does NOT upgrade.
+        # A stale Ollama can sit there indefinitely (seen in practice: a months-old 0.7.0 predating
+        # proper Qwen3 support, still answering requests) and nothing about "already installed"
+        # would ever surface that. Always try to upgrade instead; harmless no-op if already current.
+        log "Ollama already installed at $existing - checking for updates..."
+        "$brew_bin/brew" upgrade ollama 2>&1 | grep -v "^Warning: .* already installed" || true
+    else
+        log "Installing Ollama via Homebrew..."
+        "$brew_bin/brew" install ollama
+    fi
+    local final_bin version
+    final_bin="$("$brew_bin/brew" --prefix ollama)/bin/ollama"
+    version="$("$final_bin" --version 2>&1 | head -1)"
+    log "Ollama ready at $final_bin ($version)"
 }
 
 start_server() {
+    # A `brew services start`-registered Ollama is a persistent launchd agent, independent of
+    # anything this installer starts or tracks - and it can be serving stale credentials the moment
+    # this script runs, right after install_ollama just upgraded the binary underneath it. Stop it
+    # so the freshly-upgraded binary is what actually answers requests, and so this always ends up
+    # as one of Adiyan's own tracked processes (not a background service that outlives the app -
+    # consistent with launch_adiyan.sh's own "nothing runs unless Adiyan started it" design).
+    if command -v brew >/dev/null 2>&1 && brew services list 2>/dev/null | grep -qE "^ollama +started"; then
+        log "Found Ollama running as a Homebrew background service - stopping it so Adiyan's own upgraded copy takes over..."
+        brew services stop ollama >/dev/null 2>&1 || true
+        sleep 1
+    fi
+
     if is_server_up; then
         log "Ollama server already running on port $OLLAMA_PORT"
         return
