@@ -31,8 +31,14 @@ def http_json(method, url, api_key=None, body=None, timeout=10):
         headers['X-API-Key'] = api_key
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # The server's error body (usually a JSON message) is the actual diagnostic - urllib
+        # discards it by default and just raises the status code, which isn't enough to debug with.
+        detail = e.read().decode(errors='replace')
+        raise RuntimeError(f"{method} {url} -> HTTP {e.code}: {detail}") from None
 
 
 def wait_for_openwa(base_url, timeout_s=60):
@@ -71,8 +77,19 @@ def ensure_started(base_url, api_key, session_id, status):
         log(f"Session status is '{status}' - already starting/started")
         return
     log(f"Session status is '{status}' - starting it...")
-    http_json('POST', f'{base_url}/api/sessions/{session_id}/start', api_key=api_key)
-    log("Start requested")
+    # A session that was JUST created can 500 on an immediate start - the server side hasn't
+    # finished settling the new row yet. Retry a few times before giving up for real.
+    attempts = 5
+    for attempt in range(1, attempts + 1):
+        try:
+            http_json('POST', f'{base_url}/api/sessions/{session_id}/start', api_key=api_key)
+            log("Start requested")
+            return
+        except RuntimeError as e:
+            if attempt == attempts:
+                raise
+            log(f"Start attempt {attempt}/{attempts} failed ({e}) - retrying in 2s...")
+            time.sleep(2)
 
 
 def find_or_create_session(base_url, api_key, session_name) -> str:
@@ -120,7 +137,13 @@ def main():
 
     wait_for_openwa(args.url)
     api_key = wait_for_bootstrap_key(Path(args.openwa_dir))
-    find_or_create_session(args.url, api_key, args.session_name)
+    try:
+        find_or_create_session(args.url, api_key, args.session_name)
+    except RuntimeError as e:
+        log(f"ERROR: {e}")
+        log(f"OpenWA's own log has the underlying error: {Path.home() / '.Adiyan' / 'openwa.log'}")
+        log("This step is safe to re-run: python3 setup_openwa_session.py <openwa_dir>")
+        sys.exit(1)
     write_config(api_key, args.session_name, args.url)
     log("Done. Next: open the dashboard and scan the QR code to link WhatsApp.")
 
