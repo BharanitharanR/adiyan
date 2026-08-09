@@ -381,6 +381,62 @@ h1,h2,h3{
   max-width:20ch;
 }
 
+/* ============ downloads (slide 11) ============ */
+.command-box{
+  display:flex;
+  align-items:center;
+  gap:1rem;
+  max-width:56rem;
+  background:var(--ink);
+  border-radius:.6rem;
+  padding:1.1rem 1.3rem;
+  box-shadow:var(--shadow-soft);
+}
+.command-box code{
+  flex:1;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:clamp(.82rem,1.6vw,.98rem);
+  color:var(--paper);
+  overflow-x:auto;
+  white-space:pre;
+}
+.command-copy{
+  flex:none;
+  font-family:'Mulish',sans-serif;
+  font-weight:600;
+  font-size:.78rem;
+  letter-spacing:.03em;
+  color:var(--paper);
+  background:transparent;
+  border:1px solid rgba(236,226,202,.3);
+  border-radius:.35rem;
+  padding:.5rem .9rem;
+  cursor:pointer;
+  transition:border-color .15s ease, background .15s ease;
+}
+.command-copy:hover{ border-color:var(--accent); }
+.command-copy.copied{ border-color:var(--accent); color:var(--accent); }
+.download-steps{
+  display:flex;
+  flex-direction:column;
+  gap:.55rem;
+  max-width:52ch;
+  margin-top:.4rem;
+}
+.download-steps p{
+  margin:0;
+  color:var(--ink-soft);
+  font-size:1.02rem;
+  line-height:1.65;
+}
+.download-steps b{ color:var(--ink); font-weight:600; }
+.download-alt{
+  margin-top:.6rem;
+  font-size:.92rem;
+  color:var(--ink-faint);
+}
+.download-alt a{ color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+
 .theme-toggle{
   position:fixed;
   top:clamp(1rem,3vw,2.2rem);
@@ -455,7 +511,7 @@ h1,h2,h3{
   <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
   <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
 </button>
-<div class="counter"><b id="cnum">01</b> / 11</div>
+<div class="counter"><b id="cnum">01</b> / 12</div>
 
 <main class="deck">
 
@@ -616,8 +672,29 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 11 : CTA -->
+<!-- 11 : DOWNLOAD -->
 <section class="slide" id="s11">
+  <p class="eyebrow">Downloads</p>
+  <h2 class="h2">Get Adiyan running <em>on your Mac.</em></h2>
+  <p class="prose" style="max-width:52ch;">One line does the whole thing — no app store, no account, nothing to configure by hand.</p>
+
+  <div class="command-box">
+    <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/BharanitharanR/adiyan/main/get.sh | bash</code>
+    <button class="command-copy" id="copy-cmd" type="button">Copy</button>
+  </div>
+
+  <div class="download-steps">
+    <p><b>1.</b> Open the <b>Terminal</b> app on your Mac (search "Terminal" with Spotlight).</p>
+    <p><b>2.</b> Copy the line above and paste it into Terminal, then press <b>Enter</b>.</p>
+    <p><b>3.</b> Wait a few minutes — it's downloading Adiyan and setting up the AI model. You'll need an internet connection for this part.</p>
+    <p><b>4.</b> When it's done, it'll tell you the one command to run any time you want to open Adiyan — you'll link your WhatsApp by scanning a QR code, same as WhatsApp Web.</p>
+  </div>
+
+  <p class="download-alt">Prefer not to run a script? <a href="https://github.com/BharanitharanR/adiyan/releases/latest" target="_blank" rel="noopener">Download the zip file directly</a> instead, unzip it, then drag the folder into Terminal and run its <code>install.sh</code>. Requires macOS.</p>
+</section>
+
+<!-- 12 : CTA -->
+<section class="slide" id="s12">
   <p class="eyebrow">Your turn</p>
   <h2 class="h2">Meet Adiyan. <em>See what comes back.</em></h2>
   <p class="cta-phrase">"Register me to make my life better"</p>
@@ -654,6 +731,32 @@ h1,h2,h3{
     var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     applyTheme(next);
     try { localStorage.setItem(STORAGE_KEY, next); } catch(e){}
+  });
+})();
+
+(function(){
+  var btn = document.getElementById('copy-cmd');
+  var cmd = document.getElementById('install-cmd');
+  if(!btn || !cmd) return;
+  btn.addEventListener('click', function(){
+    var text = cmd.textContent;
+    var done = function(){
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done, done);
+    } else {
+      var range = document.createRange();
+      range.selectNode(cmd);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try { document.execCommand('copy'); } catch(e){}
+      sel.removeAllRanges();
+      done();
+    }
   });
 })();
 
