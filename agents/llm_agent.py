@@ -10,6 +10,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 MEMORY_TOP_K = 3
 MEMORY_SNIPPET_MAX_CHARS = 500
+KB_TOP_K = 4
+KB_SNIPPET_MAX_CHARS = 800
 
 class LLMAgent(BaseAgent):
     """Agent 4: Call LLM (Ollama) for coaching response"""
@@ -104,24 +106,41 @@ class LLMAgent(BaseAgent):
             return self.set_error(state, f"LLM call failed: {str(e)}")
 
     def _with_recalled_context(self, system_prompt: str, query: str, contact_name: str) -> str:
-        """Prepend up to MEMORY_TOP_K semantically relevant past interactions with this
-        contact, so the coach can recall prior conversations. Best-effort: any failure
-        (no memory index, empty history, embedding call down) just skips the recall."""
+        """Prepend relevant context before the model answers: the coach's knowledge base
+        first (the coach's own authored material - source of truth), then this contact's
+        past conversations. Best-effort throughout: any failure (no memory index, empty
+        results, embedding call down) just skips that section rather than failing the turn."""
+        memory = get_memory_index(self.qdrant_url, self.ollama_url)
+        if not memory:
+            return system_prompt
+
+        sections = []
+
         try:
-            memory = get_memory_index(self.qdrant_url, self.ollama_url)
-            if not memory:
-                return system_prompt
+            kb_snippets = memory.retrieve_knowledge_base(query, top_k=KB_TOP_K)
+            if kb_snippets:
+                trimmed = [s[:KB_SNIPPET_MAX_CHARS] for s in kb_snippets]
+                sections.append(
+                    "Relevant material from the coach's knowledge base (treat as authoritative):\n"
+                    + "\n\n".join(f"- {s}" for s in trimmed)
+                )
+        except Exception as e:
+            self.log_stage(f"⚠️  Knowledge base recall skipped: {e}", 'warning')
 
-            snippets = memory.retrieve(query, contact_name=contact_name, top_k=MEMORY_TOP_K)
-            if not snippets:
-                return system_prompt
-
-            trimmed = [s[:MEMORY_SNIPPET_MAX_CHARS] for s in snippets]
-            recalled = "\n\n".join(f"- {s}" for s in trimmed)
-            return f"{system_prompt}\n\nRelevant past conversations with this person:\n{recalled}"
+        try:
+            memory_snippets = memory.retrieve(query, contact_name=contact_name, top_k=MEMORY_TOP_K)
+            if memory_snippets:
+                trimmed = [s[:MEMORY_SNIPPET_MAX_CHARS] for s in memory_snippets]
+                sections.append(
+                    "Relevant past conversations with this person:\n"
+                    + "\n\n".join(f"- {s}" for s in trimmed)
+                )
         except Exception as e:
             self.log_stage(f"⚠️  Memory recall skipped: {e}", 'warning')
+
+        if not sections:
             return system_prompt
+        return system_prompt + "\n\n" + "\n\n".join(sections)
 
     async def _call_react_agent(self, prompt: str, system_prompt: str) -> str:
         """Run the bound tools through a ReAct loop: model requests a tool call,

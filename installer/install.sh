@@ -112,6 +112,10 @@ DATABASE_NAME=./data/openwa.sqlite
 STORAGE_TYPE=local
 STORAGE_LOCAL_PATH=./data/media
 PUPPETEER_CACHE_DIR=./.chromium-cache
+# Needed so the coach can send a PDF to their own self-chat to add it to Adiyan's
+# knowledge base (services/kb_ingestion_poller.py downloads it via the media endpoint,
+# which 404s without this).
+CHAT_MEDIA_ARCHIVE_ENABLED=true
 EOF
 }
 

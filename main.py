@@ -51,8 +51,10 @@ from services.whatsapp_bridge import WhatsAppBridge
 from services.openwa_receiver import OpenWAReceiver
 from services.openwa_service import OpenWAService
 from services.openwa_poller import OpenWAPoller
+from services.kb_ingestion_poller import KBIngestionPoller
 from services.qdrant_service import QdrantService
 from core.mcp_tools import load_mcp_tools
+from core.memory_index import get_memory_index
 from ui.control_panel_api import app as flask_app
 import threading
 import pika
@@ -73,6 +75,7 @@ class AdiyanService:
         self.openwa_receiver = None
         self.openwa_service = None
         self.openwa_poller = None
+        self.kb_poller = None
         self._openwa_loop = None
         self._openwa_poller_thread = None
         self._openwa_shutdown = threading.Event()
@@ -267,6 +270,16 @@ class AdiyanService:
         )
         logger.info("✅ OpenWA poller configured")
 
+        memory_index = get_memory_index(cfg.qdrant_url, cfg.ollama_url)
+        if memory_index:
+            self.kb_poller = KBIngestionPoller(
+                openwa_service=self.openwa_service,
+                memory_index=memory_index,
+            )
+            logger.info("✅ KB ingestion poller configured")
+        else:
+            logger.warning("⚠️  Memory index unavailable - skipping KB ingestion poller")
+
     def start_openwa_poller(self):
         """Run the OpenWA poller in its own thread with its own asyncio event loop,
         so it doesn't block (or depend on) the RabbitMQ/Flask threads."""
@@ -284,6 +297,8 @@ class AdiyanService:
             while not self._openwa_shutdown.is_set():
                 try:
                     await self.openwa_poller.start()
+                    if self.kb_poller:
+                        await self.kb_poller.start()
                     if attempt:
                         logger.info(f"✅ OpenWA poller connected after {attempt} failed attempt(s)")
                     return True
@@ -309,6 +324,8 @@ class AdiyanService:
                 logger.error(f"❌ OpenWA poller thread error: {e}")
             finally:
                 try:
+                    if self.kb_poller:
+                        loop.run_until_complete(self.kb_poller.stop())
                     loop.run_until_complete(self.openwa_poller.stop())
                     loop.run_until_complete(self.openwa_service.close())
                 except Exception as e:

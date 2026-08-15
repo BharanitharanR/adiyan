@@ -159,3 +159,27 @@ class OpenWAService:
         except Exception as e:
             logger.warning(f"Could not check OpenWA session status: {e}")
             return False
+
+    async def get_own_chat_id(self) -> Optional[str]:
+        """Return the linked account's own chat id (its self-chat / 'Message Yourself' JID),
+        or None if the session has no phone yet (not linked / still initializing).
+
+        This is the business owner's identity for KB ingestion (services/kb_ingestion_poller.py):
+        nobody but the account holder can ever put a message into their own self-chat, so a
+        message's chatId matching this is a sufficient authorization check on its own.
+        """
+        status = await self.get_session_status()
+        phone = status.get('phone')
+        return f'{phone}@c.us' if phone else None
+
+    async def download_media(self, chat_id: str, message_id: str) -> Dict[str, Any]:
+        """Download a message's archived media (requires CHAT_MEDIA_ARCHIVE_ENABLED=true in
+        OpenWA). Returns {'content': bytes, 'mimetype': str}."""
+        session_id = await self._session_id_or_refresh()
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}/messages/{chat_id}/{message_id}/media')
+        response.raise_for_status()
+        return {
+            'content': response.content,
+            'mimetype': response.headers.get('content-type', 'application/octet-stream'),
+        }
