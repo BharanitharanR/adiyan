@@ -1,15 +1,24 @@
 from core.base_agent import BaseAgent, AgentState
-from typing import Dict, Any
+from core.memory_index import get_memory_index
+from typing import Dict, Any, List, Optional
 import requests
 import time
+import asyncio
+
+from langchain_core.tools import BaseTool
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+MEMORY_TOP_K = 3
+MEMORY_SNIPPET_MAX_CHARS = 500
 
 class LLMAgent(BaseAgent):
     """Agent 4: Call LLM (Ollama) for coaching response"""
 
-    def __init__(self, config: Dict[str, Any] = None, agent_config = None):
+    def __init__(self, config: Dict[str, Any] = None, agent_config = None, mcp_tools: Optional[List[BaseTool]] = None):
         tools = ['call_ollama', 'get_context', 'apply_system_prompt']
         super().__init__('LLMAgent', tools, config)
         self.ollama_url = config.get('ollama_url', 'http://localhost:11434') if config else 'http://localhost:11434'
+        self.qdrant_url = config.get('qdrant_url', 'http://localhost:6339') if config else 'http://localhost:6339'
 
         # Use agent-specific config if available, otherwise use default
         if agent_config:
@@ -20,6 +29,24 @@ class LLMAgent(BaseAgent):
             self.model = config.get('model', 'qwen3:8b-16k') if config else 'qwen3:8b-16k'
             self.temperature = config.get('temperature', 0.7) if config else 0.7
             self.timeout = config.get('timeout', 180) if config else 180
+
+        # Tool-calling loop (MCP-sourced tools). Built lazily - the LangChain
+        # ChatOllama model and langgraph react agent aren't needed at all for
+        # the plain (no-tools) path, which stays on the raw /api/generate call below.
+        self.mcp_tools = mcp_tools or []
+        self._react_agent = self._build_react_agent() if self.mcp_tools else None
+
+    def _build_react_agent(self):
+        """Build a ReAct tool-calling loop (LLM <-> ToolNode) over the bound MCP tools."""
+        from langchain_ollama import ChatOllama
+        from langgraph.prebuilt import create_react_agent
+
+        model = ChatOllama(
+            model=self.model,
+            base_url=self.ollama_url,
+            temperature=self.temperature,
+        )
+        return create_react_agent(model, self.mcp_tools)
 
     async def execute(self, state: AgentState) -> AgentState:
         """Call LLM for response"""
@@ -41,25 +68,78 @@ class LLMAgent(BaseAgent):
                 self.log_stage(f"Skipping LLM - not whitelisted", 'warning')
                 return state
 
-            # Call Ollama
+            # Call Ollama (tool-calling loop when MCP tools are bound, plain call otherwise)
             self.log_stage(f"Calling Ollama ({self.model})...")
             start_time = time.time()
 
-            response = await self._call_ollama(
-                prompt=state.message_body,
-                system_prompt=state.metadata.get('system_prompt', '')
+            system_prompt = self._with_recalled_context(
+                state.metadata.get('system_prompt', ''),
+                query=state.message_body,
+                contact_name=state.contact_name,
             )
+            used_tools = False
+            if self._react_agent is not None:
+                try:
+                    response = await self._call_react_agent(
+                        prompt=state.message_body,
+                        system_prompt=system_prompt,
+                    )
+                    used_tools = True
+                except Exception as e:
+                    self.log_stage(f"⚠️  Tool-calling loop failed, falling back to plain call: {e}", 'warning')
+                    response = await self._call_ollama(state.message_body, system_prompt)
+            else:
+                response = await self._call_ollama(state.message_body, system_prompt)
 
             elapsed = time.time() - start_time
             state.llm_response = response
             state.metadata['llm_time'] = elapsed
             state.metadata['model'] = self.model
+            state.metadata['used_tools'] = used_tools
 
-            self.log_stage(f"✅ LLM response ready ({elapsed:.1f}s)")
+            self.log_stage(f"✅ LLM response ready ({elapsed:.1f}s, tools={used_tools})")
             return state
 
         except Exception as e:
             return self.set_error(state, f"LLM call failed: {str(e)}")
+
+    def _with_recalled_context(self, system_prompt: str, query: str, contact_name: str) -> str:
+        """Prepend up to MEMORY_TOP_K semantically relevant past interactions with this
+        contact, so the coach can recall prior conversations. Best-effort: any failure
+        (no memory index, empty history, embedding call down) just skips the recall."""
+        try:
+            memory = get_memory_index(self.qdrant_url, self.ollama_url)
+            if not memory:
+                return system_prompt
+
+            snippets = memory.retrieve(query, contact_name=contact_name, top_k=MEMORY_TOP_K)
+            if not snippets:
+                return system_prompt
+
+            trimmed = [s[:MEMORY_SNIPPET_MAX_CHARS] for s in snippets]
+            recalled = "\n\n".join(f"- {s}" for s in trimmed)
+            return f"{system_prompt}\n\nRelevant past conversations with this person:\n{recalled}"
+        except Exception as e:
+            self.log_stage(f"⚠️  Memory recall skipped: {e}", 'warning')
+            return system_prompt
+
+    async def _call_react_agent(self, prompt: str, system_prompt: str) -> str:
+        """Run the bound tools through a ReAct loop: model requests a tool call,
+        the tool runs, the result feeds back to the model, repeat until it answers."""
+        messages = []
+        if system_prompt:
+            messages.append(SystemMessage(content=system_prompt))
+        messages.append(HumanMessage(content=prompt))
+
+        result = await asyncio.wait_for(
+            self._react_agent.ainvoke({"messages": messages}),
+            timeout=self.timeout,
+        )
+
+        final = result["messages"][-1]
+        if not isinstance(final, AIMessage) or not final.content:
+            raise Exception("Tool-calling loop finished without a final answer")
+        return final.content.strip()
 
     async def _call_ollama(self, prompt: str, system_prompt: str) -> str:
         """Make HTTP request to Ollama"""

@@ -51,6 +51,8 @@ from services.whatsapp_bridge import WhatsAppBridge
 from services.openwa_receiver import OpenWAReceiver
 from services.openwa_service import OpenWAService
 from services.openwa_poller import OpenWAPoller
+from services.qdrant_service import QdrantService
+from core.mcp_tools import load_mcp_tools
 from ui.control_panel_api import app as flask_app
 import threading
 import pika
@@ -74,6 +76,7 @@ class AdiyanService:
         self._openwa_loop = None
         self._openwa_poller_thread = None
         self._openwa_shutdown = threading.Event()
+        self.qdrant_service = QdrantService()
         logger.info("✅ Adiyan service initialized")
 
     def setup_agents(self):
@@ -83,11 +86,15 @@ class AdiyanService:
         # Get agent-specific configs
         llm_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY['LLMAgent'])
 
+        # MCP tools are loaded once, synchronously, before the pipeline starts
+        # taking messages - loading is one-shot startup work, not per-message.
+        mcp_tools = asyncio.run(load_mcp_tools())
+
         agents = [
             ParserAgent(config_dict),
             ValidatorAgent(config_dict),
             RouterAgent(config_dict),
-            LLMAgent(config_dict, agent_config=llm_config),
+            LLMAgent(config_dict, agent_config=llm_config, mcp_tools=mcp_tools),
             SynthesizerAgent(config_dict),
             StorageAgent(config_dict),
             PublisherAgent(config_dict, whatsapp_sender=self._send_via_openwa)
@@ -334,6 +341,11 @@ class AdiyanService:
         logger.info("=" * 60)
 
         # Setup
+        try:
+            asyncio.run(self.qdrant_service.start())
+        except Exception as e:
+            logger.error(f"❌ Bundled Qdrant failed to start: {e} - continuing without memory recall")
+
         self.setup_openwa_service()
         self.setup_agents()
         self.setup_rabbitmq()
@@ -370,6 +382,7 @@ class AdiyanService:
                 self._openwa_loop.call_soon_threadsafe(self._openwa_loop.stop)
                 if self._openwa_poller_thread:
                     self._openwa_poller_thread.join(timeout=5)
+            self.qdrant_service.stop()
 
 if __name__ == '__main__':
     service = AdiyanService()

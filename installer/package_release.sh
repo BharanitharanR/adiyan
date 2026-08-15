@@ -16,6 +16,7 @@ check_artifacts() {
     [ -x "$INSTALLER_DIR/dist/adiyan" ] || fail "Missing dist/adiyan - run build_python.sh first"
     [ -d "$INSTALLER_DIR/dist_openwa/app" ] || fail "Missing dist_openwa/app - run build_openwa.sh first"
     [ -x "$INSTALLER_DIR/node-runtime/bin/node" ] || fail "Missing node-runtime - run build_openwa.sh first"
+    [ -x "$INSTALLER_DIR/qdrant-runtime/qdrant" ] || fail "Missing qdrant-runtime - run build_qdrant.sh first"
 }
 
 stage() {
@@ -33,6 +34,7 @@ stage() {
     cp -r "$INSTALLER_DIR/dist" "$STAGE_DIR/adiyan/dist"
     cp -r "$INSTALLER_DIR/dist_openwa" "$STAGE_DIR/adiyan/dist_openwa"
     cp -r "$INSTALLER_DIR/node-runtime" "$STAGE_DIR/adiyan/node-runtime"
+    cp -r "$INSTALLER_DIR/qdrant-runtime" "$STAGE_DIR/adiyan/qdrant-runtime"
 
     cat > "$STAGE_DIR/adiyan/README.txt" << 'EOF'
 Adiyan - your coach's digital twin

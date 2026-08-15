@@ -43,7 +43,9 @@ class PipelineConfig:
     """Central control plane configuration"""
     agents: Dict[str, AgentConfig]
     ollama_url: str = "http://localhost:11434"
-    qdrant_url: str = "http://localhost:6333"
+    # Adiyan's own bundled Qdrant (services/qdrant_service.py), not the shared default
+    # 6333 - avoids colliding with any other Qdrant instance already on the machine.
+    qdrant_url: str = "http://localhost:6339"
     rabbitmq_url: str = "amqp://guest:guest@localhost/"
     whitelist_enabled: bool = True
     whitelist_prefix: str = "USER"
@@ -152,7 +154,7 @@ class ControlPlane:
         return PipelineConfig(
             agents=agents,
             ollama_url=data.get('ollama_url', 'http://localhost:11434'),
-            qdrant_url=data.get('qdrant_url', 'http://localhost:6333'),
+            qdrant_url=data.get('qdrant_url', 'http://localhost:6339'),
             rabbitmq_url=data.get('rabbitmq_url', 'amqp://guest:guest@localhost/'),
             whitelist_enabled=data.get('whitelist_enabled', True),
             whitelist_prefix=data.get('whitelist_prefix', 'USER'),

@@ -6,6 +6,7 @@
 #   dist/adiyan            - the packaged Python orchestrator (build_python.sh)
 #   dist_openwa/app/        - the packaged OpenWA bundle (build_openwa.sh)
 #   node-runtime/           - portable Node runtime (build_openwa.sh)
+#   qdrant-runtime/          - bundled Qdrant binary (services/qdrant_service.py)
 #   model_ctx.json, context.modelfile.template, setup_ollama.sh,
 #   setup_openwa_session.py, select_model.py
 #
@@ -85,6 +86,13 @@ copy_bundled_app() {
 
     rm -rf "$APP_DIR/node-runtime"
     cp -r "$INSTALLER_DIR/node-runtime" "$APP_DIR/node-runtime"
+
+    if [ -x "$INSTALLER_DIR/qdrant-runtime/qdrant" ]; then
+        rm -rf "$APP_DIR/qdrant-runtime"
+        cp -r "$INSTALLER_DIR/qdrant-runtime" "$APP_DIR/qdrant-runtime"
+    else
+        log "⚠️  Missing qdrant-runtime - Adiyan will run without coaching-history recall"
+    fi
 
     log "App installed"
 }
