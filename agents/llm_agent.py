@@ -32,14 +32,21 @@ class LLMAgent(BaseAgent):
             self.temperature = config.get('temperature', 0.7) if config else 0.7
             self.timeout = config.get('timeout', 180) if config else 180
 
-        # Tool-calling loop (MCP-sourced tools). Built lazily - the LangChain
-        # ChatOllama model and langgraph react agent aren't needed at all for
-        # the plain (no-tools) path, which stays on the raw /api/generate call below.
         self.mcp_tools = mcp_tools or []
-        self._react_agent = self._build_react_agent() if self.mcp_tools else None
 
     def _build_react_agent(self):
-        """Build a ReAct tool-calling loop (LLM <-> ToolNode) over the bound MCP tools."""
+        """Build a ReAct tool-calling loop (LLM <-> ToolNode) over the bound MCP tools.
+
+        Built fresh on every call, not cached on self - langchain-ollama's ChatOllama
+        holds a persistent ollama.AsyncClient, created the first time it's actually
+        used, bound to whichever asyncio event loop is running at that moment. Each
+        message is processed in its own fresh loop (asyncio.run() per message on the
+        RabbitMQ consumer thread), so a cached react agent would work for exactly one
+        message and then fail every one after with "Event loop is closed" - the same
+        cross-loop bug services/openwa_service.py had, same fix shape: don't cache
+        the client across loop lifetimes, rebuild per call. Construction itself does
+        no I/O, so this costs object creation, not a network round trip.
+        """
         from langchain_ollama import ChatOllama
         from langgraph.prebuilt import create_react_agent
 
@@ -80,7 +87,7 @@ class LLMAgent(BaseAgent):
                 contact_name=state.contact_name,
             )
             used_tools = False
-            if self._react_agent is not None:
+            if self.mcp_tools:
                 try:
                     response = await self._call_react_agent(
                         prompt=state.message_body,
@@ -145,13 +152,15 @@ class LLMAgent(BaseAgent):
     async def _call_react_agent(self, prompt: str, system_prompt: str) -> str:
         """Run the bound tools through a ReAct loop: model requests a tool call,
         the tool runs, the result feeds back to the model, repeat until it answers."""
+        react_agent = self._build_react_agent()
+
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=prompt))
 
         result = await asyncio.wait_for(
-            self._react_agent.ainvoke({"messages": messages}),
+            react_agent.ainvoke({"messages": messages}),
             timeout=self.timeout,
         )
 
