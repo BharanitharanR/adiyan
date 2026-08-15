@@ -26,6 +26,7 @@ import httpx
 import config.database as db
 from core.memory_index import MemoryIndex
 from services.openwa_service import OpenWAService, OpenWASessionNotFound
+from services.owner_admin_handler import ADMIN_REPLY_TAG
 
 logger = logging.getLogger('KBIngestionPoller')
 
@@ -192,10 +193,19 @@ class KBIngestionPoller:
         self._processed_ids[message_id] = int(time.time())
         self._save_processed_ids()
 
+        body = (message.get('body') or '').strip()
+        if ADMIN_REPLY_TAG in body:
+            # This is a reply Adiyan itself sent into the self-chat (confirmation or
+            # admin answer), not something the owner typed - self-chat messages are
+            # always direction=outgoing regardless of which side sent them, so this
+            # tag is the only way to tell them apart. Without this check, every reply
+            # gets reprocessed as a new command on the next poll - a real runaway
+            # self-conversation loop, confirmed live.
+            return
+
         if message.get('type') != 'document':
             # Not a document - route to the admin handler if one's configured and this
             # actually has text (skip reactions/stickers/other non-text noise).
-            body = (message.get('body') or '').strip()
             if body and self.admin_handler:
                 await self.admin_handler.handle_text_message(self._owner_chat_id, body)
             return
@@ -227,7 +237,7 @@ class KBIngestionPoller:
             db.add_kb_document(filename, chunk_count, source='whatsapp_self_chat')
             await self.openwa.send_message(
                 self._owner_chat_id,
-                f"✅ Added '{filename}' to your knowledge base ({chunk_count} chunk(s)).",
+                f"✅ Added '{filename}' to your knowledge base ({chunk_count} chunk(s)).\n\n{ADMIN_REPLY_TAG}",
             )
             logger.info(f"✅ Ingested '{filename}' into knowledge base ({chunk_count} chunks)")
         except Exception as e:
@@ -235,7 +245,7 @@ class KBIngestionPoller:
             try:
                 await self.openwa.send_message(
                     self._owner_chat_id,
-                    f"❌ Couldn't add '{filename}' to your knowledge base: {e}",
+                    f"❌ Couldn't add '{filename}' to your knowledge base: {e}\n\n{ADMIN_REPLY_TAG}",
                 )
             except Exception:
                 pass  # best-effort - the ingestion failure is already logged above
