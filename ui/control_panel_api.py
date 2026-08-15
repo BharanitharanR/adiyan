@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from config.control_plane import ControlPlane
+import config.database as db
 import logging
 from pathlib import Path
 import requests
@@ -19,23 +20,32 @@ control_plane = ControlPlane()
 
 logger = logging.getLogger('ControlPanel')
 
-PERSONAS_FILE = Path.home() / '.Adiyan' / 'personas.json'
-
 def _load_personas_file() -> dict:
-    """Read personas.json as-is. RouterAgent seeds this file with defaults on its
-    first pipeline run, but the dashboard may be opened before that has happened."""
-    if not PERSONAS_FILE.exists():
-        return {'active_persona': None, 'personas': {}}
-    with open(PERSONAS_FILE, 'r') as f:
-        return json.load(f)
+    """Same {'active_persona', 'personas': {id: {name, system_prompt}}} shape the routes
+    below already work with - now backed by config/database.py's personas table
+    instead of personas.json. Name kept for the routes' sake; not actually a file anymore."""
+    return {
+        'active_persona': db.get_active_persona_id(),
+        'personas': {
+            pid: {'name': p['name'], 'system_prompt': p['system_prompt']}
+            for pid, p in db.get_personas().items()
+        },
+    }
 
 def _save_personas_file(data: dict):
-    """Write personas.json atomically so RouterAgent's mtime-based poll (which runs
-    on every pipeline message) never sees a partially-written file."""
-    tmp_path = PERSONAS_FILE.with_suffix('.json.tmp')
-    with open(tmp_path, 'w') as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp_path, PERSONAS_FILE)
+    """Reconciles the db with the given full-state dict: creates/updates every persona
+    present, deletes any that were removed, and sets the active one. Routes below build
+    `data` by mutating the dict from _load_personas_file() then calling this - same
+    create/update/delete/activate semantics as the old read-modify-write-whole-file flow."""
+    existing_ids = set(db.get_personas().keys())
+    incoming = data.get('personas', {})
+    for pid in existing_ids - set(incoming.keys()):
+        db.delete_persona(pid)
+    for pid, p in incoming.items():
+        db.upsert_persona(pid, p.get('name', pid), p.get('system_prompt', ''))
+    active = data.get('active_persona')
+    if active:
+        db.set_active_persona(active)
 
 def get_ollama_models():
     """Fetch available models from Ollama"""
@@ -98,11 +108,13 @@ def get_agents():
     for name, config in control_plane.get_all_configs().items():
         agents[name] = {
             'name': config.name,
+            'kind': config.kind,
             'enabled': config.enabled,
             'tools': config.tools,
             'model': config.model,
             'temperature': config.temperature,
-            'timeout': config.timeout
+            'timeout': config.timeout,
+            'prompt_template': config.prompt_template,
         }
     return jsonify(agents)
 
@@ -115,11 +127,13 @@ def get_agent(agent_name):
 
     return jsonify({
         'name': config.name,
+        'kind': config.kind,
         'enabled': config.enabled,
         'tools': config.tools,
         'model': config.model,
         'temperature': config.temperature,
         'timeout': config.timeout,
+        'prompt_template': config.prompt_template,
         'custom_params': config.custom_params
     })
 
@@ -149,25 +163,19 @@ def update_agent_tools(agent_name):
 
 @app.route('/api/agents/<agent_name>/model', methods=['PUT'])
 def update_agent_model(agent_name):
-    """Update agent model configuration"""
+    """Update agent model/temperature/timeout, and prompt_template for the reasoning-cycle
+    agents (Hermes, Prometheus, Pythia, Hephaestus, Calliope, Momus)."""
     data = request.json
-    model = data.get('model')
-    temperature = data.get('temperature', 0.7)
-    timeout = data.get('timeout', 60)
+    fields = {
+        'model': data.get('model'),
+        'temperature': data.get('temperature', 0.7),
+        'timeout': data.get('timeout', 60),
+    }
+    if 'prompt_template' in data:
+        fields['prompt_template'] = data.get('prompt_template')
 
-    config = control_plane.get_agent_config(agent_name)
-    if config:
-        config.model = model
-        config.temperature = temperature
-        config.timeout = timeout
-        control_plane.save_config()
-        return jsonify({
-            'status': 'updated',
-            'agent': agent_name,
-            'model': model,
-            'temperature': temperature,
-            'timeout': timeout
-        })
+    if control_plane.update_agent_config(agent_name, **fields):
+        return jsonify({'status': 'updated', 'agent': agent_name, **fields})
     return jsonify({'error': 'Agent not found'}), 404
 
 @app.route('/api/personas', methods=['GET'])

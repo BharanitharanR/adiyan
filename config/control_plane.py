@@ -1,8 +1,10 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
 import json
 import os
 from pathlib import Path
+
+import config.database as db
 
 # Default data directory
 DATA_DIR = Path.home() / '.Adiyan'
@@ -22,21 +24,26 @@ AGENT_CLASS_TO_KEY = {
     'PublisherAgent': 'publisher',
 }
 
+# The 6 reasoning-cycle agents living inside LLMAgent (config/database.py's
+# REASONING_CYCLE_DEFAULTS is the canonical definition; kept here too since callers
+# that want "all 13 ids" shouldn't have to reach into the db module directly).
+REASONING_CYCLE_AGENT_IDS = ['hermes', 'prometheus', 'pythia', 'hephaestus', 'calliope', 'momus']
+
+
 @dataclass
 class AgentConfig:
-    """Configuration for each agent"""
+    """Configuration for each agent (pipeline or reasoning-cycle)."""
     name: str
     enabled: bool
     tools: List[str]
-    model: str = "qwen3:8b-16k"
-    temperature: float = 0.7
-    timeout: int = 60
+    kind: str = 'pipeline'  # 'pipeline' or 'llm_stage'
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    timeout: Optional[int] = None
+    prompt_template: Optional[str] = None
     retry_count: int = 3
-    custom_params: Dict[str, Any] = None
+    custom_params: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        if self.custom_params is None:
-            self.custom_params = {}
 
 @dataclass
 class PipelineConfig:
@@ -57,7 +64,7 @@ class PipelineConfig:
 
     def to_dict(self):
         return {
-            'agents': {name: asdict(cfg) for name, cfg in self.agents.items()},
+            'agents': {name: vars(cfg) for name, cfg in self.agents.items()},
             'ollama_url': self.ollama_url,
             'qdrant_url': self.qdrant_url,
             'rabbitmq_url': self.rabbitmq_url,
@@ -70,121 +77,141 @@ class PipelineConfig:
             'openwa_poll_interval_seconds': self.openwa_poll_interval_seconds
         }
 
+
+_SETTINGS_DEFAULTS = {
+    'ollama_url': "http://localhost:11434",
+    'qdrant_url': "http://localhost:6339",
+    'rabbitmq_url': "amqp://guest:guest@localhost/",
+    'whitelist_enabled': True,
+    'whitelist_prefix': "USER",
+    'max_response_length': 4096,
+    'openwa_url': "http://localhost:2785",
+    'openwa_api_key': "",
+    'openwa_session_name': "executive-coach",
+    'openwa_poll_interval_seconds': 3.0,
+}
+
+
 class ControlPlane:
-    """Central control plane - manages all agent configurations"""
+    """Central control plane - manages all agent configurations.
 
-    def __init__(self, config_file: str = None):
-        if config_file is None:
-            config_file = str(DATA_DIR / 'pipeline.json')
-        self.config_file = config_file
-        self.config = self._load_or_create_config()
+    Backed by config/database.py (SQLite) rather than a flat pipeline.json. Loads the
+    full state into self.config once at startup (same in-memory dataclass shape as
+    before, so existing callers - core/orchestrator.py, ui/control_panel_api.py - don't
+    need to change how they read it, including code that mutates an AgentConfig in
+    place and then calls save_config()); every mutating method here writes straight
+    through to the db so a fresh ControlPlane in another thread (e.g. the WhatsApp
+    admin handler) sees the same data.
+    """
 
-    def _load_or_create_config(self) -> PipelineConfig:
-        """Load config from file or create default"""
-        if os.path.exists(self.config_file):
-            with open(self.config_file, 'r') as f:
-                data = json.load(f)
-                return self._dict_to_config(data)
+    def __init__(self, legacy_json_path: str = None):
+        db.init_db()
+        self._migrate_legacy_files_if_present(legacy_json_path)
+        self.config = self._load_config_from_db()
 
-        # Default config with 7 agents
-        return self._create_default_config()
+    def _migrate_legacy_files_if_present(self, legacy_json_path: str = None):
+        """One-time import from the old pipeline.json/personas.json/whitelist.txt.
+        Gated on db.has_migrated_from_files() - migration is a one-time import, not a
+        sync; running it again on every startup would overwrite live db changes (a
+        dashboard edit, a WhatsApp admin change) with whatever's still in the old files."""
+        if db.has_migrated_from_files():
+            return
 
-    @staticmethod
-    def _default_agents() -> Dict[str, AgentConfig]:
-        """The canonical 7-agent defaults - the only place this schema is defined."""
-        return {
-            'parser': AgentConfig(
-                name='Parser Agent',
-                enabled=True,
-                tools=['extract_message', 'get_contact_info', 'parse_lid']
-            ),
-            'validator': AgentConfig(
-                name='Validator Agent',
-                enabled=True,
-                tools=['check_whitelist', 'validate_format', 'check_registration']
-            ),
-            'router': AgentConfig(
-                name='Router Agent',
-                enabled=True,
-                tools=['load_persona', 'get_routing_rules', 'determine_flow']
-            ),
-            'llm': AgentConfig(
-                name='LLM Agent',
-                enabled=True,
-                tools=['call_ollama', 'get_context', 'apply_system_prompt'],
-                temperature=0.7
-            ),
-            'synthesizer': AgentConfig(
-                name='Synthesizer Agent',
-                enabled=True,
-                tools=['format_response', 'split_chunks', 'apply_persona_rules']
-            ),
-            'storage': AgentConfig(
-                name='Storage Agent',
-                enabled=True,
-                tools=['store_in_qdrant', 'save_to_file', 'update_metadata']
-            ),
-            'publisher': AgentConfig(
-                name='Publisher Agent',
-                enabled=True,
-                tools=['send_whatsapp_reply', 'publish_event', 'log_completion']
+        pipeline_json = None
+        pipeline_path = Path(legacy_json_path) if legacy_json_path else (DATA_DIR / 'pipeline.json')
+        if pipeline_path.exists():
+            try:
+                with open(pipeline_path, 'r') as f:
+                    pipeline_json = json.load(f)
+            except Exception:
+                pipeline_json = None
+
+        personas_json = None
+        personas_path = DATA_DIR / 'personas.json'
+        if personas_path.exists():
+            try:
+                with open(personas_path, 'r') as f:
+                    personas_json = json.load(f)
+            except Exception:
+                personas_json = None
+
+        whitelist_names = []
+        whitelist_path = DATA_DIR / 'whitelist.txt'
+        if whitelist_path.exists():
+            try:
+                with open(whitelist_path, 'r') as f:
+                    whitelist_names = [line.strip() for line in f if line.strip()]
+            except Exception:
+                whitelist_names = []
+
+        if pipeline_json or personas_json or whitelist_names:
+            db.migrate_from_files(pipeline_json, personas_json, whitelist_names)
+
+    def _load_config_from_db(self) -> PipelineConfig:
+        agents = {}
+        for agent_id, row in db.get_all_agent_configs().items():
+            agents[agent_id] = AgentConfig(
+                name=row['name'],
+                enabled=row['enabled'],
+                tools=row['tools'],
+                kind=row['kind'],
+                model=row['model'],
+                temperature=row['temperature'],
+                timeout=row['timeout'],
+                prompt_template=row['prompt_template'],
+                retry_count=row['retry_count'],
+                custom_params=row['custom_params'],
             )
-        }
 
-    def _create_default_config(self) -> PipelineConfig:
-        """Create default 7-agent configuration"""
-        config = PipelineConfig(agents=self._default_agents())
-        self.save_config(config)
-        return config
-
-    def _dict_to_config(self, data: Dict) -> PipelineConfig:
-        """Convert dict to PipelineConfig.
-
-        Agent entries are merged over the defaults rather than required to be complete: a
-        pre-seeded file (e.g. the installer writing just {"agents": {"llm": {"model": "..."}}}
-        before this ever runs) is a valid partial config, not a broken one - only the fields it
-        actually specifies should override the default for that agent.
-        """
-        defaults = self._default_agents()
-        agents = dict(defaults)
-        for name, agent_data in data.get('agents', {}).items():
-            base = asdict(defaults[name]) if name in defaults else {}
-            agents[name] = AgentConfig(**{**base, **agent_data})
-
-        return PipelineConfig(
-            agents=agents,
-            ollama_url=data.get('ollama_url', 'http://localhost:11434'),
-            qdrant_url=data.get('qdrant_url', 'http://localhost:6339'),
-            rabbitmq_url=data.get('rabbitmq_url', 'amqp://guest:guest@localhost/'),
-            whitelist_enabled=data.get('whitelist_enabled', True),
-            whitelist_prefix=data.get('whitelist_prefix', 'USER'),
-            max_response_length=data.get('max_response_length', 4096),
-            openwa_url=data.get('openwa_url', 'http://localhost:2785'),
-            openwa_api_key=data.get('openwa_api_key', ''),
-            openwa_session_name=data.get('openwa_session_name', 'executive-coach'),
-            openwa_poll_interval_seconds=data.get('openwa_poll_interval_seconds', 3.0)
-        )
+        settings = db.get_all_settings()
+        kwargs = {k: settings.get(k, default) for k, default in _SETTINGS_DEFAULTS.items()}
+        return PipelineConfig(agents=agents, **kwargs)
 
     def save_config(self, config: Optional[PipelineConfig] = None):
-        """Save current config to file"""
+        """Persist the full current state (or the given one) back to the db - every
+        agent row and every top-level setting. Kept as a full-state write (matching the
+        old file-based save_config's semantics) since some callers still mutate an
+        AgentConfig in place and then call this rather than going through a setter."""
         cfg = config or self.config
-        os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-        with open(self.config_file, 'w') as f:
-            json.dump(cfg.to_dict(), f, indent=2)
+        for agent_id, agent_cfg in cfg.agents.items():
+            db.update_agent_config(
+                agent_id,
+                enabled=agent_cfg.enabled,
+                model=agent_cfg.model,
+                temperature=agent_cfg.temperature,
+                timeout=agent_cfg.timeout,
+                prompt_template=agent_cfg.prompt_template,
+                tools=agent_cfg.tools,
+                retry_count=agent_cfg.retry_count,
+            )
+        for key in _SETTINGS_DEFAULTS:
+            db.set_setting(key, getattr(cfg, key))
 
     def update_agent_tools(self, agent_name: str, tools: List[str]):
         """Update agent tools (used by UI)"""
         if agent_name in self.config.agents:
             self.config.agents[agent_name].tools = tools
-            self.save_config()
+            db.update_agent_config(agent_name, tools=tools)
             return True
         return False
+
+    def update_agent_config(self, agent_name: str, **fields) -> bool:
+        """Update any subset of an agent's model/temperature/timeout/prompt_template/
+        enabled - the generalized setter the reasoning-cycle agents and the WhatsApp
+        admin handler use, rather than mutate-then-save_config()."""
+        if agent_name not in self.config.agents:
+            return False
+        agent_cfg = self.config.agents[agent_name]
+        for key, value in fields.items():
+            if hasattr(agent_cfg, key):
+                setattr(agent_cfg, key, value)
+        return db.update_agent_config(agent_name, **fields)
 
     def enable_agent(self, agent_name: str):
         """Enable agent"""
         if agent_name in self.config.agents:
             self.config.agents[agent_name].enabled = True
-            self.save_config()
+            db.set_agent_enabled(agent_name, True)
             return True
         return False
 
@@ -192,7 +219,7 @@ class ControlPlane:
         """Disable agent"""
         if agent_name in self.config.agents:
             self.config.agents[agent_name].enabled = False
-            self.save_config()
+            db.set_agent_enabled(agent_name, False)
             return True
         return False
 
@@ -208,6 +235,6 @@ class ControlPlane:
         """Update system-level settings"""
         if hasattr(self.config, key):
             setattr(self.config, key, value)
-            self.save_config()
+            db.set_setting(key, value)
             return True
         return False

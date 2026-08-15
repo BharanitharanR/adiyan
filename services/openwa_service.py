@@ -167,10 +167,22 @@ class OpenWAService:
         This is the business owner's identity for KB ingestion (services/kb_ingestion_poller.py):
         nobody but the account holder can ever put a message into their own self-chat, so a
         message's chatId matching this is a sufficient authorization check on its own.
+
+        NOT simply f'{phone}@c.us' - some accounts (confirmed against a real linked session)
+        address individual chats via WhatsApp's newer @lid scheme instead of phone-based @c.us,
+        with a lid number that bears no relation to the phone number. The contacts/check
+        endpoint resolves the phone to whichever JID form the account actually uses.
         """
         status = await self.get_session_status()
         phone = status.get('phone')
-        return f'{phone}@c.us' if phone else None
+        if not phone:
+            return None
+
+        session_id = await self._session_id_or_refresh()
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}/contacts/check/{phone}')
+        response.raise_for_status()
+        return response.json().get('whatsappId')
 
     async def download_media(self, chat_id: str, message_id: str) -> Dict[str, Any]:
         """Download a message's archived media (requires CHAT_MEDIA_ARCHIVE_ENABLED=true in

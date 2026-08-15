@@ -52,6 +52,7 @@ from services.openwa_receiver import OpenWAReceiver
 from services.openwa_service import OpenWAService
 from services.openwa_poller import OpenWAPoller
 from services.kb_ingestion_poller import KBIngestionPoller
+from services.owner_admin_handler import OwnerAdminHandler
 from services.qdrant_service import QdrantService
 from core.mcp_tools import load_mcp_tools
 from core.memory_index import get_memory_index
@@ -97,7 +98,7 @@ class AdiyanService:
             ParserAgent(config_dict),
             ValidatorAgent(config_dict),
             RouterAgent(config_dict),
-            LLMAgent(config_dict, agent_config=llm_config, mcp_tools=mcp_tools),
+            LLMAgent(config_dict, agent_config=llm_config, mcp_tools=mcp_tools, control_plane=self.control_plane),
             SynthesizerAgent(config_dict),
             StorageAgent(config_dict),
             PublisherAgent(config_dict, whatsapp_sender=self._send_via_openwa)
@@ -272,11 +273,13 @@ class AdiyanService:
 
         memory_index = get_memory_index(cfg.qdrant_url, cfg.ollama_url)
         if memory_index:
+            admin_handler = OwnerAdminHandler(self.control_plane, self.openwa_service, ollama_url=cfg.ollama_url)
             self.kb_poller = KBIngestionPoller(
                 openwa_service=self.openwa_service,
                 memory_index=memory_index,
+                admin_handler=admin_handler,
             )
-            logger.info("✅ KB ingestion poller configured")
+            logger.info("✅ KB ingestion poller + WhatsApp admin handler configured")
         else:
             logger.warning("⚠️  Memory index unavailable - skipping KB ingestion poller")
 

@@ -13,6 +13,7 @@ message into it - so this poller doesn't need any separate identity/whitelist
 check the way the client-facing pipeline does.
 """
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from typing import Awaitable, Callable, Dict, Optional
 
 import httpx
 
+import config.database as db
 from core.memory_index import MemoryIndex
 from services.openwa_service import OpenWAService, OpenWASessionNotFound
 
@@ -36,17 +38,27 @@ PDF_MIMETYPE = 'application/pdf'
 
 
 class KBIngestionPoller:
-    """Polls the owner's self-chat for new PDF documents and ingests them into the KB."""
+    """Polls the owner's self-chat for new messages: PDF documents get ingested into the
+    KB, plain text gets routed to the admin handler (services/owner_admin_handler.py) if
+    one is configured. One poller, one fetch per cycle, for both - not two independent
+    pollers hitting OpenWA's rate-limited API (this project already hit that limit once
+    from two pollers competing for budget; a third would make it worse, not better)."""
 
     def __init__(
         self,
         openwa_service: OpenWAService,
         memory_index: MemoryIndex,
-        poll_interval_seconds: float = 5.0,
+        admin_handler=None,
+        # PDF uploads are an occasional coach action, not a conversation - no reason to
+        # poll at OpenWAPoller's 3s cadence. Both pollers share OpenWA's rate limit
+        # budget (RATE_LIMIT_MAX_REQUESTS in penwa/.env), so a slower interval here
+        # directly buys headroom for the client-facing poller instead of competing with it.
+        poll_interval_seconds: float = 20.0,
         message_fetch_limit: int = 20,
     ):
         self.openwa = openwa_service
         self.memory_index = memory_index
+        self.admin_handler = admin_handler
         self.poll_interval_seconds = poll_interval_seconds
         self.message_fetch_limit = message_fetch_limit
 
@@ -180,20 +192,39 @@ class KBIngestionPoller:
         self._processed_ids[message_id] = int(time.time())
         self._save_processed_ids()
 
-        if message.get('type') != 'document' or message.get('mediaMimetype') != PDF_MIMETYPE:
-            return  # not a PDF - only PDFs are supported for now, everything else is ignored
+        if message.get('type') != 'document':
+            # Not a document - route to the admin handler if one's configured and this
+            # actually has text (skip reactions/stickers/other non-text noise).
+            body = (message.get('body') or '').strip()
+            if body and self.admin_handler:
+                await self.admin_handler.handle_text_message(self._owner_chat_id, body)
+            return
+
+        # A self-chat message is always direction=outgoing (fromMe=true - you're both sender
+        # and recipient), and OpenWA's media archive only archives INBOUND media ("the message
+        # was sent BY this account" is explicitly excluded per its own docs) - so mediaMimetype/
+        # mediaPath are always null here regardless of CHAT_MEDIA_ARCHIVE_ENABLED, and
+        # download_media()'s archive-backed endpoint would always 404. The actual bytes are
+        # already inline on the message record itself (metadata.media), unaffected by archiving.
+        media_meta = (message.get('metadata') or {}).get('media') or {}
+        if media_meta.get('mimetype') != PDF_MIMETYPE:
+            return
 
         wa_message_id = message.get('waMessageId') or message_id
-        filename = (message.get('metadata') or {}).get('filename') or f"document_{wa_message_id[-8:]}.pdf"
+        filename = media_meta.get('filename') or f"document_{wa_message_id[-8:]}.pdf"
+        media_b64 = media_meta.get('data')
 
         logger.info(f"📄 New PDF in owner self-chat: {filename}")
         try:
-            media = await self.openwa.download_media(self._owner_chat_id, wa_message_id)
+            if not media_b64:
+                raise ValueError("Message has no inline media data to ingest")
+            content = base64.b64decode(media_b64)
             chunk_count = self.memory_index.ingest_pdf(
-                content=media['content'],
+                content=content,
                 filename=filename,
                 timestamp=time.strftime('%Y-%m-%dT%H:%M:%S'),
             )
+            db.add_kb_document(filename, chunk_count, source='whatsapp_self_chat')
             await self.openwa.send_message(
                 self._owner_chat_id,
                 f"✅ Added '{filename}' to your knowledge base ({chunk_count} chunk(s)).",
