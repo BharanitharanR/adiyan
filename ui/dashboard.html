@@ -291,6 +291,12 @@
             </div>
 
             <div class="card">
+                <h2>🧑‍🏫 Personas</h2>
+                <div id="personas-list"></div>
+                <button onclick="openPersonaForm(null)">➕ New Persona</button>
+            </div>
+
+            <div class="card">
                 <h2>⚙️ System Settings</h2>
                 <div style="font-size: 12px;">
                     <p><strong>Ollama URL:</strong> <span id="ollama-url">-</span></p>
@@ -310,6 +316,26 @@
             <h2>📋 Live Logs</h2>
             <div class="logs" id="logs-container">
                 <div class="log-line">Connecting to orchestrator...</div>
+            </div>
+        </div>
+
+        <div class="card" id="persona-form-card" style="display:none;">
+            <h2 id="persona-form-title">New Persona</h2>
+            <div class="config-row">
+                <label>ID (only for new personas)</label>
+                <input type="text" id="persona-form-id" />
+            </div>
+            <div class="config-row">
+                <label>Name</label>
+                <input type="text" id="persona-form-name" style="width:100%;" />
+            </div>
+            <div class="config-row">
+                <label>System Prompt</label>
+                <textarea id="persona-form-prompt" rows="8" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:12px; font-family:inherit;"></textarea>
+            </div>
+            <div class="config-buttons">
+                <button onclick="savePersonaForm()">💾 Save</button>
+                <button onclick="closePersonaForm()" style="background:#999;">Cancel</button>
             </div>
         </div>
     </div>
@@ -464,6 +490,143 @@
             }
         }
 
+        let editingPersonaId = null;
+        let activePersonaId = null;
+
+        async function loadPersonas() {
+            try {
+                const response = await fetch(`${API_URL}/personas`);
+                const data = await response.json();
+                activePersonaId = data.active_persona;
+
+                const list = document.getElementById('personas-list');
+                const entries = Object.entries(data.personas);
+                if (entries.length === 0) {
+                    list.innerHTML = '<p style="color:#999;">No personas defined</p>';
+                    return;
+                }
+                list.innerHTML = entries.map(([id, p]) => {
+                    const isActive = id === activePersonaId;
+                    const preview = p.system_prompt.length > 80 ? p.system_prompt.slice(0, 80) + '…' : p.system_prompt;
+                    return `
+                        <div class="agent">
+                            <div class="agent-header">
+                                <div>
+                                    <div class="agent-name">${p.name}</div>
+                                    <div style="font-size: 11px; color: #999;">${preview}</div>
+                                </div>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    ${isActive ? '<span class="status-badge enabled">✓ ACTIVE</span>' : ''}
+                                </div>
+                            </div>
+                            <div class="config-buttons">
+                                ${isActive ? '' : `<button onclick="activatePersona('${id}')">Activate</button>`}
+                                <button onclick="openPersonaForm('${id}', '${p.name.replace(/'/g, "\\'")}')">Edit</button>
+                                <button onclick="deletePersona('${id}', ${isActive})" style="background:#c0392b;">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load personas:', error);
+            }
+        }
+
+        function openPersonaForm(id, name) {
+            editingPersonaId = id;
+            document.getElementById('persona-form-title').textContent = id ? `Edit ${name}` : 'New Persona';
+            document.getElementById('persona-form-id').style.display = id ? 'none' : 'block';
+            document.getElementById('persona-form-id').value = '';
+            document.getElementById('persona-form-name').value = '';
+            document.getElementById('persona-form-prompt').value = '';
+            document.getElementById('persona-form-card').style.display = 'block';
+
+            if (id) {
+                fetch(`${API_URL}/personas/${id}`).then(r => r.json()).then(p => {
+                    document.getElementById('persona-form-name').value = p.name;
+                    document.getElementById('persona-form-prompt').value = p.system_prompt;
+                });
+            }
+        }
+
+        function closePersonaForm() {
+            document.getElementById('persona-form-card').style.display = 'none';
+            editingPersonaId = null;
+        }
+
+        async function savePersonaForm() {
+            const name = document.getElementById('persona-form-name').value.trim();
+            const system_prompt = document.getElementById('persona-form-prompt').value.trim();
+            if (!name || !system_prompt) {
+                showMessage('Name and system prompt are required', 'error');
+                return;
+            }
+
+            try {
+                let response;
+                if (editingPersonaId) {
+                    response = await fetch(`${API_URL}/personas/${editingPersonaId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, system_prompt })
+                    });
+                } else {
+                    const id = document.getElementById('persona-form-id').value.trim();
+                    if (!id) { showMessage('ID is required', 'error'); return; }
+                    response = await fetch(`${API_URL}/personas`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id, name, system_prompt })
+                    });
+                }
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage('✓ Persona saved', 'success');
+                    closePersonaForm();
+                    loadPersonas();
+                } else {
+                    showMessage(result.error || 'Failed to save persona', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function activatePersona(id) {
+            try {
+                const response = await fetch(`${API_URL}/personas/${id}/activate`, { method: 'POST' });
+                if (response.ok) {
+                    showMessage('✓ Persona activated', 'success');
+                    loadPersonas();
+                } else {
+                    const result = await response.json();
+                    showMessage(result.error || 'Failed to activate', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function deletePersona(id, isActive) {
+            if (isActive) {
+                showMessage('Cannot delete the active persona', 'error');
+                return;
+            }
+            if (!confirm('Delete this persona?')) return;
+            try {
+                const response = await fetch(`${API_URL}/personas/${id}`, { method: 'DELETE' });
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage('✓ Persona deleted', 'success');
+                    loadPersonas();
+                } else {
+                    showMessage(result.error || 'Failed to delete', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
         async function toggleAgent(agentId, element) {
             const isEnabled = element.classList.contains('enabled');
             const endpoint = isEnabled ? 'disable' : 'enable';
@@ -613,6 +776,7 @@
         loadHistory();
         loadLogs();
         loadWhatsAppQR();
+        loadPersonas();
 
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);

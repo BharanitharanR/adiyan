@@ -25,6 +25,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Adiyan')
 
+# Dashboard polling (QR/status/agent list, every few seconds) is not a real
+# request — don't let werkzeug's per-request access log drown out actual
+# pipeline events.
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+# Same reasoning for the OpenWA poller's own outbound requests: httpx logs every
+# GET it makes (every 3s to fetch recent messages) at INFO — that's the poller
+# doing its job, not a noteworthy event. Actual failures still surface via
+# OpenWAPoller's own error/backoff logging.
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
 # Import components
 from config.control_plane import ControlPlane, AGENT_CLASS_TO_KEY
 from core.orchestrator import Orchestrator
@@ -62,6 +73,7 @@ class AdiyanService:
         self.openwa_poller = None
         self._openwa_loop = None
         self._openwa_poller_thread = None
+        self._openwa_shutdown = threading.Event()
         logger.info("✅ Adiyan service initialized")
 
     def setup_agents(self):
@@ -255,13 +267,37 @@ class AdiyanService:
             logger.warning("⚠️  OpenWA poller not configured - skipping start")
             return
 
+        async def start_with_retry():
+            # The OpenWA Node service may not be up yet when Adiyan starts (or may
+            # bounce later) - a connection failure here must not permanently kill
+            # the poller for the rest of the process's life.
+            delay = self.control_plane.config.openwa_poll_interval_seconds
+            last_error_signature = None
+            attempt = 0
+            while not self._openwa_shutdown.is_set():
+                try:
+                    await self.openwa_poller.start()
+                    if attempt:
+                        logger.info(f"✅ OpenWA poller connected after {attempt} failed attempt(s)")
+                    return True
+                except Exception as e:
+                    attempt += 1
+                    signature = str(e)
+                    if signature != last_error_signature:
+                        logger.error(f"❌ OpenWA poller failed to start (attempt {attempt}): {e}")
+                        last_error_signature = signature
+                    delay = min(60.0, delay * 2) if attempt > 1 else delay
+                    await asyncio.sleep(delay)
+            return False
+
         def run_loop():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._openwa_loop = loop
             try:
-                loop.run_until_complete(self.openwa_poller.start())
-                loop.run_forever()
+                started = loop.run_until_complete(start_with_retry())
+                if started:
+                    loop.run_forever()
             except Exception as e:
                 logger.error(f"❌ OpenWA poller thread error: {e}")
             finally:
@@ -329,6 +365,7 @@ class AdiyanService:
             logger.info("🛑 Shutting down...")
             if self.rabbitmq_connection:
                 self.rabbitmq_connection.close()
+            self._openwa_shutdown.set()
             if self.openwa_poller and self._openwa_loop:
                 self._openwa_loop.call_soon_threadsafe(self._openwa_loop.stop)
                 if self._openwa_poller_thread:

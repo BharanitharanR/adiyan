@@ -6,6 +6,7 @@ from pathlib import Path
 import requests
 import pika
 import json
+import os
 import uuid
 import time
 import io
@@ -17,6 +18,24 @@ CORS(app)
 control_plane = ControlPlane()
 
 logger = logging.getLogger('ControlPanel')
+
+PERSONAS_FILE = Path.home() / '.Adiyan' / 'personas.json'
+
+def _load_personas_file() -> dict:
+    """Read personas.json as-is. RouterAgent seeds this file with defaults on its
+    first pipeline run, but the dashboard may be opened before that has happened."""
+    if not PERSONAS_FILE.exists():
+        return {'active_persona': None, 'personas': {}}
+    with open(PERSONAS_FILE, 'r') as f:
+        return json.load(f)
+
+def _save_personas_file(data: dict):
+    """Write personas.json atomically so RouterAgent's mtime-based poll (which runs
+    on every pipeline message) never sees a partially-written file."""
+    tmp_path = PERSONAS_FILE.with_suffix('.json.tmp')
+    with open(tmp_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, PERSONAS_FILE)
 
 def get_ollama_models():
     """Fetch available models from Ollama"""
@@ -150,6 +169,107 @@ def update_agent_model(agent_name):
             'timeout': timeout
         })
     return jsonify({'error': 'Agent not found'}), 404
+
+@app.route('/api/personas', methods=['GET'])
+def get_personas():
+    """List all personas and which one is active"""
+    data = _load_personas_file()
+    return jsonify({
+        'active_persona': data.get('active_persona'),
+        'personas': {
+            pid: {'id': pid, 'name': p.get('name', ''), 'system_prompt': p.get('system_prompt', '')}
+            for pid, p in data.get('personas', {}).items()
+        }
+    })
+
+@app.route('/api/personas/<persona_id>', methods=['GET'])
+def get_persona(persona_id):
+    """Get a single persona"""
+    data = _load_personas_file()
+    persona = data.get('personas', {}).get(persona_id)
+    if not persona:
+        return jsonify({'error': f'Persona {persona_id} not found'}), 404
+    return jsonify({'id': persona_id, 'name': persona.get('name', ''), 'system_prompt': persona.get('system_prompt', '')})
+
+@app.route('/api/personas', methods=['POST'])
+def create_persona():
+    """Create a new persona"""
+    body = request.json or {}
+    persona_id = (body.get('id') or '').strip()
+    name = (body.get('name') or '').strip()
+    system_prompt = (body.get('system_prompt') or '').strip()
+
+    if not persona_id or not name or not system_prompt:
+        return jsonify({'error': 'id, name, and system_prompt are required'}), 400
+    if persona_id == 'system':
+        return jsonify({'error': "'system' is a reserved persona id"}), 400
+
+    data = _load_personas_file()
+    personas = data.setdefault('personas', {})
+    if persona_id in personas:
+        return jsonify({'error': f'Persona {persona_id} already exists'}), 409
+
+    personas[persona_id] = {'name': name, 'system_prompt': system_prompt}
+    if not data.get('active_persona'):
+        data['active_persona'] = persona_id
+    _save_personas_file(data)
+    logger.info(f"Created persona '{persona_id}'")
+    return jsonify({'status': 'created', 'id': persona_id, 'name': name, 'system_prompt': system_prompt}), 201
+
+@app.route('/api/personas/<persona_id>', methods=['PUT'])
+def update_persona(persona_id):
+    """Update a persona's name/system_prompt"""
+    if persona_id == 'system':
+        return jsonify({'error': "'system' persona cannot be edited via API"}), 400
+
+    data = _load_personas_file()
+    personas = data.get('personas', {})
+    if persona_id not in personas:
+        return jsonify({'error': f'Persona {persona_id} not found'}), 404
+
+    body = request.json or {}
+    name = (body.get('name') or '').strip()
+    system_prompt = (body.get('system_prompt') or '').strip()
+    if not name or not system_prompt:
+        return jsonify({'error': 'name and system_prompt are required'}), 400
+
+    personas[persona_id] = {'name': name, 'system_prompt': system_prompt}
+    _save_personas_file(data)
+    logger.info(f"Updated persona '{persona_id}'")
+    return jsonify({'status': 'updated', 'id': persona_id, 'name': name, 'system_prompt': system_prompt})
+
+@app.route('/api/personas/<persona_id>', methods=['DELETE'])
+def delete_persona(persona_id):
+    """Delete a persona (not allowed for the active persona or the reserved 'system' id)"""
+    if persona_id == 'system':
+        return jsonify({'error': "'system' persona cannot be deleted"}), 400
+
+    data = _load_personas_file()
+    personas = data.get('personas', {})
+    if persona_id not in personas:
+        return jsonify({'error': f'Persona {persona_id} not found'}), 404
+    if data.get('active_persona') == persona_id:
+        return jsonify({'error': 'Cannot delete the active persona; activate a different one first'}), 400
+
+    del personas[persona_id]
+    _save_personas_file(data)
+    logger.info(f"Deleted persona '{persona_id}'")
+    return jsonify({'status': 'deleted', 'id': persona_id})
+
+@app.route('/api/personas/<persona_id>/activate', methods=['POST'])
+def activate_persona(persona_id):
+    """Set which persona is active"""
+    if persona_id == 'system':
+        return jsonify({'error': "'system' persona cannot be activated"}), 400
+
+    data = _load_personas_file()
+    if persona_id not in data.get('personas', {}):
+        return jsonify({'error': f'Persona {persona_id} not found'}), 404
+
+    data['active_persona'] = persona_id
+    _save_personas_file(data)
+    logger.info(f"Activated persona '{persona_id}'")
+    return jsonify({'status': 'activated', 'active_persona': persona_id})
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -343,4 +463,6 @@ def server_error(error):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
     app.run(host='0.0.0.0', port=5000, debug=False)
