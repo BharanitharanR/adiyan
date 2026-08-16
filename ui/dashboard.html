@@ -356,6 +356,10 @@
     </div>
 
     <div class="container">
+        <div id="auth-warning-banner" style="display:none; background:#5a3a1a; color:#ffd699; padding:10px 16px; border-radius:6px; margin-bottom:12px; font-size:13px;">
+            ⚠️ No dashboard password set - anyone with this URL (including over a tunnel like ngrok) can view and change everything here.
+            Run <code>python3 tools/set_secret.py DASHBOARD_PASSWORD</code> to secure it.
+        </div>
         <div class="stats">
             <div class="stat">
                 <div class="stat-value" id="agent-count">7</div>
@@ -460,7 +464,15 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5001/api';
+        // Relative, not a hardcoded http://localhost:5001 - the dashboard is served from
+        // this same Flask app (ui/control_panel_api.py), so a relative path always resolves
+        // to whatever actually served the page. A hardcoded absolute localhost URL broke
+        // every data fetch when accessed through a tunnel (e.g. ngrok): the browser would
+        // try to reach ITS OWN localhost, not the tunneled machine's - either a dead
+        // connection, or blocked outright as mixed content on an https:// tunnel page
+        // calling plain http://. Confirmed live as the cause of the dashboard loading but
+        // showing incomplete/empty data over ngrok.
+        const API_URL = '/api';
         let availableModels = [];
 
         async function loadOllamaModels() {
@@ -576,6 +588,14 @@
 
             } catch (error) {
                 console.error('Failed to load config:', error);
+            }
+
+            try {
+                const authResponse = await fetch(`${API_URL}/dashboard-auth/status`);
+                const authStatus = await authResponse.json();
+                document.getElementById('auth-warning-banner').style.display = authStatus.protected ? 'none' : 'block';
+            } catch (error) {
+                console.error('Failed to load dashboard auth status:', error);
             }
 
             try {

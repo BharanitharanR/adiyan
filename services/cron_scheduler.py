@@ -85,11 +85,15 @@ async def create_job_record(
     *, created_by: str, name: str, natural_language_schedule: str, target: str,
     instructions: str, expects_response: bool, response_window_hours: Optional[int],
     model_name: str, ollama_url: str, cap: Optional[int] = None,
+    target_group: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Shared by both authoring paths (owner admin tools, client self-service
     tools) - one validated write path, never a freeform db insert. Raises
-    ValueError on a bad schedule or an exceeded cap, which the calling tool
-    surfaces back to whoever asked, owner or client, as a plain error."""
+    ValueError on a bad schedule, an exceeded cap, or (target='group') an empty
+    or unresolvable target_group - each surfaces back to whoever asked as a
+    plain error rather than silently creating a job that sends to no one or
+    everyone. target_group is only meaningful when target='group'; ignored
+    otherwise (the caller-facing tool validates this pairing up front)."""
     if cap is not None:
         active = db.count_active_jobs_by_creator(created_by)
         if active >= cap:
@@ -98,13 +102,20 @@ async def create_job_record(
                 "disable or cancel one first."
             )
 
+    if target == 'group':
+        if not target_group:
+            raise ValueError("target='group' requires a non-empty target_group list of exact client names.")
+        unknown = [n for n in target_group if not db.get_client(n)]
+        if unknown:
+            raise ValueError(f"Unknown client name(s) in target_group: {', '.join(unknown)}")
+
     cron_expression = await parse_natural_schedule(natural_language_schedule, model_name, ollama_url)
     next_run = croniter(cron_expression, _now()).get_next(datetime)
     job_id = db.create_cron_job(
         created_by=created_by, name=name, natural_language_schedule=natural_language_schedule,
         cron_expression=cron_expression, target=target, instructions=instructions,
         expects_response=expects_response, response_window_hours=response_window_hours,
-        next_run_at=_fmt(next_run),
+        next_run_at=_fmt(next_run), target_group=target_group if target == 'group' else None,
     )
     return db.get_cron_job(job_id)
 
@@ -234,6 +245,22 @@ async def _resolve_targets(job: Dict[str, Any], openwa: OpenWAService) -> List[D
             {'contact_name': c['contact_name'], 'chat_id': await _resolve_chat_id_for_client(openwa, c)}
             for c in db.list_clients(active_only=True)
         ]
+    if target == 'group':
+        # A specific subset (e.g. "just the people who replied yes to a poll"),
+        # not every client - see create_job_record's target_group param. Names
+        # not matching a real client are silently dropped rather than failing the
+        # whole job: create_job already validates every name up front, so a
+        # missing one here means the client was removed after the job was made.
+        results = []
+        for contact_name in (job.get('target_group') or []):
+            client = db.get_client(contact_name)
+            if not client:
+                continue
+            results.append({
+                'contact_name': contact_name,
+                'chat_id': await _resolve_chat_id_for_client(openwa, client),
+            })
+        return results
     if target == 'self':
         creator = job['created_by']
         if creator == OWNER_PSEUDO_CONTACT:
@@ -353,7 +380,7 @@ class CronScheduler:
 
     async def broadcast_once(self, *, created_by: str, name: str, target: str, instructions: str,
                               expects_response: bool = False, response_window_hours: Optional[int] = None,
-                              cap: Optional[int] = None) -> Dict[str, Any]:
+                              cap: Optional[int] = None, target_group: Optional[List[str]] = None) -> Dict[str, Any]:
         """Create, send, and permanently disable a job in one call - for a genuine
         one-off broadcast or note, not a recurring schedule.
 
@@ -371,11 +398,17 @@ class CronScheduler:
                     f"You already have {active} active job(s) (limit {cap}) - "
                     "disable or cancel one first."
                 )
+        if target == 'group':
+            if not target_group:
+                raise ValueError("target='group' requires a non-empty target_group list of exact client names.")
+            unknown = [n for n in target_group if not db.get_client(n)]
+            if unknown:
+                raise ValueError(f"Unknown client name(s) in target_group: {', '.join(unknown)}")
         job_id = db.create_cron_job(
             created_by=created_by, name=name, natural_language_schedule='one-time, sent immediately',
             cron_expression=ONE_TIME_PLACEHOLDER_CRON, target=target, instructions=instructions,
             expects_response=expects_response, response_window_hours=response_window_hours,
-            next_run_at=None,
+            next_run_at=None, target_group=target_group if target == 'group' else None,
         )
         job = db.get_cron_job(job_id)
         result = await self.run_now(job)
