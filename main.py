@@ -51,6 +51,13 @@ from services.whatsapp_bridge import WhatsAppBridge
 from services.openwa_receiver import OpenWAReceiver
 from services.openwa_service import OpenWAService
 from services.openwa_poller import OpenWAPoller
+from services.kb_ingestion_poller import KBIngestionPoller
+from services.owner_admin_handler import OwnerAdminHandler
+from services.cron_scheduler import CronScheduler
+from services.qdrant_service import QdrantService
+from core.mcp_tools import load_mcp_tools, load_owner_mcp_tools, load_google_credentials
+from services.workspace_mcp_service import WorkspaceMCPService
+from core.memory_index import get_memory_index
 from ui.control_panel_api import app as flask_app
 import threading
 import pika
@@ -71,9 +78,15 @@ class AdiyanService:
         self.openwa_receiver = None
         self.openwa_service = None
         self.openwa_poller = None
+        self.kb_poller = None
+        self.cron_scheduler = None
+        self.mcp_tools = None
+        self.owner_mcp_tools = None
+        self.workspace_mcp_service = None
         self._openwa_loop = None
         self._openwa_poller_thread = None
         self._openwa_shutdown = threading.Event()
+        self.qdrant_service = QdrantService()
         logger.info("✅ Adiyan service initialized")
 
     def setup_agents(self):
@@ -83,11 +96,43 @@ class AdiyanService:
         # Get agent-specific configs
         llm_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY['LLMAgent'])
 
+        # MCP tools are loaded once, synchronously, before the pipeline starts
+        # taking messages - loading is one-shot startup work, not per-message.
+        # Client-facing pool - shared by the reasoning cycle, its fallback path,
+        # and the job composer. Never merge owner_mcp_tools into this.
+        mcp_tools = asyncio.run(load_mcp_tools())
+        self.mcp_tools = mcp_tools
+
+        # Owner-only pool (Gmail, Calendar) - bound only into OwnerAdminHandler in
+        # setup_openwa_poller() below. See core/mcp_tools.py's module docstring
+        # for why these two pools must never be passed to the same agent.
+        #
+        # Unlike every other MCP server, this one runs as its own persistent HTTP
+        # service (services/workspace_mcp_service.py), not spawned per call - see
+        # that module's docstring for why (Google's OAuth redirect needs a
+        # listener alive for however long the owner takes to click through it).
+        # Only started if credentials are actually in the vault; otherwise
+        # there's nothing worth keeping a server up for.
+        google_creds = load_google_credentials()
+        if google_creds:
+            self.workspace_mcp_service = WorkspaceMCPService(
+                client_id=google_creds['GOOGLE_OAUTH_CLIENT_ID'],
+                client_secret=google_creds['GOOGLE_OAUTH_CLIENT_SECRET'],
+                owner_email=google_creds.get('GOOGLE_OWNER_EMAIL'),
+            )
+            asyncio.run(self.workspace_mcp_service.start())
+            self.owner_mcp_tools = asyncio.run(load_owner_mcp_tools(
+                self.workspace_mcp_service.url,
+                owner_email=google_creds.get('GOOGLE_OWNER_EMAIL'),
+            ))
+        else:
+            self.owner_mcp_tools = asyncio.run(load_owner_mcp_tools())
+
         agents = [
             ParserAgent(config_dict),
             ValidatorAgent(config_dict),
             RouterAgent(config_dict),
-            LLMAgent(config_dict, agent_config=llm_config),
+            LLMAgent(config_dict, agent_config=llm_config, mcp_tools=mcp_tools, control_plane=self.control_plane),
             SynthesizerAgent(config_dict),
             StorageAgent(config_dict),
             PublisherAgent(config_dict, whatsapp_sender=self._send_via_openwa)
@@ -260,6 +305,32 @@ class AdiyanService:
         )
         logger.info("✅ OpenWA poller configured")
 
+        # Constructed before OwnerAdminHandler so its trigger_job_now tool can call
+        # cron_scheduler.run_now() directly instead of duplicating job-send logic.
+        llm_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY['LLMAgent'])
+        self.cron_scheduler = CronScheduler(
+            openwa_service=self.openwa_service,
+            mcp_tools=self.mcp_tools or [],
+            model_name=llm_config.model if llm_config else 'qwen3:8b-16k',
+            ollama_url=cfg.ollama_url,
+        )
+        logger.info("✅ Cron scheduler (AI Cron Jobs) configured")
+
+        memory_index = get_memory_index(cfg.qdrant_url, cfg.ollama_url)
+        if memory_index:
+            admin_handler = OwnerAdminHandler(
+                self.control_plane, self.openwa_service, ollama_url=cfg.ollama_url,
+                cron_scheduler=self.cron_scheduler, owner_mcp_tools=self.owner_mcp_tools,
+            )
+            self.kb_poller = KBIngestionPoller(
+                openwa_service=self.openwa_service,
+                memory_index=memory_index,
+                admin_handler=admin_handler,
+            )
+            logger.info("✅ KB ingestion poller + WhatsApp admin handler configured")
+        else:
+            logger.warning("⚠️  Memory index unavailable - skipping KB ingestion poller")
+
     def start_openwa_poller(self):
         """Run the OpenWA poller in its own thread with its own asyncio event loop,
         so it doesn't block (or depend on) the RabbitMQ/Flask threads."""
@@ -277,6 +348,10 @@ class AdiyanService:
             while not self._openwa_shutdown.is_set():
                 try:
                     await self.openwa_poller.start()
+                    if self.kb_poller:
+                        await self.kb_poller.start()
+                    if self.cron_scheduler:
+                        await self.cron_scheduler.start()
                     if attempt:
                         logger.info(f"✅ OpenWA poller connected after {attempt} failed attempt(s)")
                     return True
@@ -302,6 +377,10 @@ class AdiyanService:
                 logger.error(f"❌ OpenWA poller thread error: {e}")
             finally:
                 try:
+                    if self.cron_scheduler:
+                        loop.run_until_complete(self.cron_scheduler.stop())
+                    if self.kb_poller:
+                        loop.run_until_complete(self.kb_poller.stop())
                     loop.run_until_complete(self.openwa_poller.stop())
                     loop.run_until_complete(self.openwa_service.close())
                 except Exception as e:
@@ -318,6 +397,7 @@ class AdiyanService:
         # Make services available to Flask
         flask_app.config['WHATSAPP_BRIDGE'] = self.whatsapp_bridge
         flask_app.config['OPENWA_RECEIVER'] = self.openwa_receiver
+        flask_app.config['OWNER_MCP_TOOL_COUNT'] = len(self.owner_mcp_tools or [])
 
         def run_flask():
             logger.info(f"🌐 Control Panel UI: http://localhost:{port}")
@@ -334,6 +414,11 @@ class AdiyanService:
         logger.info("=" * 60)
 
         # Setup
+        try:
+            asyncio.run(self.qdrant_service.start())
+        except Exception as e:
+            logger.error(f"❌ Bundled Qdrant failed to start: {e} - continuing without memory recall")
+
         self.setup_openwa_service()
         self.setup_agents()
         self.setup_rabbitmq()
@@ -370,6 +455,9 @@ class AdiyanService:
                 self._openwa_loop.call_soon_threadsafe(self._openwa_loop.stop)
                 if self._openwa_poller_thread:
                     self._openwa_poller_thread.join(timeout=5)
+            self.qdrant_service.stop()
+            if self.workspace_mcp_service:
+                self.workspace_mcp_service.stop()
 
 if __name__ == '__main__':
     service = AdiyanService()

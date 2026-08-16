@@ -31,5 +31,9 @@ installer/dist/
 installer/*.spec
 installer/dist_openwa/
 installer/node-runtime/
+installer/qdrant-runtime/
 installer/release_stage/
 installer/*.zip
+
+# Qdrant drops this marker in the process's cwd on start
+.qdrant-initialized

@@ -1,11 +1,7 @@
 from core.base_agent import BaseAgent, AgentState
 from typing import Dict, Any
-import os
-from pathlib import Path
-
-# Use ~/.Adiyan for data
-DATA_DIR = Path.home() / '.Adiyan'
-DATA_DIR.mkdir(exist_ok=True)
+import time
+import config.database as db
 
 class ValidatorAgent(BaseAgent):
     """Agent 2: Validate user registration and whitelist status"""
@@ -13,8 +9,6 @@ class ValidatorAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any] = None):
         tools = ['check_whitelist', 'validate_format', 'check_registration']
         super().__init__('ValidatorAgent', tools, config)
-        self.whitelist_file = DATA_DIR / 'whitelist.txt'
-        self.whitelist = self._load_whitelist()
 
     async def execute(self, state: AgentState) -> AgentState:
         """Validate user"""
@@ -26,7 +20,7 @@ class ValidatorAgent(BaseAgent):
             # Handle registration
             if state.is_registration:
                 try:
-                    self.add_to_whitelist(state.contact_name)
+                    self.add_to_whitelist(state.contact_name, lid=state.lid)
                     state.is_whitelisted = True
                     state.metadata['action'] = 'registered'
                     self.log_stage(f"✅ Registered {state.contact_name}")
@@ -50,7 +44,22 @@ class ValidatorAgent(BaseAgent):
             state.is_whitelisted = is_whitelisted
 
             if is_whitelisted:
+                db.touch_last_active(state.contact_name)
                 self.log_stage(f"✅ {state.contact_name} is whitelisted")
+
+                # Is this message answering a scheduled job we sent (services/cron_scheduler.py)?
+                # If so it's captured as job_data, not routed through normal coaching -
+                # same shape as the is_registration/is_unregistration short-circuit above.
+                pending = db.get_pending_job_response(state.contact_name)
+                if pending:
+                    today = time.strftime('%Y-%m-%d')
+                    db.write_job_data(
+                        pending['job_id'], key=f"response:{today}",
+                        value=state.message_body, contact_name=state.contact_name,
+                    )
+                    db.clear_pending_job_response(pending['id'])
+                    state.is_job_response = True
+                    self.log_stage(f"📝 Captured response for job {pending['job_id']}")
             else:
                 self.log_stage(f"⚠️  {state.contact_name} not whitelisted - ignoring message", 'warning')
 
@@ -60,30 +69,17 @@ class ValidatorAgent(BaseAgent):
         except Exception as e:
             return self.set_error(state, f"Validation failed: {str(e)}")
 
-    def _load_whitelist(self) -> set:
-        """Load whitelist from file"""
-        if self.whitelist_file.exists():
-            with open(self.whitelist_file, 'r') as f:
-                return set(line.strip() for line in f if line.strip())
-        return set()
-
     def _check_whitelist(self, contact_name: str) -> bool:
         """Check if contact is whitelisted"""
-        return contact_name in self.whitelist
+        return db.is_whitelisted(contact_name)
 
-    def add_to_whitelist(self, contact_name: str):
-        """Add contact to whitelist (used by registration)"""
-        self.whitelist.add(contact_name)
-        with open(self.whitelist_file, 'a') as f:
-            f.write(f"{contact_name}\n")
+    def add_to_whitelist(self, contact_name: str, lid: str = None):
+        """Add contact to whitelist (used by registration, and by the WhatsApp admin
+        handler for coach-initiated onboarding)"""
+        db.add_client(contact_name, lid=lid)
         self.log_stage(f"✅ Added {contact_name} to whitelist")
 
     def remove_from_whitelist(self, contact_name: str):
         """Remove contact from whitelist (used by unregistration)"""
-        if contact_name in self.whitelist:
-            self.whitelist.discard(contact_name)
-            # Rewrite file without the contact
-            with open(self.whitelist_file, 'w') as f:
-                for name in sorted(self.whitelist):
-                    f.write(f"{name}\n")
+        if db.remove_client(contact_name):
             self.log_stage(f"✅ Removed {contact_name} from whitelist")

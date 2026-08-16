@@ -14,6 +14,7 @@ class AgentState:
     message_body: str
     is_registration: bool = False
     is_unregistration: bool = False
+    is_job_response: bool = False
     is_whitelisted: bool = False
     persona: Optional[str] = None
     llm_response: Optional[str] = None

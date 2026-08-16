@@ -4,30 +4,108 @@
     <title>Adiyan Control Panel</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Mulish:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* Same palette as docs/index.html — beige/paper is the default look
+           regardless of OS theme; dark is opt-in only, via the toggle below. */
+        :root{
+            --paper:#ECE2CA;
+            --paper-2:#E0D2AC;
+            --ink:#241F14;
+            --ink-soft:rgba(36,31,20,.66);
+            --ink-faint:rgba(36,31,20,.4);
+            --accent:#8A6B32;
+            --line:rgba(36,31,20,.16);
+            --shadow-soft:0 1px 2px rgba(36,31,20,.07), 0 10px 28px -14px rgba(36,31,20,.28);
+            --success:#4E7B58;
+            --success-bg:rgba(78,123,88,.14);
+            --error:#A34A3A;
+            --error-bg:rgba(163,74,58,.14);
+        }
+        :root[data-theme="dark"]{
+            --paper:#1B160D;
+            --paper-2:#272013;
+            --ink:#ECE2CA;
+            --ink-soft:rgba(236,226,202,.68);
+            --ink-faint:rgba(236,226,202,.42);
+            --accent:#D6AD5F;
+            --line:rgba(236,226,202,.16);
+            --shadow-soft:0 1px 2px rgba(0,0,0,.32), 0 14px 34px -16px rgba(0,0,0,.55);
+            --success:#8FBF9A;
+            --success-bg:rgba(143,191,154,.16);
+            --error:#E08A73;
+            --error-bg:rgba(224,138,115,.16);
+        }
+        :root[data-theme="light"]{
+            --paper:#ECE2CA;
+            --paper-2:#E0D2AC;
+            --ink:#241F14;
+            --ink-soft:rgba(36,31,20,.66);
+            --ink-faint:rgba(36,31,20,.4);
+            --accent:#8A6B32;
+            --line:rgba(36,31,20,.16);
+            --shadow-soft:0 1px 2px rgba(36,31,20,.07), 0 10px 28px -14px rgba(36,31,20,.28);
+            --success:#4E7B58;
+            --success-bg:rgba(78,123,88,.14);
+            --error:#A34A3A;
+            --error-bg:rgba(163,74,58,.14);
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
+        html { background: var(--paper); }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #f5f5f5;
-            color: #333;
+            font-family: 'Mulish', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--paper);
+            color: var(--ink);
+            transition: background .15s ease, color .15s ease;
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: var(--ink);
+            color: var(--paper);
             padding: 20px;
             text-align: center;
+            position: relative;
         }
 
         .header h1 {
+            font-family: 'Playfair Display', serif;
+            font-weight: 600;
             font-size: 28px;
             margin-bottom: 5px;
         }
+
+        .theme-toggle{
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10;
+            width: 2.3rem;
+            height: 2.3rem;
+            border-radius: 50%;
+            border: 1px solid var(--line);
+            background: var(--paper-2);
+            color: var(--ink);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            padding: 0;
+            transition: background .15s ease, border-color .15s ease;
+        }
+        .theme-toggle:hover{ border-color: var(--accent); }
+        .theme-toggle svg{ width: 1.05rem; height: 1.05rem; display: block; }
+        .theme-toggle .icon-dark{ display: none; }
+        :root[data-theme="dark"] .theme-toggle .icon-light{ display: none; }
+        :root[data-theme="dark"] .theme-toggle .icon-dark{ display: block; }
 
         .container {
             max-width: 1200px;
@@ -43,23 +121,25 @@
         }
 
         .card {
-            background: white;
+            background: var(--paper-2);
             border-radius: 10px;
             padding: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            box-shadow: var(--shadow-soft);
         }
 
         .card h2 {
-            font-size: 16px;
+            font-family: 'Playfair Display', serif;
+            font-weight: 600;
+            font-size: 17px;
             margin-bottom: 15px;
-            color: #667eea;
-            border-bottom: 2px solid #f0f0f0;
+            color: var(--accent);
+            border-bottom: 2px solid var(--line);
             padding-bottom: 10px;
         }
 
         .agent {
             padding: 12px 0;
-            border-bottom: 1px solid #f0f0f0;
+            border-bottom: 1px solid var(--line);
         }
 
         .agent:last-child {
@@ -80,7 +160,7 @@
         .agent-config {
             margin-top: 10px;
             padding: 10px;
-            background: #f9f9f9;
+            background: var(--paper);
             border-radius: 6px;
             display: none;
         }
@@ -97,17 +177,31 @@
         .config-row label {
             display: block;
             margin-bottom: 3px;
-            font-weight: 500;
-            color: #667eea;
+            font-weight: 600;
+            color: var(--accent);
         }
 
         .config-row select,
-        .config-row input {
+        .config-row input,
+        .config-row textarea {
             width: 100%;
             padding: 6px;
-            border: 1px solid #ddd;
+            border: 1px solid var(--line);
             border-radius: 4px;
             font-size: 12px;
+            background: var(--paper-2);
+            color: var(--ink);
+            font-family: inherit;
+        }
+
+        .btn-secondary {
+            background: var(--ink-faint) !important;
+            color: var(--paper-2) !important;
+        }
+
+        .btn-danger {
+            background: var(--error) !important;
+            color: var(--paper) !important;
         }
 
         .config-row input {
@@ -129,7 +223,7 @@
         .toggle {
             width: 50px;
             height: 28px;
-            background: #ccc;
+            background: var(--line);
             border-radius: 14px;
             cursor: pointer;
             position: relative;
@@ -137,7 +231,7 @@
         }
 
         .toggle.enabled {
-            background: #4CAF50;
+            background: var(--accent);
         }
 
         .toggle::after {
@@ -145,7 +239,7 @@
             position: absolute;
             width: 24px;
             height: 24px;
-            background: white;
+            background: var(--paper-2);
             border-radius: 50%;
             top: 2px;
             left: 2px;
@@ -164,8 +258,8 @@
         }
 
         .stat {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: var(--ink);
+            color: var(--paper);
             padding: 15px;
             border-radius: 8px;
             text-align: center;
@@ -183,8 +277,8 @@
         }
 
         .logs {
-            background: #1e1e1e;
-            color: #00ff00;
+            background: var(--ink);
+            color: var(--accent);
             padding: 15px;
             border-radius: 8px;
             font-family: 'Monaco', monospace;
@@ -207,41 +301,44 @@
         }
 
         .status-badge.enabled {
-            background: #d4edda;
-            color: #155724;
+            background: var(--success-bg);
+            color: var(--success);
         }
 
         .status-badge.disabled {
-            background: #f8d7da;
-            color: #721c24;
+            background: var(--error-bg);
+            color: var(--error);
         }
 
         button {
-            background: #667eea;
-            color: white;
+            background: var(--accent);
+            color: var(--paper);
             border: none;
             padding: 8px 16px;
             border-radius: 6px;
             cursor: pointer;
             font-size: 12px;
+            font-family: inherit;
+            font-weight: 600;
             margin-top: 10px;
+            transition: opacity .15s ease;
         }
 
         button:hover {
-            background: #764ba2;
+            opacity: .85;
         }
 
         .error {
-            background: #f8d7da;
-            color: #721c24;
+            background: var(--error-bg);
+            color: var(--error);
             padding: 12px;
             border-radius: 6px;
             margin-bottom: 15px;
         }
 
         .success {
-            background: #d4edda;
-            color: #155724;
+            background: var(--success-bg);
+            color: var(--success);
             padding: 12px;
             border-radius: 6px;
             margin-bottom: 15px;
@@ -249,6 +346,10 @@
     </style>
 </head>
 <body>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">
+        <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+    </button>
     <div class="header">
         <h1>🎯 Adiyan Control Panel</h1>
         <p>Orchestrator Pipeline Management</p>
@@ -277,10 +378,11 @@
                 <h2>📱 WhatsApp Connection</h2>
                 <div id="whatsapp-status" style="text-align: center; padding: 20px;">
                     <p id="wa-status-text">Connecting...</p>
-                    <div id="qr-code-container" style="margin: 20px 0; min-height: 300px; display: flex; align-items: center; justify-content: center; background: #f5f5f5; border-radius: 10px;">
-                        <p style="color: #999;">Waiting for QR code...</p>
+                    <button onclick="loadWhatsAppQR()" style="margin-bottom: 10px;">🔄 Check status</button>
+                    <div id="qr-code-container" style="margin: 20px 0; min-height: 300px; display: flex; align-items: center; justify-content: center; background: var(--paper); border-radius: 10px;">
+                        <p style="color: var(--ink-faint);">Waiting for QR code...</p>
                     </div>
-                    <p style="font-size: 12px; color: #999;">Scan with WhatsApp to connect</p>
+                    <p style="font-size: 12px; color: var(--ink-faint);">Scan with WhatsApp to connect</p>
                 </div>
             </div>
 
@@ -288,6 +390,16 @@
                 <h2>📊 Pipeline Agents</h2>
                 <div id="agents-list"></div>
                 <button onclick="location.reload()">🔄 Refresh</button>
+            </div>
+
+            <div class="card">
+                <h2>🔮 LLM Reasoning Cycle</h2>
+                <p style="font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;">
+                    Runs inside the LLM Agent step above, not a separate pipeline stage. All off by
+                    default - enabling Hermes lets it decide quick vs deep per message; the rest only
+                    engage when Hermes says deep.
+                </p>
+                <div id="reasoning-cycle-list"></div>
             </div>
 
             <div class="card">
@@ -303,6 +415,7 @@
                     <p><strong>Qdrant URL:</strong> <span id="qdrant-url">-</span></p>
                     <p><strong>RabbitMQ URL:</strong> <span id="rabbitmq-url">-</span></p>
                     <p><strong>Whitelist Enabled:</strong> <span id="whitelist-enabled">-</span></p>
+                    <p><strong>Google Workspace (owner-only):</strong> <span id="google-workspace-status">-</span></p>
                 </div>
             </div>
 
@@ -331,11 +444,11 @@
             </div>
             <div class="config-row">
                 <label>System Prompt</label>
-                <textarea id="persona-form-prompt" rows="8" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:12px; font-family:inherit;"></textarea>
+                <textarea id="persona-form-prompt" rows="8" style="width:100%;"></textarea>
             </div>
             <div class="config-buttons">
                 <button onclick="savePersonaForm()">💾 Save</button>
-                <button onclick="closePersonaForm()" style="background:#999;">Cancel</button>
+                <button onclick="closePersonaForm()" class="btn-secondary">Cancel</button>
             </div>
         </div>
     </div>
@@ -379,18 +492,25 @@
                 console.log('Agents loaded:', agents);
 
                 const list = document.getElementById('agents-list');
+                const cycleList = document.getElementById('reasoning-cycle-list');
                 let enabledCount = 0;
 
-                list.innerHTML = Object.entries(agents).map(([id, agent]) => {
+                const renderAgent = ([id, agent]) => {
                     if (agent.enabled) enabledCount++;
                     const temp = agent.temperature !== undefined ? agent.temperature : 0.7;
                     const timeout = agent.timeout !== undefined ? agent.timeout : 60;
+                    const isStage = agent.kind === 'llm_stage';
+                    const promptRow = isStage ? `
+                                <div class="config-row">
+                                    <label>Prompt</label>
+                                    <textarea id="prompt-${id}" rows="4" style="width:100%;">${agent.prompt_template || ''}</textarea>
+                                </div>` : '';
                     return `
                         <div class="agent">
                             <div class="agent-header">
                                 <div>
                                     <div class="agent-name">${agent.name}</div>
-                                    <div style="font-size: 11px; color: #999;">Tools: ${agent.tools.join(', ')}</div>
+                                    <div style="font-size: 11px; color: var(--ink-faint);">Tools: ${agent.tools.join(', ')}</div>
                                 </div>
                                 <div style="display: flex; gap: 10px; align-items: center;">
                                     <span class="status-badge ${agent.enabled ? 'enabled' : 'disabled'}">
@@ -415,15 +535,19 @@
                                 <div class="config-row">
                                     <label>Timeout (s)</label>
                                     <input type="number" id="timeout-${id}" min="10" max="600" value="${timeout}" />
-                                </div>
+                                </div>${promptRow}
                                 <div class="config-buttons">
                                     <button onclick="saveAgentConfig('${id}')">💾 Save</button>
-                                    <button onclick="toggleConfig('${id}')" style="background: #999;">Cancel</button>
+                                    <button onclick="toggleConfig('${id}')" class="btn-secondary">Cancel</button>
                                 </div>
                             </div>
                         </div>
                     `;
-                }).join('');
+                };
+
+                const entries = Object.entries(agents);
+                list.innerHTML = entries.filter(([, a]) => a.kind !== 'llm_stage').map(renderAgent).join('');
+                cycleList.innerHTML = entries.filter(([, a]) => a.kind === 'llm_stage').map(renderAgent).join('');
 
                 document.getElementById('enabled-count').textContent = enabledCount;
                 document.getElementById('agent-count').textContent = Object.keys(agents).length;
@@ -446,6 +570,19 @@
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
+
+            try {
+                const gwResponse = await fetch(`${API_URL}/google-workspace/status`);
+                const gw = await gwResponse.json();
+                const label = {
+                    'not_configured': '⚠️ Not configured',
+                    'configured_but_unavailable': '⚠️ Configured, not connected (consent needed or restart pending)',
+                    'connected': `✅ Connected (${gw.tool_count} tools, read-only)`,
+                }[gw.status] || '-';
+                document.getElementById('google-workspace-status').textContent = label;
+            } catch (error) {
+                console.error('Failed to load Google Workspace status:', error);
+            }
         }
 
         async function loadHistory() {
@@ -455,13 +592,13 @@
 
                 const list = document.getElementById('history-list');
                 if (data.records.length === 0) {
-                    list.innerHTML = '<p style="color: #999;">No interactions yet</p>';
+                    list.innerHTML = '<p style="color: var(--ink-faint);">No interactions yet</p>';
                 } else {
                     list.innerHTML = data.records.map(r => `
-                        <div style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div style="padding: 8px 0; border-bottom: 1px solid var(--line);">
                             <strong>${r.contact_name}</strong>
-                            <br><span style="color: #999;">→ ${r.persona || 'system'}</span>
-                            <br><span style="color: #ccc; font-size: 11px;">${new Date(r.timestamp).toLocaleTimeString()}</span>
+                            <br><span style="color: var(--ink-faint);">→ ${r.persona || 'system'}</span>
+                            <br><span style="color: var(--ink-faint); font-size: 11px;">${new Date(r.timestamp).toLocaleTimeString()}</span>
                         </div>
                     `).join('');
 
@@ -502,7 +639,7 @@
                 const list = document.getElementById('personas-list');
                 const entries = Object.entries(data.personas);
                 if (entries.length === 0) {
-                    list.innerHTML = '<p style="color:#999;">No personas defined</p>';
+                    list.innerHTML = '<p style="color:var(--ink-faint);">No personas defined</p>';
                     return;
                 }
                 list.innerHTML = entries.map(([id, p]) => {
@@ -513,7 +650,7 @@
                             <div class="agent-header">
                                 <div>
                                     <div class="agent-name">${p.name}</div>
-                                    <div style="font-size: 11px; color: #999;">${preview}</div>
+                                    <div style="font-size: 11px; color: var(--ink-faint);">${preview}</div>
                                 </div>
                                 <div style="display:flex; gap:8px; align-items:center;">
                                     ${isActive ? '<span class="status-badge enabled">✓ ACTIVE</span>' : ''}
@@ -522,7 +659,7 @@
                             <div class="config-buttons">
                                 ${isActive ? '' : `<button onclick="activatePersona('${id}')">Activate</button>`}
                                 <button onclick="openPersonaForm('${id}', '${p.name.replace(/'/g, "\\'")}')">Edit</button>
-                                <button onclick="deletePersona('${id}', ${isActive})" style="background:#c0392b;">Delete</button>
+                                <button onclick="deletePersona('${id}', ${isActive})" class="btn-danger">Delete</button>
                             </div>
                         </div>
                     `;
@@ -666,6 +803,9 @@
             const model = document.getElementById(`model-${agentId}`).value;
             const temperature = parseFloat(document.getElementById(`temp-${agentId}`).value);
             const timeout = parseInt(document.getElementById(`timeout-${agentId}`).value);
+            const promptEl = document.getElementById(`prompt-${agentId}`);
+            const body = { model, temperature, timeout };
+            if (promptEl) body.prompt_template = promptEl.value;
 
             if (!model) {
                 showMessage('Please select a model', 'error');
@@ -676,7 +816,7 @@
                 const response = await fetch(`${API_URL}/agents/${agentId}/model`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model, temperature, timeout })
+                    body: JSON.stringify(body)
                 });
 
                 if (response.ok) {
@@ -719,11 +859,11 @@
 
                     if (status.connected) {
                         statusText.textContent = '✅ WhatsApp Connected!';
-                        statusText.style.color = '#4CAF50';
-                        container.innerHTML = '<p style="color: #4CAF50; font-weight: bold;">✓ Ready to receive messages</p>';
+                        statusText.style.color = 'var(--success)';
+                        container.innerHTML = '<p style="color: var(--success); font-weight: bold;">✓ Ready to receive messages</p>';
                     } else if (status.hasQR) {
                         statusText.textContent = '📱 Scan QR Code';
-                        statusText.style.color = '#1976D2';
+                        statusText.style.color = 'var(--accent)';
                         console.log('🔍 Fetching QR image from:', `${API_URL}/whatsapp/qr/image`);
 
                         // Fetch the actual QR image
@@ -742,7 +882,7 @@
                                     img.alt = 'WhatsApp QR Code';
                                     img.style.maxWidth = '250px';
                                     img.style.maxHeight = '250px';
-                                    img.style.border = '2px solid #ddd';
+                                    img.style.border = '2px solid var(--line)';
                                     img.style.borderRadius = '8px';
                                     img.onload = () => console.log('✅ QR image loaded successfully');
                                     img.onerror = (e) => console.error('❌ Failed to load QR image:', e);
@@ -751,21 +891,21 @@
                                     console.log('✨ IMG appended to container');
                                 } else {
                                     console.error('❌ No QR data in response:', data);
-                                    container.innerHTML = '<p style="color: #999;">No QR data received</p>';
+                                    container.innerHTML = '<p style="color: var(--ink-faint);">No QR data received</p>';
                                 }
                             })
                             .catch(err => {
                                 console.error('❌ QR image fetch error:', err.message);
-                                container.innerHTML = `<p style="color: #d32f2f;">Error: ${err.message}</p>`;
+                                container.innerHTML = `<p style="color: var(--error);">Error: ${err.message}</p>`;
                             });
                     } else {
                         statusText.textContent = '⏳ Initializing...';
-                        container.innerHTML = '<p style="color: #999;">Starting WhatsApp Web...</p>';
+                        container.innerHTML = '<p style="color: var(--ink-faint);">Starting WhatsApp Web...</p>';
                     }
                 })
                 .catch(err => {
                     console.error('Status Error:', err);
-                    document.getElementById('qr-code-container').innerHTML = '<p style="color: #d32f2f;">⚠️ WhatsApp service not running on port 3001</p>';
+                    document.getElementById('qr-code-container').innerHTML = '<p style="color: var(--error);">⚠️ WhatsApp service not running on port 3001</p>';
                     document.getElementById('wa-status-text').textContent = '❌ Service offline';
                 });
         }
@@ -781,8 +921,44 @@
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);
         setInterval(loadHistory, 5000);
-        // Refresh WhatsApp QR every 3 seconds
-        setInterval(loadWhatsAppQR, 3000);
+        // Deliberately NOT on a timer: this hits OpenWA's own REST API directly
+        // (ui/control_panel_api.py's /api/whatsapp/status), which shares OpenWA's
+        // rate limit budget with OpenWAPoller/KBIngestionPoller/CronScheduler -
+        // polling it every 3s here was silently starving those and causing
+        // sustained 429s. One fetch on page load is enough for initial QR/status;
+        // the "Check status" button calls loadWhatsAppQR() on demand instead.
+    </script>
+
+    <script>
+        (function(){
+            // Beige is the default look regardless of OS theme - dark is opt-in
+            // only, via this toggle. Choice persists across visits; first-ever
+            // visit is always beige, never guessed from prefers-color-scheme.
+            // Matches docs/index.html's theme behavior exactly.
+            var root = document.documentElement;
+            var toggle = document.getElementById('theme-toggle');
+            var STORAGE_KEY = 'adiyan-dashboard-theme';
+
+            function applyTheme(theme) {
+                if (theme === 'dark') {
+                    root.setAttribute('data-theme', 'dark');
+                    toggle.setAttribute('aria-label', 'Switch to light theme');
+                } else {
+                    root.setAttribute('data-theme', 'light');
+                    toggle.setAttribute('aria-label', 'Switch to dark theme');
+                }
+            }
+
+            var saved = null;
+            try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+            applyTheme(saved === 'dark' ? 'dark' : 'light');
+
+            toggle.addEventListener('click', function() {
+                var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+                try { localStorage.setItem(STORAGE_KEY, next); } catch (e) {}
+            });
+        })();
     </script>
 </body>
 </html>

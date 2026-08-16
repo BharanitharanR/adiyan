@@ -18,7 +18,18 @@ class OpenWASessionNotFound(Exception):
 
 
 class OpenWAService:
-    """Async wrapper around OpenWA's REST API for a single named session."""
+    """Async wrapper around OpenWA's REST API for a single named session.
+
+    This instance is shared across at least two independent asyncio event loops -
+    the OpenWA poller's own long-lived loop, and a fresh loop asyncio.run() spins
+    up per message on the RabbitMQ consumer thread. A persistent httpx.AsyncClient
+    would bind its internal connection-pool lock to whichever loop touched it
+    first, then error ("bound to a different event loop") the first time a call
+    came from the other one. Opening a short-lived client per call sidesteps this
+    entirely - it's created and closed within a single coroutine's lifetime, on
+    whichever loop happens to be running, so it never outlives or crosses loops.
+    On localhost this costs a cheap loopback TCP setup per call, not real latency.
+    """
 
     def __init__(
         self,
@@ -28,23 +39,32 @@ class OpenWAService:
         request_timeout: float = 10.0,
     ):
         self.base_url = base_url.rstrip('/')
-        # A secret should not have to live in the config file to be used — env var wins if set.
-        self.api_key = os.environ.get('OPENWA_API_KEY', api_key)
+        # Priority: OS Keychain vault (config/secrets_vault.py) > env var > the
+        # api_key passed in (which itself already reflects the vault via
+        # control_plane's own resolution - this is a defensive second check for
+        # any caller that constructs OpenWAService directly, e.g. Tests/).
+        from config.secrets_vault import get_secret
+        self.api_key = get_secret('OPENWA_API_KEY') or os.environ.get('OPENWA_API_KEY', api_key)
         self.session_name = session_name
+        self.request_timeout = request_timeout
         self._session_id: Optional[str] = None
 
-        self._client = httpx.AsyncClient(
+        logger.info(f"OpenWAService initialized for session '{session_name}' at {self.base_url}")
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             base_url=self.base_url,
             headers={
                 'X-API-Key': self.api_key,
                 'Content-Type': 'application/json',
             },
-            timeout=request_timeout,
+            timeout=self.request_timeout,
         )
-        logger.info(f"OpenWAService initialized for session '{session_name}' at {self.base_url}")
 
     async def close(self):
-        await self._client.aclose()
+        """No-op: there's no persistent client to close - kept so existing
+        shutdown code calling this doesn't need to change."""
+        pass
 
     async def resolve_session_id(self, force_refresh: bool = False) -> str:
         """
@@ -57,7 +77,8 @@ class OpenWAService:
         if self._session_id and not force_refresh:
             return self._session_id
 
-        response = await self._client.get('/api/sessions')
+        async with self._new_client() as client:
+            response = await client.get('/api/sessions')
         response.raise_for_status()
         sessions = response.json()
 
@@ -85,17 +106,19 @@ class OpenWAService:
     async def get_chats(self) -> List[Dict[str, Any]]:
         """Return all chats for the resolved session."""
         session_id = await self._session_id_or_refresh()
-        response = await self._client.get(f'/api/sessions/{session_id}/chats')
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}/chats')
         response.raise_for_status()
         return response.json()
 
     async def get_messages(self, chat_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Return recent messages for a specific chat, most-recent-first (per OpenWA's ordering)."""
         session_id = await self._session_id_or_refresh()
-        response = await self._client.get(
-            f'/api/sessions/{session_id}/messages',
-            params={'chatId': chat_id, 'limit': limit},
-        )
+        async with self._new_client() as client:
+            response = await client.get(
+                f'/api/sessions/{session_id}/messages',
+                params={'chatId': chat_id, 'limit': limit},
+            )
         response.raise_for_status()
         data = response.json()
         return data.get('messages', data if isinstance(data, list) else [])
@@ -103,10 +126,11 @@ class OpenWAService:
     async def get_all_recent_messages(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Return recent messages across the whole session (no chatId filter)."""
         session_id = await self._session_id_or_refresh()
-        response = await self._client.get(
-            f'/api/sessions/{session_id}/messages',
-            params={'limit': limit},
-        )
+        async with self._new_client() as client:
+            response = await client.get(
+                f'/api/sessions/{session_id}/messages',
+                params={'limit': limit},
+            )
         response.raise_for_status()
         data = response.json()
         return data.get('messages', data if isinstance(data, list) else [])
@@ -114,10 +138,11 @@ class OpenWAService:
     async def send_message(self, chat_id: str, text: str) -> Dict[str, Any]:
         """Send a text message to a chat. Returns OpenWA's response ({'messageId', 'timestamp'})."""
         session_id = await self._session_id_or_refresh()
-        response = await self._client.post(
-            f'/api/sessions/{session_id}/messages/send-text',
-            json={'chatId': chat_id, 'text': text},
-        )
+        async with self._new_client() as client:
+            response = await client.post(
+                f'/api/sessions/{session_id}/messages/send-text',
+                json={'chatId': chat_id, 'text': text},
+            )
         response.raise_for_status()
         result = response.json()
         logger.info(f"Sent message to {chat_id}: {result.get('messageId')}")
@@ -126,7 +151,8 @@ class OpenWAService:
     async def get_session_status(self) -> Dict[str, Any]:
         """Return the raw session record (status, phone, pushName, etc.)."""
         session_id = await self._session_id_or_refresh()
-        response = await self._client.get(f'/api/sessions/{session_id}')
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}')
         response.raise_for_status()
         return response.json()
 
@@ -137,3 +163,57 @@ class OpenWAService:
         except Exception as e:
             logger.warning(f"Could not check OpenWA session status: {e}")
             return False
+
+    async def get_own_chat_id(self) -> Optional[str]:
+        """Return the linked account's own chat id (its self-chat / 'Message Yourself' JID),
+        or None if the session has no phone yet (not linked / still initializing).
+
+        This is the business owner's identity for KB ingestion (services/kb_ingestion_poller.py):
+        nobody but the account holder can ever put a message into their own self-chat, so a
+        message's chatId matching this is a sufficient authorization check on its own.
+        """
+        status = await self.get_session_status()
+        phone = status.get('phone')
+        if not phone:
+            return None
+        return await self.resolve_chat_id(phone)
+
+    async def resolve_chat_id(self, phone: str) -> Optional[str]:
+        """Resolve any phone number to its WhatsApp chat id, or None if OpenWA can't
+        find a match. NOT simply f'{phone}@c.us' - some accounts (confirmed against a
+        real linked session) address individual chats via WhatsApp's newer @lid scheme
+        instead of phone-based @c.us, with a lid number that bears no relation to the
+        phone number. The contacts/check endpoint resolves to whichever JID form the
+        account actually uses.
+
+        Needed beyond get_own_chat_id() (which only resolves the owner's own number)
+        because a client's own `lid` is only ever captured live off an incoming
+        message (agents/parser_agent.py's registration flow) - a client registered
+        before that capture existed, or added by the owner via the admin channel's
+        add_client with only a phone number, has no lid on file at all. Proactive
+        sends (services/cron_scheduler.py) can't rely on a live message to supply
+        one, so they need to resolve it from the phone number instead.
+
+        Strips non-digit characters first - confirmed live that the endpoint 500s
+        on a leading '+' (a stored phone number like '+919080089081' must become
+        '919080089081'), while session status's own `phone` field (used by
+        get_own_chat_id) never has one to begin with.
+        """
+        digits_only = ''.join(ch for ch in phone if ch.isdigit())
+        session_id = await self._session_id_or_refresh()
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}/contacts/check/{digits_only}')
+        response.raise_for_status()
+        return response.json().get('whatsappId')
+
+    async def download_media(self, chat_id: str, message_id: str) -> Dict[str, Any]:
+        """Download a message's archived media (requires CHAT_MEDIA_ARCHIVE_ENABLED=true in
+        OpenWA). Returns {'content': bytes, 'mimetype': str}."""
+        session_id = await self._session_id_or_refresh()
+        async with self._new_client() as client:
+            response = await client.get(f'/api/sessions/{session_id}/messages/{chat_id}/{message_id}/media')
+        response.raise_for_status()
+        return {
+            'content': response.content,
+            'mimetype': response.headers.get('content-type', 'application/octet-stream'),
+        }
