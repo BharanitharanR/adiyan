@@ -16,6 +16,7 @@ Adiyan (அடியேன் — "your humble servant") is a self-hosted AI bus
 - **A natural-language admin channel.** Turn any of the 13 underlying agents on/off, change their model, temperature, or timeout, add/manage clients, and pull platform stats — all by just asking.
 - **Read-only visibility into client conversations** — search or pull recent history — for oversight, without the ability to edit or delete what a client actually said.
 - **A knowledge base built from what you upload.** Send a PDF to your own self-chat and it's automatically parsed and chunked into a knowledge base your clients' conversations can draw on.
+- **A private-note escape hatch.** End a self-chat message with a configurable suffix (default `**`, changeable on the dashboard) to keep it out of admin processing entirely — no job capture, no PDF ingestion, no admin reply.
 - **AI Cron Jobs** — schedule recurring or one-time WhatsApp actions in plain language ("every Sunday at 6pm, send everyone a note," "send this to everyone this week") targeting yourself, one client, or everyone, with optional reply capture and a window to collect responses.
 - **Private, read-only Gmail and Calendar access**, reachable only from your own chat — check your inbox or what's on your calendar directly over WhatsApp. Never something a client's conversation can reach.
 
@@ -34,6 +35,8 @@ Adiyan (அடியேன் — "your humble servant") is a self-hosted AI bus
 - No dashboard UI for managing scheduled jobs — WhatsApp-only for now.
 - A job's target is `self`, one specific client, or everyone — there's no way yet to target an arbitrary subset (e.g. "just the people who replied yes").
 - The only action a job can take is sending a WhatsApp message — no email-sending or webhook calls yet.
+- If the owner and the sole client are meant to be the same person, that's not supported yet: the owner's own self-chat is always treated as the admin channel, never routed to the coaching pipeline.
+- No group-chat support — Adiyan only responds in 1:1 chats today; this is a deliberate exclusion (a shared coaching thread raises real privacy/product questions), not just an unfinished feature.
 
 ## Getting started
 
