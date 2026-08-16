@@ -300,6 +300,18 @@ def export_config():
     """Export configuration as JSON"""
     return jsonify(control_plane.config.to_dict())
 
+@app.route('/api/google-workspace/status', methods=['GET'])
+def google_workspace_status():
+    """Owner-only Gmail/Calendar connection status (services/owner_admin_handler.py's
+    check_google_workspace_status admin tool is the WhatsApp equivalent of this)."""
+    from core.mcp_tools import is_google_workspace_configured
+    tool_count = app.config.get('OWNER_MCP_TOOL_COUNT', 0)
+    if not is_google_workspace_configured():
+        return jsonify({'status': 'not_configured', 'tool_count': 0})
+    if tool_count == 0:
+        return jsonify({'status': 'configured_but_unavailable', 'tool_count': 0})
+    return jsonify({'status': 'connected', 'tool_count': tool_count})
+
 @app.route('/api/test-message', methods=['POST'])
 def test_message():
     """Test endpoint - send a message through the orchestrator"""

@@ -100,7 +100,11 @@ class KBIngestionPoller:
         # WhatsApp session is actually linked (QR scanned) - unlike the main poller,
         # failing to resolve this at startup isn't fatal, since a fresh install won't
         # have a linked phone yet. The poll loop retries resolution every cycle instead.
-        self._owner_chat_id = await self._try_resolve_owner_chat_id()
+        try:
+            self._owner_chat_id = await self._try_resolve_owner_chat_id()
+        except Exception as e:
+            logger.warning(f"⚠️  Could not resolve owner chat id at startup, will retry every poll cycle: {e}")
+            self._owner_chat_id = None
 
         self._start_timestamp = int(time.time())
         self._running = True
@@ -121,11 +125,16 @@ class KBIngestionPoller:
         logger.info("🛑 KB ingestion poller stopped")
 
     async def _try_resolve_owner_chat_id(self) -> Optional[str]:
-        try:
-            return await self.openwa.get_own_chat_id()
-        except Exception as e:
-            logger.debug(f"Could not resolve owner chat id yet: {e}")
-            return None
+        """A None return means the session genuinely has no phone yet (not linked -
+        benign, expected during first-time setup, OpenWAService.get_own_chat_id()
+        itself returns None for this case, no exception). A raised exception means
+        the resolution call itself failed (rate limit, network, OpenWA down) - a
+        real problem, not "waiting for setup" - so it's left to propagate to the
+        caller's own error handling (start()'s try/except, or _poll_loop's existing
+        backoff+dedup logging) instead of being silently swallowed here. Swallowing
+        it used to hide real outages completely: a ~30 minute rate-limit stretch
+        produced zero log output because every retry failed at logger.debug."""
+        return await self.openwa.get_own_chat_id()
 
     async def _poll_loop(self):
         while self._running:
@@ -204,10 +213,27 @@ class KBIngestionPoller:
             return
 
         if message.get('type') != 'document':
-            # Not a document - route to the admin handler if one's configured and this
-            # actually has text (skip reactions/stickers/other non-text noise).
-            if body and self.admin_handler:
-                await self.admin_handler.handle_text_message(self._owner_chat_id, body)
+            if body:
+                # Is this answering an owner-'self' scheduled job (services/cron_scheduler.py)?
+                # If so, capture it as job_data instead of treating it as a fresh admin
+                # request - the client-facing equivalent of this check lives in
+                # agents/validator_agent.py.
+                from services.cron_scheduler import OWNER_PSEUDO_CONTACT
+                pending = db.get_pending_job_response(OWNER_PSEUDO_CONTACT)
+                if pending:
+                    db.write_job_data(
+                        pending['job_id'], key=f"response:{time.strftime('%Y-%m-%d')}",
+                        value=body, contact_name=OWNER_PSEUDO_CONTACT,
+                    )
+                    db.clear_pending_job_response(pending['id'])
+                    await self.openwa.send_message(
+                        self._owner_chat_id, f"Got it, logged — thank you! 🙏\n\n{ADMIN_REPLY_TAG}",
+                    )
+                    return
+                # Not a document, not a pending job response - route to the admin
+                # handler if one's configured (skip reactions/stickers/other non-text noise).
+                if self.admin_handler:
+                    await self.admin_handler.handle_text_message(self._owner_chat_id, body)
             return
 
         # A self-chat message is always direction=outgoing (fromMe=true - you're both sender

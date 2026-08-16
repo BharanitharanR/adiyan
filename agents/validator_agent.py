@@ -1,5 +1,6 @@
 from core.base_agent import BaseAgent, AgentState
 from typing import Dict, Any
+import time
 import config.database as db
 
 class ValidatorAgent(BaseAgent):
@@ -45,6 +46,20 @@ class ValidatorAgent(BaseAgent):
             if is_whitelisted:
                 db.touch_last_active(state.contact_name)
                 self.log_stage(f"✅ {state.contact_name} is whitelisted")
+
+                # Is this message answering a scheduled job we sent (services/cron_scheduler.py)?
+                # If so it's captured as job_data, not routed through normal coaching -
+                # same shape as the is_registration/is_unregistration short-circuit above.
+                pending = db.get_pending_job_response(state.contact_name)
+                if pending:
+                    today = time.strftime('%Y-%m-%d')
+                    db.write_job_data(
+                        pending['job_id'], key=f"response:{today}",
+                        value=state.message_body, contact_name=state.contact_name,
+                    )
+                    db.clear_pending_job_response(pending['id'])
+                    state.is_job_response = True
+                    self.log_stage(f"📝 Captured response for job {pending['job_id']}")
             else:
                 self.log_stage(f"⚠️  {state.contact_name} not whitelisted - ignoring message", 'warning')
 

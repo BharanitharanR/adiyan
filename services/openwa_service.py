@@ -39,8 +39,12 @@ class OpenWAService:
         request_timeout: float = 10.0,
     ):
         self.base_url = base_url.rstrip('/')
-        # A secret should not have to live in the config file to be used — env var wins if set.
-        self.api_key = os.environ.get('OPENWA_API_KEY', api_key)
+        # Priority: OS Keychain vault (config/secrets_vault.py) > env var > the
+        # api_key passed in (which itself already reflects the vault via
+        # control_plane's own resolution - this is a defensive second check for
+        # any caller that constructs OpenWAService directly, e.g. Tests/).
+        from config.secrets_vault import get_secret
+        self.api_key = get_secret('OPENWA_API_KEY') or os.environ.get('OPENWA_API_KEY', api_key)
         self.session_name = session_name
         self.request_timeout = request_timeout
         self._session_id: Optional[str] = None
@@ -167,20 +171,38 @@ class OpenWAService:
         This is the business owner's identity for KB ingestion (services/kb_ingestion_poller.py):
         nobody but the account holder can ever put a message into their own self-chat, so a
         message's chatId matching this is a sufficient authorization check on its own.
-
-        NOT simply f'{phone}@c.us' - some accounts (confirmed against a real linked session)
-        address individual chats via WhatsApp's newer @lid scheme instead of phone-based @c.us,
-        with a lid number that bears no relation to the phone number. The contacts/check
-        endpoint resolves the phone to whichever JID form the account actually uses.
         """
         status = await self.get_session_status()
         phone = status.get('phone')
         if not phone:
             return None
+        return await self.resolve_chat_id(phone)
 
+    async def resolve_chat_id(self, phone: str) -> Optional[str]:
+        """Resolve any phone number to its WhatsApp chat id, or None if OpenWA can't
+        find a match. NOT simply f'{phone}@c.us' - some accounts (confirmed against a
+        real linked session) address individual chats via WhatsApp's newer @lid scheme
+        instead of phone-based @c.us, with a lid number that bears no relation to the
+        phone number. The contacts/check endpoint resolves to whichever JID form the
+        account actually uses.
+
+        Needed beyond get_own_chat_id() (which only resolves the owner's own number)
+        because a client's own `lid` is only ever captured live off an incoming
+        message (agents/parser_agent.py's registration flow) - a client registered
+        before that capture existed, or added by the owner via the admin channel's
+        add_client with only a phone number, has no lid on file at all. Proactive
+        sends (services/cron_scheduler.py) can't rely on a live message to supply
+        one, so they need to resolve it from the phone number instead.
+
+        Strips non-digit characters first - confirmed live that the endpoint 500s
+        on a leading '+' (a stored phone number like '+919080089081' must become
+        '919080089081'), while session status's own `phone` field (used by
+        get_own_chat_id) never has one to begin with.
+        """
+        digits_only = ''.join(ch for ch in phone if ch.isdigit())
         session_id = await self._session_id_or_refresh()
         async with self._new_client() as client:
-            response = await client.get(f'/api/sessions/{session_id}/contacts/check/{phone}')
+            response = await client.get(f'/api/sessions/{session_id}/contacts/check/{digits_only}')
         response.raise_for_status()
         return response.json().get('whatsappId')
 

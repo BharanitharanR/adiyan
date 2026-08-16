@@ -5,6 +5,7 @@
 set -euo pipefail
 
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$INSTALLER_DIR")"
 STAGE_DIR="$INSTALLER_DIR/release_stage"
 VERSION="${1:-$(date +%Y%m%d)}"
 ZIP_NAME="adiyan-${VERSION}.zip"
@@ -17,6 +18,7 @@ check_artifacts() {
     [ -d "$INSTALLER_DIR/dist_openwa/app" ] || fail "Missing dist_openwa/app - run build_openwa.sh first"
     [ -x "$INSTALLER_DIR/node-runtime/bin/node" ] || fail "Missing node-runtime - run build_openwa.sh first"
     [ -x "$INSTALLER_DIR/qdrant-runtime/qdrant" ] || fail "Missing qdrant-runtime - run build_qdrant.sh first"
+    [ -f "$PROJECT_DIR/mcp_servers/crawl4ai_server.py" ] || fail "Missing mcp_servers/crawl4ai_server.py"
 }
 
 stage() {
@@ -35,6 +37,8 @@ stage() {
     cp -r "$INSTALLER_DIR/dist_openwa" "$STAGE_DIR/adiyan/dist_openwa"
     cp -r "$INSTALLER_DIR/node-runtime" "$STAGE_DIR/adiyan/node-runtime"
     cp -r "$INSTALLER_DIR/qdrant-runtime" "$STAGE_DIR/adiyan/qdrant-runtime"
+    mkdir -p "$STAGE_DIR/adiyan/mcp_servers"
+    cp "$PROJECT_DIR/mcp_servers/crawl4ai_server.py" "$STAGE_DIR/adiyan/mcp_servers/crawl4ai_server.py"
 
     cat > "$STAGE_DIR/adiyan/README.txt" << 'EOF'
 Adiyan - your coach's digital twin
@@ -49,8 +53,9 @@ SETUP (one time, needs internet - downloads an AI model, can take a while):
 
        bash /Users/you/Downloads/adiyan/install.sh
 
-  4. Wait for it to finish - it downloads an AI model, which can take several
-     minutes depending on your internet connection.
+  4. Wait for it to finish - it downloads an AI model plus a few tools for web
+     search, page reading, and (optionally) Gmail/Calendar, which can take
+     several minutes depending on your internet connection.
 
 EVERY TIME YOU WANT TO USE ADIYAN:
 

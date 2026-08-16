@@ -13,14 +13,25 @@ against what's on file) before touching config/control_plane.py or config/databa
 Wired in by services/kb_ingestion_poller.py's poll loop (not a second independent
 poller) - both PDF uploads and admin text share one fetch of the self-chat per cycle,
 so this doesn't add a second consumer of OpenWA's rate-limited API budget.
+
+This is also the ONLY place core/mcp_tools.py's load_owner_mcp_tools() (Gmail,
+Calendar) may ever be bound. This channel is reachable only by the platform
+owner's own WhatsApp self-chat (services/kb_ingestion_poller.py's chatId check),
+never by a client - that boundary is what makes it safe to give this one agent
+read access to the owner's personal email and calendar. Never pass owner_mcp_tools
+(or anything read from it) into agents/llm_agent.py, agents/reasoning_cycle.py, or
+services/cron_scheduler.py's job composer - those are reachable from a client's
+own coaching conversation.
 """
 import asyncio
 import json
 import logging
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
 import config.database as db
@@ -45,6 +56,13 @@ ADMIN_REPLY_TAG = '[AdminAI]'
 # grow unbounded over a long admin session.
 MAX_HISTORY_MESSAGES = 10
 
+# 60s was too tight for compound requests ("enable all the agents", "trigger this
+# job now") that need several sequential tool-calls, each its own full round-trip
+# to a local model - confirmed live, both timed out at 60s. 180s matches LLMAgent's
+# own default timeout (agents/llm_agent.py) for the same class of local-model call;
+# nothing here is blocking an interactive UI, so the extra headroom costs nothing.
+ADMIN_AGENT_TIMEOUT_SECONDS = 180
+
 ALL_AGENT_IDS = {
     'parser', 'validator', 'router', 'llm', 'synthesizer', 'storage', 'publisher',
     'hermes', 'prometheus', 'pythia', 'hephaestus', 'calliope', 'momus',
@@ -55,19 +73,87 @@ CLIENT_FIELDS = {'notes', 'phone', 'tags'}
 ADMIN_SYSTEM_PROMPT = (
     "You are Adiyan's admin assistant, used only by the platform owner through their own "
     "WhatsApp self-chat - not a client-facing conversation. Use the tools to look things up "
-    "or make changes; never guess at data you haven't fetched. Keep your final reply short "
-    "and factual, no coaching tone, no filler - a plain confirmation or a compact fact. If a "
-    "request doesn't map to a real agent, field, or client, say so plainly rather than "
-    "guessing or inventing one.\n\n"
+    "or make changes; never guess at data you haven't fetched. When asked for an overview "
+    "or status of multiple agents, call list_agent_configs (one call, all 13 agents) rather "
+    "than describing what you'd need to check or calling get_agent_config repeatedly - and "
+    "when asked to enable/disable several agents at once (e.g. \"turn on all the reasoning "
+    "stages\"), call update_agent_config once per agent in the same turn, not one at a time "
+    "across replies. Keep your final reply short and factual, no coaching tone, no filler - a "
+    "plain confirmation or a compact fact. If a request doesn't map to a real agent, field, or "
+    "client, say so plainly rather than guessing or inventing one.\n\n"
     "You have READ-ONLY access to client conversation history via get_recent_client_messages "
     "and search_client_messages. Use it only to answer the owner's direct questions about what "
     "was said - report back facts (quote or summarize what was actually said), never invent "
     "content, and never give coaching advice yourself based on it. There is no tool to edit or "
-    "delete a client's conversation history, by design."
+    "delete a client's conversation history, by design.\n\n"
+    "You can also schedule recurring WhatsApp jobs (create_job/list_jobs/enable_job/delete_job) - "
+    "e.g. a weekly broadcast to all clients, or a nightly prompt-and-log routine. Confirm back "
+    "the parsed schedule in plain terms (e.g. \"Scheduled for Sundays at 6:00 PM\") so the owner "
+    "can catch a misparse immediately. Use trigger_job_now to send a job immediately for testing - "
+    "it does not change the job's real scheduled time.\n\n"
+    "For a ONE-TIME broadcast or note (the owner wants it sent once, not on a recurring "
+    "schedule - e.g. \"send this to everyone this week\", \"a one time note asking...\"): "
+    "use broadcast_once, not create_job - it sends immediately and never repeats, in one "
+    "step. Use create_job only for something the owner actually wants recurring (\"every "
+    "Sunday\", \"every night\"). If the owner wants to review what people replied (e.g. "
+    "before a call), use get_job_responses - never invent, guess, or give an example of "
+    "what someone might have replied. A job that was just sent has no replies yet; say so "
+    "plainly rather than fabricating one.\n\n"
+    "If Gmail/Calendar tools are bound (they won't be until the owner completes one-time "
+    "Google OAuth setup), use them to check the owner's own inbox or calendar when asked "
+    "(e.g. \"what's on my calendar today\", \"did I get an email from X\") - these are "
+    "read-only, so never claim to have sent an email or created/moved a calendar event; if "
+    "asked to do either, say that capability isn't enabled. If no Gmail/Calendar tools are "
+    "available at all, say so plainly rather than guessing at what might be on the calendar.\n\n"
+    "If start_google_auth returns an authorization URL, your reply MUST include that URL "
+    "copied character-for-character from the tool output - every query parameter, in the "
+    "original order, no line break inserted inside it. Do not shorten it, drop parameters "
+    "you don't recognize, describe it instead of pasting it, or reformat it in any way: "
+    "Google rejects the link if even one parameter (like redirect_uri) is missing or altered. "
+    "Paste the URL first, then add at most one short sentence around it."
 )
 
 
-def _build_admin_tools(control_plane) -> List:
+GOOGLE_AUTH_URL_PATTERN = re.compile(r'https://accounts\.google\.com/o/oauth2/auth\?\S+')
+
+
+def _extract_google_auth_url(tool_message: ToolMessage) -> Optional[str]:
+    """Pulls the full authorization URL out of start_google_auth's raw tool output.
+    Small local models reliably paraphrase/truncate long query strings when composing
+    their own final reply (confirmed live: a real auth attempt failed at Google's own
+    consent page with "Missing required parameter: redirect_uri" even though the tool's
+    raw output - verified directly against the running workspace-mcp process - had a
+    complete, correct URL). Content can be a plain string or workspace-mcp's list-of-
+    content-block form ([{'type': 'text', 'text': ...}]) depending on the MCP transport,
+    so both are checked."""
+    content = tool_message.content
+    if isinstance(content, list):
+        content = " ".join(
+            block.get('text', '') for block in content if isinstance(block, dict)
+        )
+    if not isinstance(content, str):
+        return None
+    match = GOOGLE_AUTH_URL_PATTERN.search(content)
+    return match.group(0) if match else None
+
+
+def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_scheduler=None,
+                        owner_mcp_tool_count: int = 0) -> List:
+    @tool
+    def list_agent_configs() -> list:
+        """List every agent's enabled/model/temperature/timeout in one call - the 7
+        pipeline agents (parser, validator, router, llm, synthesizer, storage,
+        publisher) plus the 6 LLM reasoning-cycle stages (hermes, prometheus,
+        pythia, hephaestus, calliope, momus). Use this instead of calling
+        get_agent_config repeatedly when the owner asks for an overview or to
+        enable/disable several agents at once."""
+        return [
+            {'id': agent_id, 'name': cfg.name, 'enabled': cfg.enabled, 'model': cfg.model,
+             'temperature': cfg.temperature, 'timeout': cfg.timeout}
+            for agent_id in sorted(ALL_AGENT_IDS)
+            for cfg in [control_plane.get_agent_config(agent_id)] if cfg
+        ]
+
     @tool
     def get_agent_config(agent_id: str) -> dict:
         """Get one agent's current config: enabled, model, temperature, timeout. agent_id
@@ -124,13 +210,29 @@ def _build_admin_tools(control_plane) -> List:
         return db.list_clients(active_only=only_active)
 
     @tool
-    def add_client(name: str, phone: str = '') -> dict:
+    async def add_client(name: str, phone: str = '') -> dict:
         """Register a new client (coach-initiated onboarding, no self-registration
-        message needed). phone is optional."""
+        message needed). phone is optional, but without it Adiyan can't proactively
+        message this client (scheduled jobs, broadcasts) until they message in
+        first - a normal reply always carries its own chat id."""
         if not name or not name.strip():
             return {'error': 'name is required'}
-        db.add_client(name.strip(), phone=phone.strip() or None)
-        return {'success': True, 'name': name.strip()}
+        phone = phone.strip() or None
+        lid = None
+        if phone and cron_scheduler:
+            try:
+                lid = await cron_scheduler.openwa.resolve_chat_id(phone)
+            except Exception as e:
+                logger.warning(f"⚠️  Could not resolve chat id for new client '{name}' from phone: {e}")
+        db.add_client(name.strip(), phone=phone, lid=lid)
+        result = {'success': True, 'name': name.strip()}
+        if phone and not lid:
+            result['warning'] = (
+                "Phone number saved, but couldn't resolve a WhatsApp chat id for it yet - "
+                "scheduled messages to this client won't go through until they message Adiyan "
+                "at least once, or the number is confirmed reachable on WhatsApp."
+            )
+        return result
 
     @tool
     def update_client(name: str, field: str, value: str) -> dict:
@@ -197,19 +299,154 @@ def _build_admin_tools(control_plane) -> List:
         results = memory.retrieve(query, contact_name=name, top_k=limit)
         return results or {'error': f"No relevant history found for '{name}'"}
 
-    return [get_agent_config, update_agent_config, get_client, list_clients,
+    @tool
+    async def create_job(name: str, natural_language_schedule: str, target: str, instructions: str,
+                          expects_response: bool = False, response_window_hours: int = 0) -> dict:
+        """Create a scheduled WhatsApp job (AI Cron Job). target must be
+        'all_clients', 'self' (your own self-chat), or an exact client name.
+        natural_language_schedule is free text like 'every Sunday at 6pm' or
+        'every night at 9' - it's parsed into a real schedule automatically.
+        instructions describes what the message should say (and may reference the
+        knowledge base - the job composer can search it). Set expects_response=true
+        and response_window_hours (0 = no expiry) to capture whatever the
+        recipient(s) reply with next as data, instead of normal coaching."""
+        from services.cron_scheduler import create_job_record, OWNER_PSEUDO_CONTACT
+        if target not in ('all_clients', 'self') and not db.get_client(target):
+            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', or an exact client name."}
+        try:
+            job = await create_job_record(
+                created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
+                target=target, instructions=instructions, expects_response=expects_response,
+                response_window_hours=response_window_hours or None,
+                model_name=model_name, ollama_url=ollama_url,
+            )
+        except ValueError as e:
+            return {'error': str(e)}
+        return {
+            'success': True, 'job_id': job['id'], 'cron_expression': job['cron_expression'],
+            'next_run_at': job['next_run_at'],
+        }
+
+    @tool
+    def list_jobs() -> list:
+        """List all scheduled jobs - both owner-created and every client's own
+        self-service reminders."""
+        return db.list_cron_jobs()
+
+    @tool
+    def enable_job(job_id: int, enabled: bool) -> dict:
+        """Enable or disable a scheduled job by id (does not delete it)."""
+        ok = db.update_cron_job(job_id, enabled=enabled)
+        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+
+    @tool
+    def delete_job(job_id: int) -> dict:
+        """Permanently delete a scheduled job by id."""
+        ok = db.delete_cron_job(job_id)
+        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+
+    @tool
+    async def broadcast_once(name: str, target: str, instructions: str,
+                              expects_response: bool = False, response_window_hours: int = 0) -> dict:
+        """Send a ONE-TIME message right now - for a single announcement, ask, or
+        reminder, NOT a recurring schedule. target must be 'all_clients', 'self', or
+        an exact client name. Creates, sends, and permanently disables the
+        underlying job in one step - nothing to clean up afterward, and it will
+        never fire again on its own. Set expects_response=true to capture replies
+        (read them back later with get_job_responses)."""
+        from services.cron_scheduler import OWNER_PSEUDO_CONTACT
+        if not cron_scheduler:
+            return {'error': 'Cron scheduler is not available yet (still starting up)'}
+        if target not in ('all_clients', 'self') and not db.get_client(target):
+            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', or an exact client name."}
+        try:
+            result = await cron_scheduler.broadcast_once(
+                created_by=OWNER_PSEUDO_CONTACT, name=name, target=target, instructions=instructions,
+                expects_response=expects_response, response_window_hours=response_window_hours or None,
+            )
+        except ValueError as e:
+            return {'error': str(e)}
+        return {'success': True, **result}
+
+    @tool
+    def get_job_responses(job_id: int) -> dict:
+        """Read back what recipients have replied to a job so far (its collected
+        job_data) - e.g. broadcast replies or journal entries, useful for reviewing
+        before a call. Each response includes who sent it and when."""
+        job = db.get_cron_job(job_id)
+        if not job:
+            return {'error': f"No job with id {job_id}"}
+        responses = db.read_job_data(job_id)
+        if not responses:
+            return {'job_name': job['name'], 'responses': [], 'note': 'No responses collected yet'}
+        return {'job_name': job['name'], 'responses': responses}
+
+    @tool
+    async def trigger_job_now(job_id: int) -> dict:
+        """Manually run a scheduled job right now, for testing - composes and sends
+        its message immediately without waiting for its actual scheduled time.
+        Does NOT change that scheduled time (the job's real next run is unaffected -
+        this is a test send, not a reschedule)."""
+        if not cron_scheduler:
+            return {'error': 'Cron scheduler is not available yet (still starting up)'}
+        job = db.get_cron_job(job_id)
+        if not job:
+            return {'error': f"No job with id {job_id}"}
+        return await cron_scheduler.run_now(job)
+
+    @tool
+    def check_google_workspace_status() -> dict:
+        """Check whether Gmail/Calendar tools are set up and working - use this
+        when the owner asks things like "is my calendar connected" or "why can't
+        you see my email"."""
+        from core.mcp_tools import is_google_workspace_configured
+        if not is_google_workspace_configured():
+            return {
+                'status': 'not_configured',
+                'message': 'Google Workspace credentials have not been set up yet - run '
+                           'tools/set_secret.py GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET '
+                           'to store them in the vault, then restart Adiyan.',
+            }
+        if owner_mcp_tool_count == 0:
+            return {
+                'status': 'configured_but_unavailable',
+                'message': 'Credentials are stored but no Gmail/Calendar tools loaded - either the '
+                           'one-time Google sign-in consent was never completed, or Adiyan needs a '
+                           'restart to pick up the credentials.',
+            }
+        return {
+            'status': 'connected',
+            'tool_count': owner_mcp_tool_count,
+            'message': f'Gmail/Calendar are connected ({owner_mcp_tool_count} tools available, read-only).',
+        }
+
+    return [list_agent_configs, get_agent_config, update_agent_config, get_client, list_clients,
             add_client, update_client, remove_client, get_platform_stats,
-            get_recent_client_messages, search_client_messages]
+            get_recent_client_messages, search_client_messages,
+            create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
+            check_google_workspace_status,
+            broadcast_once]
 
 
 class OwnerAdminHandler:
     """One instance per process, shared by kb_ingestion_poller.py for every non-document
     self-chat message."""
 
-    def __init__(self, control_plane, openwa_service, ollama_url: str = None):
+    def __init__(self, control_plane, openwa_service, ollama_url: str = None, cron_scheduler=None,
+                 owner_mcp_tools: Optional[List] = None):
         self.control_plane = control_plane
         self.openwa = openwa_service
         self.ollama_url = ollama_url or control_plane.config.ollama_url
+        # Lets trigger_job_now reuse CronScheduler's own send logic (run_now())
+        # instead of duplicating it - None is fine (the tool just reports
+        # "not available yet") since main.py constructs the scheduler in the same
+        # step as this handler and always passes it through.
+        self.cron_scheduler = cron_scheduler
+        # Owner-only MCP tools (Gmail, Calendar - core/mcp_tools.py's
+        # load_owner_mcp_tools()). Empty list, never None, if unconfigured - see
+        # this module's own docstring for why this must never be the
+        # client-facing pool.
+        self.owner_mcp_tools = owner_mcp_tools or []
         # Reuses the 'llm' agent's configured model rather than inventing a separate
         # admin-specific one - one less thing to independently configure.
         llm_cfg = control_plane.get_agent_config('llm')
@@ -235,7 +472,20 @@ class OwnerAdminHandler:
             reply = await self._run_admin_agent(message_body)
         except Exception as e:
             logger.error(f"❌ Admin request failed: {e}", exc_info=True)
-            reply = f"Couldn't process that: {e}"
+            if isinstance(e, TimeoutError):
+                # str(TimeoutError()) is '' - without this, the owner sees the
+                # literally-empty "Couldn't process that: " and has no idea why.
+                # Could be this call's own timeout, or a tool it invoked timing out
+                # internally (e.g. a job's message composer) - both raise the same
+                # plain TimeoutError, so this can't name a specific number reliably.
+                detail = (
+                    "took too long to complete - it may need several steps, or the "
+                    "system is under heavy load right now; try again in a moment or "
+                    "a narrower request"
+                )
+            else:
+                detail = str(e) or type(e).__name__
+            reply = f"Couldn't process that: {detail}"
 
         try:
             result = await self.openwa.send_message(chat_id, f"{reply}\n\n{ADMIN_REPLY_TAG}")
@@ -249,20 +499,45 @@ class OwnerAdminHandler:
         from langgraph.prebuilt import create_react_agent
 
         model = ChatOllama(model=self.model, base_url=self.ollama_url, temperature=0.2)
-        tools = _build_admin_tools(self.control_plane)
+        tools = _build_admin_tools(self.control_plane, self.model, self.ollama_url, self.cron_scheduler,
+                                    owner_mcp_tool_count=len(self.owner_mcp_tools))
+        tools = tools + self.owner_mcp_tools
         agent = create_react_agent(model, tools)
 
         human = HumanMessage(content=message_body)
-        messages = [SystemMessage(content=ADMIN_SYSTEM_PROMPT)] + self._history + [human]
-        result = await asyncio.wait_for(agent.ainvoke({"messages": messages}), timeout=60)
+        # The model has no built-in clock - confirmed live it otherwise guesses a
+        # training-data-era date (e.g. queried a calendar range in 2023) for any
+        # relative request like "next week". Stamped fresh per call, not once at
+        # startup, since the admin process can stay up across real calendar days.
+        current_date_notice = f"Today's date is {datetime.now().strftime('%A, %Y-%m-%d')}."
+        system = SystemMessage(content=f"{ADMIN_SYSTEM_PROMPT}\n\n{current_date_notice}")
+        messages = [system] + self._history + [human]
+        result = await asyncio.wait_for(agent.ainvoke({"messages": messages}), timeout=ADMIN_AGENT_TIMEOUT_SECONDS)
 
         final = result["messages"][-1]
         if not isinstance(final, AIMessage) or not final.content:
             raise Exception("Admin agent produced no final answer")
 
+        reply = final.content.strip()
+
+        # Don't trust the LLM to relay a Google auth URL byte-for-byte - see
+        # _extract_google_auth_url's docstring for the confirmed live failure this
+        # guards against. If start_google_auth was called this turn, force the exact
+        # tool-returned URL into the reply rather than whatever the model composed.
+        for msg in result["messages"]:
+            if isinstance(msg, ToolMessage) and msg.name == 'start_google_auth':
+                auth_url = _extract_google_auth_url(msg)
+                if auth_url and auth_url not in reply:
+                    reply = (
+                        "Open this link to authorize Google access:\n"
+                        f"{auth_url}\n\n"
+                        "After approving, retry your request."
+                    )
+                break
+
         # Only the user's turn and the final answer are kept - not the intermediate
         # tool-call/tool-result messages the react loop produced getting there, which
         # would otherwise pollute future turns with stale tool-call artifacts.
-        self._history.extend([human, AIMessage(content=final.content)])
+        self._history.extend([human, AIMessage(content=reply)])
         self._history = self._history[-MAX_HISTORY_MESSAGES:]
-        return final.content.strip()
+        return reply

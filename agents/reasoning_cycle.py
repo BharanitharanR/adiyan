@@ -29,6 +29,26 @@ logger = logging.getLogger('ReasoningCycle')
 
 PLAN_MENU = ['ask_clarifying_question', 'call_tool', 'answer_from_knowledge_base', 'verify_math', 'give_coaching_advice']
 
+# A tool bound but never mentioned is invisible to a small model - it has no reason
+# to reach for create_my_job just because it's technically callable. This exact bug
+# happened once already for the plain fallback path (agents/llm_agent.py), and is
+# now also happening for two of this module's three draft_system_prompt branches
+# below (the clarify-blocking branch and the KB-only branch never mention the tool
+# exists, even though it's bound via extra_tools regardless of which branch fires).
+# Confirmed live: a real user's "Setup a daily journal logger for me. At 9:00pm..."
+# got routed into the answer_from_knowledge_base branch (a false-positive KB match),
+# and only succeeded in creating the job because the model got lucky/resourceful -
+# not because the prompt told it to.
+JOB_TOOL_HINT = (
+    "You can also set up an actual recurring WhatsApp reminder for this person via "
+    "the create_my_job tool - use it whenever they're asking to be tracked, "
+    "reminded, or checked in on repeatedly (e.g. \"start a habit tracker\", "
+    "\"remind me every night to journal\", \"check in with me weekly\"), not just "
+    "asking for one-time advice. If they didn't say how often or what time, ask "
+    "before creating it. Use list_my_jobs/cancel_my_job if they ask what's "
+    "scheduled or want to stop one."
+)
+
 
 def _parse_json_loose(text: str, default: Any) -> Any:
     """Local models don't always return clean JSON. Try straight, then try pulling the
@@ -87,13 +107,17 @@ class ReasoningCycle:
     def _cfg(self, agent_id: str):
         return self.control_plane.get_agent_config(agent_id)
 
-    async def _call_stage(self, agent_cfg, system_prompt: str, human_prompt: str) -> str:
+    async def _call_stage(self, agent_cfg, system_prompt: str, human_prompt: str, extra_tools: Optional[List] = None) -> str:
         """One focused call for a stage: builds a tool-capable agent on THAT stage's own
         configured model/temperature (never a shared one) - every stage can decide to
         search/fetch if its own reasoning calls for it, not just Calliope. Built fresh
         per call, not cached, for the same cross-event-loop reason agents/llm_agent.py's
         _build_react_agent is - a cached client would work once then fail with "Event
-        loop is closed" on the next message's fresh event loop."""
+        loop is closed" on the next message's fresh event loop.
+
+        extra_tools are appended for this call only (e.g. Calliope gets a client's
+        job-scheduling self-service tools bound in per-message by agents/llm_agent.py -
+        contact-scoped, so they can't live in self.mcp_tools, which is shared/static)."""
         from langchain_ollama import ChatOllama
         from langgraph.prebuilt import create_react_agent
 
@@ -102,7 +126,8 @@ class ReasoningCycle:
             base_url=self.ollama_url,
             temperature=agent_cfg.temperature if agent_cfg.temperature is not None else 0.7,
         )
-        agent = create_react_agent(model, self.mcp_tools)
+        tools = self.mcp_tools + (extra_tools or [])
+        agent = create_react_agent(model, tools)
 
         messages = []
         if system_prompt:
@@ -195,9 +220,9 @@ class ReasoningCycle:
         cfg = self._cfg('hephaestus')
         return 'call_tool' in plan and bool(cfg and cfg.enabled)
 
-    async def calliope_draft(self, message_body: str, system_prompt: str) -> str:
+    async def calliope_draft(self, message_body: str, system_prompt: str, extra_tools: Optional[List] = None) -> str:
         cfg = self._cfg('calliope')
-        return await self._call_stage(cfg, system_prompt, message_body)
+        return await self._call_stage(cfg, system_prompt, message_body, extra_tools=extra_tools)
 
     async def momus_review(self, draft: str, source_material: str, plan: List[str]) -> Dict[str, Any]:
         """Disabled or failure -> approved (never blocks the pipeline on a broken
@@ -226,6 +251,7 @@ class ReasoningCycle:
         message_body: str,
         coaching_system_prompt: str,
         kb_snippets: List[str],
+        extra_tools: Optional[List] = None,
     ) -> Optional[Dict[str, Any]]:
         """Runs the full cycle. Returns None if the cycle doesn't engage (Hermes says
         quick, or Hermes is disabled) - caller should fall through to its own original
@@ -259,7 +285,10 @@ class ReasoningCycle:
         else:
             draft_system_prompt = coaching_system_prompt
 
-        draft = await self.calliope_draft(message_body, draft_system_prompt)
+        if extra_tools:
+            draft_system_prompt = draft_system_prompt + "\n\n" + JOB_TOOL_HINT
+
+        draft = await self.calliope_draft(message_body, draft_system_prompt, extra_tools=extra_tools)
 
         source_material = "\n\n".join(kb_snippets) if kb_snippets else ''
         review = await self.momus_review(draft, source_material, plan)
@@ -272,7 +301,7 @@ class ReasoningCycle:
                 "Write a corrected response addressing that."
             )
             try:
-                draft = await self.calliope_draft(message_body, feedback_prompt)
+                draft = await self.calliope_draft(message_body, feedback_prompt, extra_tools=extra_tools)
             except Exception as e:
                 logger.warning(f"⚠️  Momus-triggered retry failed, sending original draft: {e}")
 

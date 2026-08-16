@@ -1,6 +1,7 @@
 from core.base_agent import BaseAgent, AgentState
 from core.memory_index import get_memory_index
-from agents.reasoning_cycle import ReasoningCycle
+from agents.reasoning_cycle import ReasoningCycle, JOB_TOOL_HINT
+from services.cron_scheduler import build_client_job_tools
 from typing import Dict, Any, List, Optional
 import requests
 import time
@@ -40,7 +41,7 @@ class LLMAgent(BaseAgent):
         # cycle just never engages then, same as Hermes being disabled.
         self.reasoning_cycle = ReasoningCycle(control_plane, self.ollama_url, self.mcp_tools) if control_plane else None
 
-    def _build_react_agent(self):
+    def _build_react_agent(self, extra_tools: Optional[List[BaseTool]] = None):
         """Build a ReAct tool-calling loop (LLM <-> ToolNode) over the bound MCP tools.
 
         Built fresh on every call, not cached on self - langchain-ollama's ChatOllama
@@ -61,7 +62,8 @@ class LLMAgent(BaseAgent):
             base_url=self.ollama_url,
             temperature=self.temperature,
         )
-        return create_react_agent(model, self.mcp_tools)
+        tools = self.mcp_tools + (extra_tools or [])
+        return create_react_agent(model, tools)
 
     async def execute(self, state: AgentState) -> AgentState:
         """Call LLM for response"""
@@ -77,6 +79,14 @@ class LLMAgent(BaseAgent):
                 self.log_stage(f"✅ Unregistration handler response ready")
                 return state
 
+            # A scheduled job (services/cron_scheduler.py) is expecting this exact
+            # reply - it's already been captured as job_data by ValidatorAgent, so
+            # this just needs a short acknowledgment, not a coaching turn.
+            if state.is_job_response:
+                state.llm_response = "Got it, logged — thank you! 🙏"
+                self.log_stage(f"✅ Job response acknowledgment ready")
+                return state
+
             # Skip if not whitelisted
             if not state.is_whitelisted:
                 state.llm_response = None
@@ -87,6 +97,12 @@ class LLMAgent(BaseAgent):
             start_time = time.time()
 
             kb_snippets = self._retrieve_kb_snippets(state.message_body)
+
+            # Self-service AI Cron Job tools, scoped to this one contact (target is
+            # always forced to 'self' inside them - see services/cron_scheduler.py's
+            # build_client_job_tools docstring). Built per-message, not cached on
+            # self, since they close over this specific contact_name.
+            job_tools = build_client_job_tools(state.contact_name, self.model, self.ollama_url)
 
             # Reasoning cycle first (Hermes decides quick vs deep) - it returns None
             # when it doesn't engage (disabled, or triage says "quick"), in which case
@@ -105,6 +121,7 @@ class LLMAgent(BaseAgent):
                         message_body=state.message_body,
                         coaching_system_prompt=base_system_prompt,
                         kb_snippets=kb_snippets,
+                        extra_tools=job_tools,
                     )
                 except Exception as e:
                     self.log_stage(f"⚠️  Reasoning cycle failed, falling back to single call: {e}", 'warning')
@@ -125,16 +142,17 @@ class LLMAgent(BaseAgent):
                 query=state.message_body,
                 contact_name=state.contact_name,
                 kb_snippets=kb_snippets,
-            )
+            ) + "\n\n" + JOB_TOOL_HINT
             # Overwrite, not just read - so /api/history and the dashboard show what was
             # actually sent to the model, not just the persona's base prompt before recall.
             state.metadata['system_prompt'] = system_prompt
             used_tools = False
-            if self.mcp_tools:
+            if self.mcp_tools or job_tools:
                 try:
                     response = await self._call_react_agent(
                         prompt=state.message_body,
                         system_prompt=system_prompt,
+                        extra_tools=job_tools,
                     )
                     used_tools = True
                 except Exception as e:
@@ -240,10 +258,10 @@ class LLMAgent(BaseAgent):
 
         return result
 
-    async def _call_react_agent(self, prompt: str, system_prompt: str) -> str:
+    async def _call_react_agent(self, prompt: str, system_prompt: str, extra_tools: Optional[List[BaseTool]] = None) -> str:
         """Run the bound tools through a ReAct loop: model requests a tool call,
         the tool runs, the result feeds back to the model, repeat until it answers."""
-        react_agent = self._build_react_agent()
+        react_agent = self._build_react_agent(extra_tools=extra_tools)
 
         messages = []
         if system_prompt:

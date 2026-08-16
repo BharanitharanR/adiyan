@@ -9,6 +9,7 @@ ADIYAN_DIR="$HOME/.Adiyan"
 APP_DIR="$ADIYAN_DIR/app"
 OPENWA_DIR="$APP_DIR/openwa"
 NODE_BIN="$APP_DIR/node-runtime/bin/node"
+TOOLS_VENV_BIN="$APP_DIR/tools_venv/bin"
 DASHBOARD_URL="http://localhost:5001"
 
 # Which services THIS run started (vs. found already running) - only these
@@ -118,7 +119,10 @@ start_orchestrator() {
         return
     fi
     log "Starting Adiyan orchestrator..."
-    ("$APP_DIR/adiyan" > "$ADIYAN_DIR/orchestrator_launcher.log" 2>&1 &)
+    # Puts search/crawl/Gmail-Calendar tools (installed by install.sh into their own
+    # venv - see core/mcp_tools.py's module comment) on PATH so the orchestrator's
+    # own shutil.which() lookups find them, same as a normal dev checkout would.
+    (PATH="$TOOLS_VENV_BIN:$PATH" "$APP_DIR/adiyan" > "$ADIYAN_DIR/orchestrator_launcher.log" 2>&1 &)
     STARTED_ORCHESTRATOR=1
 
     wait_for "$DASHBOARD_URL" || \

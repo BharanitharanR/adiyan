@@ -378,6 +378,7 @@
                 <h2>📱 WhatsApp Connection</h2>
                 <div id="whatsapp-status" style="text-align: center; padding: 20px;">
                     <p id="wa-status-text">Connecting...</p>
+                    <button onclick="loadWhatsAppQR()" style="margin-bottom: 10px;">🔄 Check status</button>
                     <div id="qr-code-container" style="margin: 20px 0; min-height: 300px; display: flex; align-items: center; justify-content: center; background: var(--paper); border-radius: 10px;">
                         <p style="color: var(--ink-faint);">Waiting for QR code...</p>
                     </div>
@@ -414,6 +415,7 @@
                     <p><strong>Qdrant URL:</strong> <span id="qdrant-url">-</span></p>
                     <p><strong>RabbitMQ URL:</strong> <span id="rabbitmq-url">-</span></p>
                     <p><strong>Whitelist Enabled:</strong> <span id="whitelist-enabled">-</span></p>
+                    <p><strong>Google Workspace (owner-only):</strong> <span id="google-workspace-status">-</span></p>
                 </div>
             </div>
 
@@ -567,6 +569,19 @@
 
             } catch (error) {
                 console.error('Failed to load config:', error);
+            }
+
+            try {
+                const gwResponse = await fetch(`${API_URL}/google-workspace/status`);
+                const gw = await gwResponse.json();
+                const label = {
+                    'not_configured': '⚠️ Not configured',
+                    'configured_but_unavailable': '⚠️ Configured, not connected (consent needed or restart pending)',
+                    'connected': `✅ Connected (${gw.tool_count} tools, read-only)`,
+                }[gw.status] || '-';
+                document.getElementById('google-workspace-status').textContent = label;
+            } catch (error) {
+                console.error('Failed to load Google Workspace status:', error);
             }
         }
 
@@ -906,8 +921,12 @@
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);
         setInterval(loadHistory, 5000);
-        // Refresh WhatsApp QR every 3 seconds
-        setInterval(loadWhatsAppQR, 3000);
+        // Deliberately NOT on a timer: this hits OpenWA's own REST API directly
+        // (ui/control_panel_api.py's /api/whatsapp/status), which shares OpenWA's
+        // rate limit budget with OpenWAPoller/KBIngestionPoller/CronScheduler -
+        // polling it every 3s here was silently starving those and causing
+        // sustained 429s. One fetch on page load is enough for initial QR/status;
+        // the "Check status" button calls loadWhatsAppQR() on demand instead.
     </script>
 
     <script>

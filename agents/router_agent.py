@@ -24,8 +24,8 @@ class RouterAgent(BaseAgent):
     async def execute(self, state: AgentState) -> AgentState:
         """Route to persona"""
         try:
-            # Skip routing for registration/unregistration
-            if state.is_registration or state.is_unregistration:
+            # Skip routing for registration/unregistration/job-response acknowledgment
+            if state.is_registration or state.is_unregistration or state.is_job_response:
                 state.persona = 'system'
                 state.metadata['persona'] = 'system'
                 state.metadata['system_prompt'] = SYSTEM_PERSONA_PROMPT

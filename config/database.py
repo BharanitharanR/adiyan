@@ -125,7 +125,81 @@ def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            -- AI Cron Jobs: a generic scheduled WhatsApp hook. created_by is either a
+            -- real client's contact_name or the OWNER_PSEUDO_CONTACT sentinel
+            -- (services/cron_scheduler.py) since the owner isn't a row in `clients`.
+            -- target is 'all_clients', 'self', or an exact client contact_name.
+            CREATE TABLE IF NOT EXISTS cron_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_by TEXT NOT NULL,
+                name TEXT NOT NULL,
+                natural_language_schedule TEXT NOT NULL,
+                cron_expression TEXT NOT NULL,
+                target TEXT NOT NULL,
+                instructions TEXT NOT NULL,
+                expects_response INTEGER NOT NULL DEFAULT 0,
+                response_window_hours INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                last_run_at TEXT,
+                next_run_at TEXT
+            );
+
+            -- Generic key-value hook store a job reads from and writes to - a new use
+            -- case never needs a new table, just a new key convention.
+            CREATE TABLE IF NOT EXISTS job_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                contact_name TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            -- Ephemeral dispatch state: "is the next message from this contact an
+            -- answer to a job we sent." Separate from job_data (durable content).
+            -- Multiple rows per contact allowed - a contact can have more than one
+            -- job awaiting a reply at once (e.g. a journal prompt and a broadcast
+            -- landing close together); contact_name alone used to be the primary
+            -- key, which silently clobbered an older pending job whenever a newer
+            -- one was sent to the same contact - confirmed live, a journal prompt's
+            -- pending row was overwritten by a broadcast two minutes later, orphaning
+            -- the journal reply with nowhere to go.
+            CREATE TABLE IF NOT EXISTS pending_job_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_name TEXT NOT NULL,
+                job_id INTEGER NOT NULL,
+                prompted_at TEXT NOT NULL,
+                expires_at TEXT,
+                prompt_message_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_job_responses_contact
+                ON pending_job_responses(contact_name);
         """)
+
+        # One-time upgrade from the old contact_name-primary-key schema (single
+        # pending job per contact) to the multi-row schema above - CREATE TABLE IF
+        # NOT EXISTS above is a no-op against an already-existing old-schema table.
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(pending_job_responses)").fetchall()}
+        if 'id' not in existing_cols:
+            conn.executescript("""
+                ALTER TABLE pending_job_responses RENAME TO pending_job_responses_old;
+                CREATE TABLE pending_job_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_name TEXT NOT NULL,
+                    job_id INTEGER NOT NULL,
+                    prompted_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    prompt_message_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_job_responses_contact
+                    ON pending_job_responses(contact_name);
+                INSERT INTO pending_job_responses (contact_name, job_id, prompted_at, expires_at)
+                    SELECT contact_name, job_id, prompted_at, expires_at FROM pending_job_responses_old;
+                DROP TABLE pending_job_responses_old;
+            """)
+            logger.info("📇 Migrated pending_job_responses to multi-row-per-contact schema")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -434,6 +508,183 @@ def get_platform_stats(active_days: int = 7) -> Dict[str, Any]:
         'active_window_days': active_days,
         **kb,
     }
+
+
+# ---------- cron_jobs / job_data / pending_job_responses ----------
+
+def _row_to_job_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        'id': row['id'],
+        'created_by': row['created_by'],
+        'name': row['name'],
+        'natural_language_schedule': row['natural_language_schedule'],
+        'cron_expression': row['cron_expression'],
+        'target': row['target'],
+        'instructions': row['instructions'],
+        'expects_response': bool(row['expects_response']),
+        'response_window_hours': row['response_window_hours'],
+        'enabled': bool(row['enabled']),
+        'created_at': row['created_at'],
+        'last_run_at': row['last_run_at'],
+        'next_run_at': row['next_run_at'],
+    }
+
+
+def create_cron_job(created_by: str, name: str, natural_language_schedule: str, cron_expression: str,
+                     target: str, instructions: str, expects_response: bool = False,
+                     response_window_hours: Optional[int] = None, next_run_at: Optional[str] = None) -> int:
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO cron_jobs (created_by, name, natural_language_schedule, cron_expression, target, "
+            "instructions, expects_response, response_window_hours, enabled, created_at, next_run_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            (created_by, name, natural_language_schedule, cron_expression, target, instructions,
+             1 if expects_response else 0, response_window_hours, _now(), next_run_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_cron_job(job_id: int) -> Optional[Dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM cron_jobs WHERE id = ?", (job_id,)).fetchone()
+        return _row_to_job_dict(row) if row else None
+
+
+def list_cron_jobs(created_by: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        if created_by:
+            rows = conn.execute(
+                "SELECT * FROM cron_jobs WHERE created_by = ? ORDER BY created_at DESC", (created_by,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM cron_jobs ORDER BY created_at DESC").fetchall()
+        return [_row_to_job_dict(row) for row in rows]
+
+
+def get_due_cron_jobs() -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?",
+            (_now(),),
+        ).fetchall()
+        return [_row_to_job_dict(row) for row in rows]
+
+
+def count_active_jobs_by_creator(created_by: str) -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as c FROM cron_jobs WHERE created_by = ? AND enabled = 1", (created_by,)
+        ).fetchone()
+        return row['c']
+
+
+def update_cron_job(job_id: int, **fields) -> bool:
+    allowed = {'enabled', 'cron_expression', 'natural_language_schedule', 'instructions', 'target',
+               'expects_response', 'response_window_hours', 'last_run_at', 'next_run_at'}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    if 'enabled' in updates:
+        updates['enabled'] = 1 if updates['enabled'] else 0
+    if 'expects_response' in updates:
+        updates['expects_response'] = 1 if updates['expects_response'] else 0
+
+    with _connect() as conn:
+        exists = conn.execute("SELECT 1 FROM cron_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not exists:
+            return False
+        set_clause = ', '.join(f"{k} = ?" for k in updates)
+        conn.execute(f"UPDATE cron_jobs SET {set_clause} WHERE id = ?", (*updates.values(), job_id))
+        conn.commit()
+        return True
+
+
+def delete_cron_job(job_id: int) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def write_job_data(job_id: int, key: str, value: str, contact_name: Optional[str] = None):
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO job_data (job_id, key, value, contact_name, created_at) VALUES (?, ?, ?, ?, ?)",
+            (job_id, key, value, contact_name, _now()),
+        )
+        conn.commit()
+
+
+def read_job_data(job_id: int, key: Optional[str] = None, contact_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        query = "SELECT * FROM job_data WHERE job_id = ?"
+        params: List[Any] = [job_id]
+        if key:
+            query += " AND key = ?"
+            params.append(key)
+        if contact_name:
+            query += " AND contact_name = ?"
+            params.append(contact_name)
+        rows = conn.execute(query + " ORDER BY created_at DESC", params).fetchall()
+        return [
+            {'key': r['key'], 'value': r['value'], 'contact_name': r['contact_name'], 'created_at': r['created_at']}
+            for r in rows
+        ]
+
+
+def set_pending_job_response(contact_name: str, job_id: int, expires_at: Optional[str] = None,
+                              prompt_message_id: Optional[str] = None):
+    """A plain INSERT, not an upsert - a contact can have more than one job
+    awaiting a reply at once (see the table's own comment in init_db). Each call
+    adds a new row rather than replacing whatever was already pending."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO pending_job_responses (contact_name, job_id, prompted_at, expires_at, prompt_message_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (contact_name, job_id, _now(), expires_at, prompt_message_id),
+        )
+        conn.commit()
+
+
+def get_pending_job_response(contact_name: str) -> Optional[Dict[str, Any]]:
+    """Returns the MOST RECENTLY prompted still-pending job for this contact (a
+    temporal correlation fallback - WhatsApp's own reply-to/quoted-message
+    reference isn't exposed by this OpenWA build, so there's no stronger signal
+    available to tell which of several outstanding prompts a reply is answering).
+    Any expired rows encountered for this contact are cleaned up along the way -
+    an expired pending marker must not keep intercepting messages, and older
+    still-valid pending jobs are left untouched for a later reply to match."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pending_job_responses WHERE contact_name = ? ORDER BY id DESC", (contact_name,)
+        ).fetchall()
+        if not rows:
+            return None
+        now = _now()
+        expired_ids = [r['id'] for r in rows if r['expires_at'] and r['expires_at'] < now]
+        if expired_ids:
+            conn.executemany("DELETE FROM pending_job_responses WHERE id = ?", [(i,) for i in expired_ids])
+            conn.commit()
+        for row in rows:
+            if row['id'] in expired_ids:
+                continue
+            return {
+                'id': row['id'], 'contact_name': row['contact_name'], 'job_id': row['job_id'],
+                'prompted_at': row['prompted_at'], 'expires_at': row['expires_at'],
+                'prompt_message_id': row['prompt_message_id'],
+            }
+        return None
+
+
+def clear_pending_job_response(pending_id: int):
+    """Takes the specific row's id (from get_pending_job_response's 'id' field),
+    not a contact_name - clearing by contact_name would also drop any OTHER still-
+    pending jobs for that same contact, which is exactly the clobbering bug this
+    schema exists to avoid."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM pending_job_responses WHERE id = ?", (pending_id,))
+        conn.commit()
 
 
 # ---------- settings ----------

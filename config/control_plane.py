@@ -60,7 +60,12 @@ class PipelineConfig:
     openwa_url: str = "http://localhost:2785"
     openwa_api_key: str = ""
     openwa_session_name: str = "executive-coach"
-    openwa_poll_interval_seconds: float = 3.0
+    # 3s was tripping OpenWA's own 1000-req/hour local rate limit on its own (1200
+    # req/hr just from this poller) - confirmed live, recurring roughly hourly.
+    # 30s keeps Adiyan comfortably under that ceiling even with the KB poller and
+    # normal admin/debug traffic added on top, at the cost of up to a 30s delay
+    # before Adiyan notices a new incoming message.
+    openwa_poll_interval_seconds: float = 30.0
 
     def to_dict(self):
         return {
@@ -72,7 +77,9 @@ class PipelineConfig:
             'whitelist_prefix': self.whitelist_prefix,
             'max_response_length': self.max_response_length,
             'openwa_url': self.openwa_url,
-            'openwa_api_key': self.openwa_api_key,
+            # Never the real value - this dict is exposed verbatim over
+            # /api/config; a caller only ever needs to know whether it's set.
+            'openwa_api_key': '***configured***' if self.openwa_api_key else '',
             'openwa_session_name': self.openwa_session_name,
             'openwa_poll_interval_seconds': self.openwa_poll_interval_seconds
         }
@@ -88,7 +95,7 @@ _SETTINGS_DEFAULTS = {
     'openwa_url': "http://localhost:2785",
     'openwa_api_key': "",
     'openwa_session_name': "executive-coach",
-    'openwa_poll_interval_seconds': 3.0,
+    'openwa_poll_interval_seconds': 30.0,
 }
 
 
@@ -165,6 +172,17 @@ class ControlPlane:
 
         settings = db.get_all_settings()
         kwargs = {k: settings.get(k, default) for k, default in _SETTINGS_DEFAULTS.items()}
+
+        # The vault (OS Keychain, config/secrets_vault.py) is the source of truth
+        # for this secret when set - wins over whatever plaintext value is still
+        # sitting in the settings table from before the vault existed. Falling
+        # back to the db value (not blanking it) means an un-migrated install
+        # keeps working exactly as before until the owner runs tools/set_secret.py.
+        from config.secrets_vault import get_secret
+        vault_key = get_secret('OPENWA_API_KEY')
+        if vault_key:
+            kwargs['openwa_api_key'] = vault_key
+
         return PipelineConfig(agents=agents, **kwargs)
 
     def save_config(self, config: Optional[PipelineConfig] = None):

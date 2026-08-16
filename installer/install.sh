@@ -18,6 +18,7 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADIYAN_DIR="$HOME/.Adiyan"
 APP_DIR="$ADIYAN_DIR/app"
 OPENWA_DIR="$APP_DIR/openwa"
+TOOLS_VENV_DIR="$APP_DIR/tools_venv"
 
 log() { echo "[install] $*" >&2; }
 fail() { log "ERROR: $*"; exit 1; }
@@ -162,6 +163,37 @@ bootstrap_openwa_session() {
     python3 "$INSTALLER_DIR/setup_openwa_session.py" "$OPENWA_DIR"
 }
 
+install_mcp_tools() {
+    # duckduckgo-mcp-server (web search), workspace-mcp (owner's Gmail/Calendar),
+    # and crawl4ai (JS-rendered page reading/crawling) are separate command-line
+    # tools, not pure-Python libraries - they can't be frozen into the adiyan
+    # binary itself, so they get their own small persistent venv here instead,
+    # same self-contained-runtime pattern as openwa/node-runtime/qdrant-runtime.
+    # core/mcp_tools.py and services/workspace_mcp_service.py both degrade
+    # gracefully (feature just unavailable, not a crash) if this step is ever
+    # skipped or fails, so a problem here doesn't block the rest of setup.
+    if [ -x "$TOOLS_VENV_DIR/bin/duckduckgo-mcp-server" ] && \
+       [ -x "$TOOLS_VENV_DIR/bin/workspace-mcp" ] && \
+       [ -f "$TOOLS_VENV_DIR/crawl4ai_server.py" ]; then
+        log "Search/crawl/Gmail-Calendar tools already installed"
+        return
+    fi
+    log "Installing search, page-reading, and Gmail/Calendar tools (needs internet, a few minutes)..."
+    if ! python3 -m venv "$TOOLS_VENV_DIR"; then
+        log "WARNING: couldn't create tools venv - search/crawl/Gmail/Calendar tools will be unavailable"
+        return
+    fi
+    "$TOOLS_VENV_DIR/bin/pip" install --quiet --upgrade pip
+    if ! "$TOOLS_VENV_DIR/bin/pip" install --quiet duckduckgo-mcp-server workspace-mcp "crawl4ai>=0.9.0"; then
+        log "WARNING: failed installing search/crawl/Gmail/Calendar tools - continuing without them"
+        return
+    fi
+    "$TOOLS_VENV_DIR/bin/crawl4ai-setup" || \
+        log "WARNING: crawl4ai-setup failed - page reading/crawling may not work"
+    cp "$INSTALLER_DIR/mcp_servers/crawl4ai_server.py" "$TOOLS_VENV_DIR/crawl4ai_server.py"
+    log "Search/crawl/Gmail-Calendar tools installed"
+}
+
 main() {
     log "Starting Adiyan installation..."
     check_prereqs
@@ -170,6 +202,7 @@ main() {
     start_openwa_temporarily
     select_and_pull_model
     bootstrap_openwa_session
+    install_mcp_tools
 
     log ""
     log "Installation complete."
