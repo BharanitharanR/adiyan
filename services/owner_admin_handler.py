@@ -355,16 +355,25 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return db.list_cron_jobs()
 
     @tool
-    def enable_job(job_id: int, enabled: bool) -> dict:
-        """Enable or disable a scheduled job by id (does not delete it)."""
-        ok = db.update_cron_job(job_id, enabled=enabled)
-        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+    def enable_job(job: str, enabled: bool) -> dict:
+        """Enable or disable a scheduled job (does not delete it) - pass either its
+        id or its exact name (e.g. "daily_stock_report" or 20)."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        db.update_cron_job(found['id'], enabled=enabled)
+        return {'success': True}
 
     @tool
-    def delete_job(job_id: int) -> dict:
-        """Permanently delete a scheduled job by id."""
-        ok = db.delete_cron_job(job_id)
-        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+    def delete_job(job: str) -> dict:
+        """Permanently delete a scheduled job - pass either its id or its exact name."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        db.delete_cron_job(found['id'])
+        return {'success': True}
 
     @tool
     async def broadcast_once(name: str, target: str, instructions: str,
@@ -394,30 +403,34 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return {'success': True, **result}
 
     @tool
-    def get_job_responses(job_id: int) -> dict:
+    def get_job_responses(job: str) -> dict:
         """Read back what recipients have replied to a job so far (its collected
         job_data) - e.g. broadcast replies or journal entries, useful for reviewing
-        before a call. Each response includes who sent it and when."""
-        job = db.get_cron_job(job_id)
-        if not job:
-            return {'error': f"No job with id {job_id}"}
-        responses = db.read_job_data(job_id)
+        before a call. Pass either the job's id or its exact name. Each response
+        includes who sent it and when."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        responses = db.read_job_data(found['id'])
         if not responses:
-            return {'job_name': job['name'], 'responses': [], 'note': 'No responses collected yet'}
-        return {'job_name': job['name'], 'responses': responses}
+            return {'job_name': found['name'], 'responses': [], 'note': 'No responses collected yet'}
+        return {'job_name': found['name'], 'responses': responses}
 
     @tool
-    async def trigger_job_now(job_id: int) -> dict:
+    async def trigger_job_now(job: str) -> dict:
         """Manually run a scheduled job right now, for testing - composes and sends
-        its message immediately without waiting for its actual scheduled time.
-        Does NOT change that scheduled time (the job's real next run is unaffected -
-        this is a test send, not a reschedule)."""
+        its message immediately without waiting for its actual scheduled time. Pass
+        either the job's id or its exact name. Does NOT change that scheduled time
+        (the job's real next run is unaffected - this is a test send, not a
+        reschedule)."""
         if not cron_scheduler:
             return {'error': 'Cron scheduler is not available yet (still starting up)'}
-        job = db.get_cron_job(job_id)
-        if not job:
-            return {'error': f"No job with id {job_id}"}
-        return await cron_scheduler.run_now(job)
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        return await cron_scheduler.run_now(found)
 
     @tool
     def check_google_workspace_status() -> dict:

@@ -16,7 +16,7 @@ exactly: async start()/stop(), joined into the same background thread in main.py
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from croniter import croniter
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -79,6 +79,39 @@ def _now() -> datetime:
 
 def _fmt(dt: datetime) -> str:
     return dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+
+def resolve_job(identifier: str, created_by: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Resolves a job by either its numeric id or its exact name (case-insensitive) -
+    every job-management tool below takes this instead of a bare job_id, so a
+    conversation can refer to "the daily_stock_report job" instead of tracking
+    numeric ids across turns. Confirmed live as a real problem: the admin agent
+    repeatedly mixed up which job ids 19/20/21/22 actually referred to mid-
+    conversation. If created_by is given, only that contact's own jobs are
+    considered (client self-service scoping) - a client can never resolve or act
+    on another client's job by guessing its name, even if they know it.
+
+    Returns (job, None) on a clean match, or (None, error) - including, when a
+    name matches more than one job, an error listing every match's id so the
+    caller can fall back to specifying by id."""
+    identifier = (identifier or '').strip()
+    if not identifier:
+        return None, "No job id or name given"
+
+    if identifier.isdigit():
+        job = db.get_cron_job(int(identifier))
+        if job and (created_by is None or job['created_by'] == created_by):
+            return job, None
+        return None, f"No job with id {identifier}"
+
+    candidates = db.list_cron_jobs(created_by=created_by) if created_by else db.list_cron_jobs()
+    matches = [j for j in candidates if j['name'].lower() == identifier.lower()]
+    if not matches:
+        return None, f"No job named '{identifier}'"
+    if len(matches) > 1:
+        ids = ', '.join(f"id {m['id']}" for m in matches)
+        return None, f"Multiple jobs are named '{identifier}' - specify by id instead ({ids})"
+    return matches[0], None
 
 
 async def create_job_record(
@@ -163,13 +196,13 @@ def build_client_job_tools(contact_name: str, model_name: str, ollama_url: str) 
         return db.list_cron_jobs(created_by=contact_name)
 
     @tool
-    def cancel_my_job(job_id: int) -> dict:
-        """Cancel (permanently delete) one of your own scheduled reminders by id.
-        Cannot cancel a job that isn't yours."""
-        job = db.get_cron_job(job_id)
-        if not job or job['created_by'] != contact_name:
-            return {'error': f"No job with id {job_id} belongs to you"}
-        db.delete_cron_job(job_id)
+    def cancel_my_job(job: str) -> dict:
+        """Cancel (permanently delete) one of your own scheduled reminders - pass
+        either its id or its exact name. Cannot cancel a job that isn't yours."""
+        found, error = resolve_job(job, created_by=contact_name)
+        if error:
+            return {'error': error}
+        db.delete_cron_job(found['id'])
         return {'success': True}
 
     return [create_my_job, list_my_jobs, cancel_my_job]
