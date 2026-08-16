@@ -114,11 +114,24 @@ def resolve_job(identifier: str, created_by: Optional[str] = None) -> Tuple[Opti
     return matches[0], None
 
 
+class RoutineAlreadyExists(Exception):
+    """Raised by create_job_record when a routine with the requested name is
+    already indexed (config/database.py's routines table) - signals the caller
+    to reuse/trigger it (see CronScheduler.create_or_trigger below) instead of
+    creating a duplicate job. Carries the routine's index row, not the full
+    definition - callers needing the full schedule/target/instructions read the
+    file at routine['file_path'] via services/routine_store.py."""
+    def __init__(self, routine: Dict[str, Any]):
+        self.routine = routine
+        super().__init__(f"A routine named '{routine['name']}' already exists.")
+
+
 async def create_job_record(
     *, created_by: str, name: str, natural_language_schedule: str, target: str,
     instructions: str, expects_response: bool, response_window_hours: Optional[int],
     model_name: str, ollama_url: str, cap: Optional[int] = None,
-    target_group: Optional[List[str]] = None,
+    target_group: Optional[List[str]] = None, description: Optional[str] = None,
+    check_routines: bool = True, write_routine: bool = True,
 ) -> Dict[str, Any]:
     """Shared by both authoring paths (owner admin tools, client self-service
     tools) - one validated write path, never a freeform db insert. Raises
@@ -126,7 +139,27 @@ async def create_job_record(
     or unresolvable target_group - each surfaces back to whoever asked as a
     plain error rather than silently creating a job that sends to no one or
     everyone. target_group is only meaningful when target='group'; ignored
-    otherwise (the caller-facing tool validates this pairing up front)."""
+    otherwise (the caller-facing tool validates this pairing up front).
+
+    Raises RoutineAlreadyExists (not ValueError - a distinct, deliberate signal,
+    not a plain error) if check_routines is true and a routine with this exact
+    name is already indexed, so the caller can choose to reuse/trigger it
+    instead of silently creating a second job under the same name.
+
+    On success, also persists this job as a durable routine file + index entry
+    (services/routine_store.py) - every job becomes reusable by name going
+    forward, not just this one scheduled instance of it - UNLESS write_routine
+    is false. Both check_routines and write_routine default true for the
+    owner's shared business-automation library, but build_client_job_tools
+    below passes both false: a client's personal reminder ("night journal",
+    "morning check-in") commonly reuses a generic name another client (or the
+    owner) might also use, and those must never collide or cross-trigger
+    through one global name index the way owner routines deliberately do."""
+    if check_routines:
+        existing_routine = db.get_routine(name)
+        if existing_routine:
+            raise RoutineAlreadyExists(existing_routine)
+
     if cap is not None:
         active = db.count_active_jobs_by_creator(created_by)
         if active >= cap:
@@ -150,6 +183,18 @@ async def create_job_record(
         expects_response=expects_response, response_window_hours=response_window_hours,
         next_run_at=_fmt(next_run), target_group=target_group if target == 'group' else None,
     )
+
+    if write_routine:
+        from services.routine_store import write_routine_file
+        routine_description = description or instructions[:200]
+        path = write_routine_file(
+            name=name, description=routine_description, schedule=natural_language_schedule,
+            cron_expression=cron_expression, target=target, instructions=instructions,
+            target_group=target_group, expects_response=expects_response,
+            response_window_hours=response_window_hours,
+        )
+        db.upsert_routine(name=name, file_path=str(path), description=routine_description)
+
     return db.get_cron_job(job_id)
 
 
@@ -182,6 +227,7 @@ def build_client_job_tools(contact_name: str, model_name: str, ollama_url: str) 
                 target='self', instructions=instructions, expects_response=expects_response,
                 response_window_hours=response_window_hours or None,
                 model_name=model_name, ollama_url=ollama_url, cap=CLIENT_JOB_CAP,
+                check_routines=False, write_routine=False,
             )
         except ValueError as e:
             return {'error': str(e)}
@@ -410,6 +456,60 @@ class CronScheduler:
 
         logger.info(f"✅ Job '{job['name']}' (id={job['id']}) sent to {sent}/{len(resolvable)} target(s)")
         return {'sent': sent, 'skipped': skipped, 'message': message}
+
+    async def create_or_trigger(self, *, created_by: str, name: str, natural_language_schedule: str,
+                                 target: str, instructions: str, expects_response: bool,
+                                 response_window_hours: Optional[int], model_name: str, ollama_url: str,
+                                 cap: Optional[int] = None, target_group: Optional[List[str]] = None,
+                                 description: Optional[str] = None) -> Dict[str, Any]:
+        """The routine-aware entry point for job creation: checks the routines index
+        (config/database.py's routines table) first, and if this name is already a
+        known routine, triggers it right now instead of creating a duplicate job -
+        confirmed live as a real gap: repeatedly asking for "a job that does X" with
+        the same name used to just create another cron_jobs row every time.
+
+        If the routine exists but its live cron_jobs row was since deleted (the
+        routine file/index entry outlives any one scheduled instance, by design),
+        the job is transparently recreated from the routine file - schedule,
+        target, and instructions all round-trip through it, no re-parsing needed.
+
+        Returns {'reused': bool, ...run_now's result, 'job_id': int} either way, so
+        the calling tool can report accurately rather than always saying "created"."""
+        try:
+            job = await create_job_record(
+                created_by=created_by, name=name, natural_language_schedule=natural_language_schedule,
+                target=target, instructions=instructions, expects_response=expects_response,
+                response_window_hours=response_window_hours, model_name=model_name, ollama_url=ollama_url,
+                cap=cap, target_group=target_group, description=description,
+            )
+            return {'reused': False, 'job_id': job['id'], 'cron_expression': job['cron_expression'],
+                    'next_run_at': job['next_run_at']}
+        except RoutineAlreadyExists as exc:
+            existing_job, _ = resolve_job(name)
+            if not existing_job:
+                # The routine file/index outlived its cron_jobs row (deleted since) -
+                # rehydrate a fresh one from the file rather than treating the
+                # routine as gone.
+                from services.routine_store import read_routine_file, routine_file_path
+                routine = read_routine_file(routine_file_path(exc.routine['name']))
+                if not routine:
+                    raise ValueError(
+                        f"Routine '{name}' is indexed but its file is missing or unreadable - "
+                        "delete it with delete_routine and recreate the job."
+                    )
+                next_run = croniter(routine['cron_expression'], _now()).get_next(datetime)
+                job_id = db.create_cron_job(
+                    created_by=created_by, name=routine['name'],
+                    natural_language_schedule=routine['schedule'], cron_expression=routine['cron_expression'],
+                    target=routine['target'], instructions=routine['instructions'],
+                    expects_response=routine['expects_response'],
+                    response_window_hours=routine['response_window_hours'],
+                    next_run_at=_fmt(next_run),
+                    target_group=routine['target_group'] if routine['target'] == 'group' else None,
+                )
+                existing_job = db.get_cron_job(job_id)
+            result = await self.run_now(existing_job)
+            return {'reused': True, 'job_id': existing_job['id'], **result}
 
     async def broadcast_once(self, *, created_by: str, name: str, target: str, instructions: str,
                               expects_response: bool = False, response_window_hours: Optional[int] = None,
