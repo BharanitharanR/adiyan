@@ -1,6 +1,8 @@
-from flask import Flask, jsonify, request, send_file
+import hmac
+from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 from config.control_plane import ControlPlane
+from config.secrets_vault import get_secret
 import config.database as db
 import logging
 from pathlib import Path
@@ -19,6 +21,52 @@ CORS(app)
 control_plane = ControlPlane()
 
 logger = logging.getLogger('ControlPanel')
+
+DASHBOARD_USERNAME_KEY = 'DASHBOARD_USERNAME'
+DASHBOARD_PASSWORD_KEY = 'DASHBOARD_PASSWORD'
+DASHBOARD_DEFAULT_USERNAME = 'owner'
+
+_warned_unprotected = False
+
+
+@app.before_request
+def _require_dashboard_auth():
+    """Gates every route (dashboard HTML, static assets, and the whole API) behind HTTP
+    Basic Auth once a password is set via tools/set_secret.py DASHBOARD_PASSWORD - the
+    browser's own native login prompt handles it, no custom login page needed, and once
+    authenticated for this origin the browser attaches the same credentials to every
+    fetch() the dashboard's JS makes automatically.
+
+    Confirmed live: this control panel was being reached over an ngrok tunnel with zero
+    access control - anyone with the URL could view or change every agent config, client,
+    and persona. Deliberately open (with a one-time warning, not a hard failure) when no
+    password is configured yet, so a fresh local-only install isn't locked out of its own
+    dashboard before the owner has had a chance to set one."""
+    global _warned_unprotected
+    stored_password = get_secret(DASHBOARD_PASSWORD_KEY)
+    if not stored_password:
+        if not _warned_unprotected:
+            logger.warning(
+                "⚠️  No dashboard password set - the control panel is reachable by anyone "
+                "with its URL (e.g. an ngrok tunnel), with no login required. Run "
+                "'python3 tools/set_secret.py DASHBOARD_PASSWORD' to secure it."
+            )
+            _warned_unprotected = True
+        return None
+
+    stored_username = get_secret(DASHBOARD_USERNAME_KEY) or DASHBOARD_DEFAULT_USERNAME
+    auth = request.authorization
+    if (
+        auth
+        and hmac.compare_digest(auth.username, stored_username)
+        and hmac.compare_digest(auth.password, stored_password)
+    ):
+        return None
+
+    return Response(
+        'Authentication required', 401,
+        {'WWW-Authenticate': 'Basic realm="Adiyan Dashboard"'},
+    )
 
 def _load_personas_file() -> dict:
     """Same {'active_persona', 'personas': {id: {name, system_prompt}}} shape the routes
@@ -311,6 +359,13 @@ def google_workspace_status():
     if tool_count == 0:
         return jsonify({'status': 'configured_but_unavailable', 'tool_count': 0})
     return jsonify({'status': 'connected', 'tool_count': tool_count})
+
+@app.route('/api/dashboard-auth/status', methods=['GET'])
+def dashboard_auth_status():
+    """Whether the dashboard is actually password-protected right now. Reachable even
+    when unprotected (there's nothing to gate at that point anyway) so the dashboard can
+    show a warning banner precisely when it's most needed - before a password is set."""
+    return jsonify({'protected': bool(get_secret(DASHBOARD_PASSWORD_KEY))})
 
 @app.route('/api/test-message', methods=['POST'])
 def test_message():

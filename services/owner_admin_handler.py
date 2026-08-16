@@ -104,6 +104,15 @@ ADMIN_SYSTEM_PROMPT = (
     "before a call), use get_job_responses - never invent, guess, or give an example of "
     "what someone might have replied. A job that was just sent has no replies yet; say so "
     "plainly rather than fabricating one.\n\n"
+    "IMPORTANT - targeting specific people: if a request names or implies a specific subset "
+    "of clients (\"the people who said yes\", \"those who enrolled\", \"everyone who replied to "
+    "job 21\"), that is target='group' with those exact names in target_group - NEVER "
+    "target='all_clients' with wording like \"if you're part of X...\" in the instructions "
+    "hoping the message self-filters. That still reaches every client, including people it "
+    "has nothing to do with. Figure out who actually qualifies first (get_job_responses to "
+    "read real replies, list_clients for the full roster), then pass exactly those names. If "
+    "asked how many people a job reaches, answer from list_clients/get_platform_stats or the "
+    "job's own target_group - that's always knowable, never say you can't determine it.\n\n"
     "If Gmail/Calendar tools are bound (they won't be until the owner completes one-time "
     "Google OAuth setup), use them to check the owner's own inbox or calendar when asked "
     "(e.g. \"what's on my calendar today\", \"did I get an email from X\") - these are "
@@ -306,9 +315,16 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
 
     @tool
     async def create_job(name: str, natural_language_schedule: str, target: str, instructions: str,
-                          expects_response: bool = False, response_window_hours: int = 0) -> dict:
-        """Create a scheduled WhatsApp job (AI Cron Job). target must be
-        'all_clients', 'self' (your own self-chat), or an exact client name.
+                          expects_response: bool = False, response_window_hours: int = 0,
+                          target_group: Optional[List[str]] = None) -> dict:
+        """Create a scheduled WhatsApp job (AI Cron Job). target must be 'all_clients',
+        'self' (your own self-chat), 'group' (a specific subset of clients - pass their
+        exact names in target_group, e.g. ["Sripriya", "Kumar"]), or an exact client name.
+        Use 'group' whenever the request is about specific people rather than everyone -
+        e.g. "the people who replied yes to job 21": call get_job_responses(21) first,
+        read who actually said yes, then pass exactly those names in target_group. Never
+        use 'all_clients' as a stand-in for a subset and rely on the message wording to
+        self-filter - that reaches everyone, not just the people who qualify.
         natural_language_schedule is free text like 'every Sunday at 6pm' or
         'every night at 9' - it's parsed into a real schedule automatically.
         instructions describes what the message should say (and may reference the
@@ -316,14 +332,14 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         and response_window_hours (0 = no expiry) to capture whatever the
         recipient(s) reply with next as data, instead of normal coaching."""
         from services.cron_scheduler import create_job_record, OWNER_PSEUDO_CONTACT
-        if target not in ('all_clients', 'self') and not db.get_client(target):
-            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', or an exact client name."}
+        if target not in ('all_clients', 'self', 'group') and not db.get_client(target):
+            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', 'group', or an exact client name."}
         try:
             job = await create_job_record(
                 created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
                 target=target, instructions=instructions, expects_response=expects_response,
                 response_window_hours=response_window_hours or None,
-                model_name=model_name, ollama_url=ollama_url,
+                model_name=model_name, ollama_url=ollama_url, target_group=target_group,
             )
         except ValueError as e:
             return {'error': str(e)}
@@ -352,22 +368,26 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
 
     @tool
     async def broadcast_once(name: str, target: str, instructions: str,
-                              expects_response: bool = False, response_window_hours: int = 0) -> dict:
+                              expects_response: bool = False, response_window_hours: int = 0,
+                              target_group: Optional[List[str]] = None) -> dict:
         """Send a ONE-TIME message right now - for a single announcement, ask, or
-        reminder, NOT a recurring schedule. target must be 'all_clients', 'self', or
-        an exact client name. Creates, sends, and permanently disables the
-        underlying job in one step - nothing to clean up afterward, and it will
-        never fire again on its own. Set expects_response=true to capture replies
-        (read them back later with get_job_responses)."""
+        reminder, NOT a recurring schedule. target must be 'all_clients', 'self',
+        'group' (a specific subset - pass their exact names in target_group), or an
+        exact client name. Same 'group' guidance as create_job: use it for anything
+        aimed at specific people rather than everyone. Creates, sends, and permanently
+        disables the underlying job in one step - nothing to clean up afterward, and
+        it will never fire again on its own. Set expects_response=true to capture
+        replies (read them back later with get_job_responses)."""
         from services.cron_scheduler import OWNER_PSEUDO_CONTACT
         if not cron_scheduler:
             return {'error': 'Cron scheduler is not available yet (still starting up)'}
-        if target not in ('all_clients', 'self') and not db.get_client(target):
-            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', or an exact client name."}
+        if target not in ('all_clients', 'self', 'group') and not db.get_client(target):
+            return {'error': f"No client named '{target}'. Use 'all_clients', 'self', 'group', or an exact client name."}
         try:
             result = await cron_scheduler.broadcast_once(
                 created_by=OWNER_PSEUDO_CONTACT, name=name, target=target, instructions=instructions,
                 expects_response=expects_response, response_window_hours=response_window_hours or None,
+                target_group=target_group,
             )
         except ValueError as e:
             return {'error': str(e)}

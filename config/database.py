@@ -129,7 +129,8 @@ def init_db():
             -- AI Cron Jobs: a generic scheduled WhatsApp hook. created_by is either a
             -- real client's contact_name or the OWNER_PSEUDO_CONTACT sentinel
             -- (services/cron_scheduler.py) since the owner isn't a row in `clients`.
-            -- target is 'all_clients', 'self', or an exact client contact_name.
+            -- target is 'all_clients', 'self', 'group' (a specific subset - see
+            -- target_group), or an exact client contact_name.
             CREATE TABLE IF NOT EXISTS cron_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_by TEXT NOT NULL,
@@ -137,6 +138,7 @@ def init_db():
                 natural_language_schedule TEXT NOT NULL,
                 cron_expression TEXT NOT NULL,
                 target TEXT NOT NULL,
+                target_group TEXT,
                 instructions TEXT NOT NULL,
                 expects_response INTEGER NOT NULL DEFAULT 0,
                 response_window_hours INTEGER,
@@ -200,6 +202,17 @@ def init_db():
                 DROP TABLE pending_job_responses_old;
             """)
             logger.info("📇 Migrated pending_job_responses to multi-row-per-contact schema")
+
+        # One-time upgrade for an existing cron_jobs table predating the 'group'
+        # target (a specific subset of clients, e.g. "just the people who replied
+        # yes to this poll") - CREATE TABLE IF NOT EXISTS above is a no-op against
+        # an already-existing table, so the new column needs adding explicitly.
+        # Nullable and additive: every existing row (target != 'group') is
+        # unaffected, no data migration needed beyond the column existing.
+        existing_job_cols = {row[1] for row in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()}
+        if 'target_group' not in existing_job_cols:
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN target_group TEXT")
+            logger.info("📇 Added target_group column to cron_jobs")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -520,6 +533,7 @@ def _row_to_job_dict(row: sqlite3.Row) -> Dict[str, Any]:
         'natural_language_schedule': row['natural_language_schedule'],
         'cron_expression': row['cron_expression'],
         'target': row['target'],
+        'target_group': json.loads(row['target_group']) if row['target_group'] else None,
         'instructions': row['instructions'],
         'expects_response': bool(row['expects_response']),
         'response_window_hours': row['response_window_hours'],
@@ -532,13 +546,15 @@ def _row_to_job_dict(row: sqlite3.Row) -> Dict[str, Any]:
 
 def create_cron_job(created_by: str, name: str, natural_language_schedule: str, cron_expression: str,
                      target: str, instructions: str, expects_response: bool = False,
-                     response_window_hours: Optional[int] = None, next_run_at: Optional[str] = None) -> int:
+                     response_window_hours: Optional[int] = None, next_run_at: Optional[str] = None,
+                     target_group: Optional[List[str]] = None) -> int:
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO cron_jobs (created_by, name, natural_language_schedule, cron_expression, target, "
-            "instructions, expects_response, response_window_hours, enabled, created_at, next_run_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            (created_by, name, natural_language_schedule, cron_expression, target, instructions,
+            "target_group, instructions, expects_response, response_window_hours, enabled, created_at, "
+            "next_run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            (created_by, name, natural_language_schedule, cron_expression, target,
+             json.dumps(target_group) if target_group else None, instructions,
              1 if expects_response else 0, response_window_hours, _now(), next_run_at),
         )
         conn.commit()
@@ -581,7 +597,7 @@ def count_active_jobs_by_creator(created_by: str) -> int:
 
 def update_cron_job(job_id: int, **fields) -> bool:
     allowed = {'enabled', 'cron_expression', 'natural_language_schedule', 'instructions', 'target',
-               'expects_response', 'response_window_hours', 'last_run_at', 'next_run_at'}
+               'target_group', 'expects_response', 'response_window_hours', 'last_run_at', 'next_run_at'}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False
@@ -589,6 +605,8 @@ def update_cron_job(job_id: int, **fields) -> bool:
         updates['enabled'] = 1 if updates['enabled'] else 0
     if 'expects_response' in updates:
         updates['expects_response'] = 1 if updates['expects_response'] else 0
+    if 'target_group' in updates:
+        updates['target_group'] = json.dumps(updates['target_group']) if updates['target_group'] else None
 
     with _connect() as conn:
         exists = conn.execute("SELECT 1 FROM cron_jobs WHERE id = ?", (job_id,)).fetchone()

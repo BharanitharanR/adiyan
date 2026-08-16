@@ -23,7 +23,8 @@ from config.secrets_vault import get_secret, set_secret, delete_secret
 
 # Not an enforced allow-list (any key name works) - just what this CLI knows to
 # report on for --list, so a typo'd key name doesn't silently vanish unnoticed.
-KNOWN_KEYS = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'OPENWA_API_KEY']
+KNOWN_KEYS = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'OPENWA_API_KEY',
+              'DASHBOARD_USERNAME', 'DASHBOARD_PASSWORD']
 
 
 def main():
