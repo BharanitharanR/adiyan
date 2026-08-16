@@ -361,9 +361,11 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
     def list_routines() -> list:
         """List every known routine (name + description) - the durable, reusable
         library every job creates an entry in, independent of whether it's
-        currently active/scheduled. Check this before creating a new job to see
-        if something similar already exists by a different name than you'd guess."""
-        return db.list_routines()
+        currently active/scheduled. create_job already matches new requests
+        against this library semantically (by meaning, not just exact name), so
+        you don't strictly need to check it first - but it's useful for browsing
+        what already exists."""
+        return [{k: v for k, v in r.items() if k != 'embedding'} for r in db.list_routines()]
 
     @tool
     def delete_routine(routine_name: str) -> dict:

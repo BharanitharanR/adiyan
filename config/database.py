@@ -137,6 +137,7 @@ def init_db():
                 name TEXT PRIMARY KEY COLLATE NOCASE,
                 file_path TEXT NOT NULL,
                 description TEXT NOT NULL,
+                embedding TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -228,6 +229,16 @@ def init_db():
         if 'target_group' not in existing_job_cols:
             conn.execute("ALTER TABLE cron_jobs ADD COLUMN target_group TEXT")
             logger.info("📇 Added target_group column to cron_jobs")
+
+        # Same additive-column pattern for routines predating semantic matching
+        # (services/routine_store.py) - nullable, so a routine created before this
+        # column existed just has no embedding until it's next created/updated,
+        # rather than needing a data migration.
+        if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='routines'").fetchone():
+            existing_routine_cols = {row[1] for row in conn.execute("PRAGMA table_info(routines)").fetchall()}
+            if 'embedding' not in existing_routine_cols:
+                conn.execute("ALTER TABLE routines ADD COLUMN embedding TEXT")
+                logger.info("📇 Added embedding column to routines")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -642,29 +653,36 @@ def delete_cron_job(job_id: int) -> bool:
 
 # ---------- routines (see services/routine_store.py) ----------
 
-def upsert_routine(name: str, file_path: str, description: str):
+def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None):
     now = _now()
+    embedding_json = json.dumps(embedding) if embedding is not None else None
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO routines (name, file_path, description, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO routines (name, file_path, description, embedding, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET file_path=excluded.file_path, "
-            "description=excluded.description, updated_at=excluded.updated_at",
-            (name, file_path, description, now, now),
+            "description=excluded.description, embedding=excluded.embedding, updated_at=excluded.updated_at",
+            (name, file_path, description, embedding_json, now, now),
         )
         conn.commit()
+
+
+def _row_to_routine_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    d = dict(row)
+    d['embedding'] = json.loads(d['embedding']) if d.get('embedding') else None
+    return d
 
 
 def get_routine(name: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM routines WHERE name = ?", (name,)).fetchone()
-        return dict(row) if row else None
+        return _row_to_routine_dict(row) if row else None
 
 
 def list_routines() -> List[Dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM routines ORDER BY name").fetchall()
-        return [dict(r) for r in rows]
+        return [_row_to_routine_dict(r) for r in rows]
 
 
 def delete_routine(name: str) -> bool:
