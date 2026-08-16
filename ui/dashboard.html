@@ -416,6 +416,12 @@
                     <p><strong>RabbitMQ URL:</strong> <span id="rabbitmq-url">-</span></p>
                     <p><strong>Whitelist Enabled:</strong> <span id="whitelist-enabled">-</span></p>
                     <p><strong>Google Workspace (owner-only):</strong> <span id="google-workspace-status">-</span></p>
+                    <p>
+                        <strong>Owner self-chat ignore suffix:</strong>
+                        <input type="text" id="owner-ignore-suffix" style="width:60px; font-family:inherit;" />
+                        <button onclick="saveOwnerIgnoreSuffix()" style="font-size:11px; padding:2px 8px;">Save</button>
+                        <br/><span style="color: var(--ink-faint);">End a self-chat message with this to keep it out of admin processing entirely.</span>
+                    </p>
                 </div>
             </div>
 
@@ -566,6 +572,7 @@
                 document.getElementById('qdrant-url').textContent = config.qdrant_url;
                 document.getElementById('rabbitmq-url').textContent = config.rabbitmq_url;
                 document.getElementById('whitelist-enabled').textContent = config.whitelist_enabled ? '✓' : '✗';
+                document.getElementById('owner-ignore-suffix').value = config.owner_ignore_suffix || '';
 
             } catch (error) {
                 console.error('Failed to load config:', error);
@@ -582,6 +589,20 @@
                 document.getElementById('google-workspace-status').textContent = label;
             } catch (error) {
                 console.error('Failed to load Google Workspace status:', error);
+            }
+        }
+
+        async function saveOwnerIgnoreSuffix() {
+            const value = document.getElementById('owner-ignore-suffix').value;
+            try {
+                await fetch(`${API_URL}/config/system`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ owner_ignore_suffix: value }),
+                });
+                await loadConfig();
+            } catch (error) {
+                console.error('Failed to save owner ignore suffix:', error);
             }
         }
 

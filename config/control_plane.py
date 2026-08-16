@@ -66,6 +66,11 @@ class PipelineConfig:
     # normal admin/debug traffic added on top, at the cost of up to a 30s delay
     # before Adiyan notices a new incoming message.
     openwa_poll_interval_seconds: float = 30.0
+    # A self-chat message ending in this suffix is fully ignored - no admin agent
+    # call, no job-response capture, no PDF ingestion. services/kb_ingestion_poller.py
+    # guards against an empty string here (str.endswith('') is always True in
+    # Python, which would silently ignore every owner message).
+    owner_ignore_suffix: str = "**"
 
     def to_dict(self):
         return {
@@ -81,7 +86,8 @@ class PipelineConfig:
             # /api/config; a caller only ever needs to know whether it's set.
             'openwa_api_key': '***configured***' if self.openwa_api_key else '',
             'openwa_session_name': self.openwa_session_name,
-            'openwa_poll_interval_seconds': self.openwa_poll_interval_seconds
+            'openwa_poll_interval_seconds': self.openwa_poll_interval_seconds,
+            'owner_ignore_suffix': self.owner_ignore_suffix,
         }
 
 
@@ -96,6 +102,7 @@ _SETTINGS_DEFAULTS = {
     'openwa_api_key': "",
     'openwa_session_name': "executive-coach",
     'openwa_poll_interval_seconds': 30.0,
+    'owner_ignore_suffix': "**",
 }
 
 

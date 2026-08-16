@@ -56,12 +56,14 @@ class KBIngestionPoller:
         # directly buys headroom for the client-facing poller instead of competing with it.
         poll_interval_seconds: float = 20.0,
         message_fetch_limit: int = 20,
+        ignore_suffix: str = "**",
     ):
         self.openwa = openwa_service
         self.memory_index = memory_index
         self.admin_handler = admin_handler
         self.poll_interval_seconds = poll_interval_seconds
         self.message_fetch_limit = message_fetch_limit
+        self.ignore_suffix = ignore_suffix
 
         self._processed_ids: Dict[str, int] = self._load_processed_ids()
         self._owner_chat_id: Optional[str] = None
@@ -203,6 +205,15 @@ class KBIngestionPoller:
         self._save_processed_ids()
 
         body = (message.get('body') or '').strip()
+        # A simple owner-side escape hatch: end a self-chat message with the configured
+        # suffix (default **, changeable on the dashboard) to keep it out of admin
+        # processing entirely - no job capture, no PDF ingestion, no admin agent call.
+        # For jotting a private note to yourself in the same chat Adiyan otherwise
+        # treats as commands. Guarded on a truthy suffix: str.endswith('') is always
+        # True in Python, so an emptied-out setting must disable this, not swallow
+        # every message.
+        if self.ignore_suffix and body.endswith(self.ignore_suffix):
+            return
         if ADMIN_REPLY_TAG in body:
             # This is a reply Adiyan itself sent into the self-chat (confirmation or
             # admin answer), not something the owner typed - self-chat messages are

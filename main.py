@@ -326,6 +326,7 @@ class AdiyanService:
                 openwa_service=self.openwa_service,
                 memory_index=memory_index,
                 admin_handler=admin_handler,
+                ignore_suffix=cfg.owner_ignore_suffix,
             )
             logger.info("✅ KB ingestion poller + WhatsApp admin handler configured")
         else:
