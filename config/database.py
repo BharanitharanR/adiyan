@@ -126,6 +126,21 @@ def init_db():
                 value TEXT NOT NULL
             );
 
+            -- Routines: durable, file-backed job templates (SKILL.md-inspired - see
+            -- services/routine_store.py's module docstring). This table is only an
+            -- INDEX for fast lookup (name -> file_path + description) - the actual
+            -- definition (schedule/target/instructions) lives in the static file at
+            -- file_path, which is the source of truth and survives even if the live
+            -- cron_jobs row referencing it is later deleted. name is the shared key
+            -- between a routine and the cron_jobs row(s) created from it.
+            CREATE TABLE IF NOT EXISTS routines (
+                name TEXT PRIMARY KEY COLLATE NOCASE,
+                file_path TEXT NOT NULL,
+                description TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             -- AI Cron Jobs: a generic scheduled WhatsApp hook. created_by is either a
             -- real client's contact_name or the OWNER_PSEUDO_CONTACT sentinel
             -- (services/cron_scheduler.py) since the owner isn't a row in `clients`.
@@ -621,6 +636,40 @@ def update_cron_job(job_id: int, **fields) -> bool:
 def delete_cron_job(job_id: int) -> bool:
     with _connect() as conn:
         cur = conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+# ---------- routines (see services/routine_store.py) ----------
+
+def upsert_routine(name: str, file_path: str, description: str):
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO routines (name, file_path, description, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET file_path=excluded.file_path, "
+            "description=excluded.description, updated_at=excluded.updated_at",
+            (name, file_path, description, now, now),
+        )
+        conn.commit()
+
+
+def get_routine(name: str) -> Optional[Dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM routines WHERE name = ?", (name,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_routines() -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM routines ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_routine(name: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM routines WHERE name = ?", (name,))
         conn.commit()
         return cur.rowcount > 0
 

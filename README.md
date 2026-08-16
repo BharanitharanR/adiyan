@@ -18,6 +18,7 @@ Adiyan (அடியேன் — "your humble servant") is a self-hosted AI bus
 - **A knowledge base built from what you upload.** Send a PDF to your own self-chat and it's automatically parsed and chunked into a knowledge base your clients' conversations can draw on.
 - **A private-note escape hatch.** End a self-chat message with a configurable suffix (default `**`, changeable on the dashboard) to keep it out of admin processing entirely — no job capture, no PDF ingestion, no admin reply.
 - **AI Cron Jobs** — schedule recurring or one-time WhatsApp actions in plain language ("every Sunday at 6pm, send everyone a note," "send this to everyone this week") targeting yourself, one client, a specific named group of clients (e.g. "just the people who said yes to this poll"), or everyone, with optional reply capture and a window to collect responses.
+- **A reusable routines library.** Every job you create is also saved as a named, durable routine — asking for something by a name that already exists doesn't create a duplicate, it re-runs the existing one. Routines are stored as plain files on disk (`~/.Adiyan/routines/`), not locked away in a database, so they're readable and editable by hand if you ever want to.
 - **Private, read-only Gmail and Calendar access**, reachable only from your own chat — check your inbox or what's on your calendar directly over WhatsApp. Never something a client's conversation can reach.
 
 ## Platform-wide

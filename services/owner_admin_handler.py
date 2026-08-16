@@ -316,7 +316,8 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
     @tool
     async def create_job(name: str, natural_language_schedule: str, target: str, instructions: str,
                           expects_response: bool = False, response_window_hours: int = 0,
-                          target_group: Optional[List[str]] = None) -> dict:
+                          target_group: Optional[List[str]] = None,
+                          description: Optional[str] = None) -> dict:
         """Create a scheduled WhatsApp job (AI Cron Job). target must be 'all_clients',
         'self' (your own self-chat), 'group' (a specific subset of clients - pass their
         exact names in target_group, e.g. ["Sripriya", "Kumar"]), or an exact client name.
@@ -330,23 +331,51 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         instructions describes what the message should say (and may reference the
         knowledge base - the job composer can search it). Set expects_response=true
         and response_window_hours (0 = no expiry) to capture whatever the
-        recipient(s) reply with next as data, instead of normal coaching."""
-        from services.cron_scheduler import create_job_record, OWNER_PSEUDO_CONTACT
+        recipient(s) reply with next as data, instead of normal coaching. description
+        is a short one-line summary stored in the routines index (list_routines) to
+        help you and future you recognize this job by what it does, not just its name.
+
+        IMPORTANT: every job name is also a routine name (list_routines). If this
+        exact name already exists, this does NOT create a duplicate - it triggers
+        the existing routine right now instead and tells you it reused it. Check
+        list_routines first if you're unsure whether something like this already
+        exists before picking a name."""
+        from services.cron_scheduler import OWNER_PSEUDO_CONTACT
+        if not cron_scheduler:
+            return {'error': 'Cron scheduler is not available yet (still starting up)'}
         if target not in ('all_clients', 'self', 'group') and not db.get_client(target):
             return {'error': f"No client named '{target}'. Use 'all_clients', 'self', 'group', or an exact client name."}
         try:
-            job = await create_job_record(
+            result = await cron_scheduler.create_or_trigger(
                 created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
                 target=target, instructions=instructions, expects_response=expects_response,
                 response_window_hours=response_window_hours or None,
                 model_name=model_name, ollama_url=ollama_url, target_group=target_group,
+                description=description,
             )
         except ValueError as e:
             return {'error': str(e)}
-        return {
-            'success': True, 'job_id': job['id'], 'cron_expression': job['cron_expression'],
-            'next_run_at': job['next_run_at'],
-        }
+        return {'success': True, **result}
+
+    @tool
+    def list_routines() -> list:
+        """List every known routine (name + description) - the durable, reusable
+        library every job creates an entry in, independent of whether it's
+        currently active/scheduled. Check this before creating a new job to see
+        if something similar already exists by a different name than you'd guess."""
+        return db.list_routines()
+
+    @tool
+    def delete_routine(routine_name: str) -> dict:
+        """Permanently delete a routine definition (its index entry and file) -
+        does not touch any currently scheduled job using it. Use delete_job for
+        that separately if it's also actively scheduled."""
+        from services.routine_store import delete_routine_file, routine_file_path
+        ok = db.delete_routine(routine_name)
+        if not ok:
+            return {'error': f"No routine named '{routine_name}'"}
+        delete_routine_file(routine_file_path(routine_name))
+        return {'success': True}
 
     @tool
     def list_jobs() -> list:
@@ -355,16 +384,25 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return db.list_cron_jobs()
 
     @tool
-    def enable_job(job_id: int, enabled: bool) -> dict:
-        """Enable or disable a scheduled job by id (does not delete it)."""
-        ok = db.update_cron_job(job_id, enabled=enabled)
-        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+    def enable_job(job: str, enabled: bool) -> dict:
+        """Enable or disable a scheduled job (does not delete it) - pass either its
+        id or its exact name (e.g. "daily_stock_report" or 20)."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        db.update_cron_job(found['id'], enabled=enabled)
+        return {'success': True}
 
     @tool
-    def delete_job(job_id: int) -> dict:
-        """Permanently delete a scheduled job by id."""
-        ok = db.delete_cron_job(job_id)
-        return {'success': True} if ok else {'error': f"No job with id {job_id}"}
+    def delete_job(job: str) -> dict:
+        """Permanently delete a scheduled job - pass either its id or its exact name."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        db.delete_cron_job(found['id'])
+        return {'success': True}
 
     @tool
     async def broadcast_once(name: str, target: str, instructions: str,
@@ -394,30 +432,34 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return {'success': True, **result}
 
     @tool
-    def get_job_responses(job_id: int) -> dict:
+    def get_job_responses(job: str) -> dict:
         """Read back what recipients have replied to a job so far (its collected
         job_data) - e.g. broadcast replies or journal entries, useful for reviewing
-        before a call. Each response includes who sent it and when."""
-        job = db.get_cron_job(job_id)
-        if not job:
-            return {'error': f"No job with id {job_id}"}
-        responses = db.read_job_data(job_id)
+        before a call. Pass either the job's id or its exact name. Each response
+        includes who sent it and when."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        responses = db.read_job_data(found['id'])
         if not responses:
-            return {'job_name': job['name'], 'responses': [], 'note': 'No responses collected yet'}
-        return {'job_name': job['name'], 'responses': responses}
+            return {'job_name': found['name'], 'responses': [], 'note': 'No responses collected yet'}
+        return {'job_name': found['name'], 'responses': responses}
 
     @tool
-    async def trigger_job_now(job_id: int) -> dict:
+    async def trigger_job_now(job: str) -> dict:
         """Manually run a scheduled job right now, for testing - composes and sends
-        its message immediately without waiting for its actual scheduled time.
-        Does NOT change that scheduled time (the job's real next run is unaffected -
-        this is a test send, not a reschedule)."""
+        its message immediately without waiting for its actual scheduled time. Pass
+        either the job's id or its exact name. Does NOT change that scheduled time
+        (the job's real next run is unaffected - this is a test send, not a
+        reschedule)."""
         if not cron_scheduler:
             return {'error': 'Cron scheduler is not available yet (still starting up)'}
-        job = db.get_cron_job(job_id)
-        if not job:
-            return {'error': f"No job with id {job_id}"}
-        return await cron_scheduler.run_now(job)
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job)
+        if error:
+            return {'error': error}
+        return await cron_scheduler.run_now(found)
 
     @tool
     def check_google_workspace_status() -> dict:
@@ -449,6 +491,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
+            list_routines, delete_routine,
             check_google_workspace_status,
             broadcast_once]
 
