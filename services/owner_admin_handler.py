@@ -384,6 +384,52 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return details
 
     @tool
+    def set_routine_trigger(routine_name: str, trigger_phrase: str, action: str = 'log',
+                             ack_message: str = '') -> dict:
+        """Makes a routine fire the moment the owner sends an exact phrase in their
+        self-chat - not on a schedule, not on request, just whenever that phrase is
+        said (e.g. trigger_phrase="reached p" to log office attendance the instant
+        it's typed, any time of day). action must be 'log' (records the event as
+        this routine's data for today and optionally sends ack_message - leave
+        ack_message empty for a fully silent log) or 'run' (actually runs the
+        routine's full instructions - composes and sends its real message, same as
+        trigger_job_now - ack_message is unused since the routine's own send IS the
+        response). The phrase must be unique across every routine - reusing one
+        already claimed by another routine is rejected. Pass trigger_phrase='' to
+        remove an existing trigger from a routine."""
+        from services.routine_store import resolve_routine, write_routine_file
+        if action not in ('log', 'run'):
+            return {'error': "action must be 'log' or 'run'"}
+        found, error = resolve_routine(routine_name, ollama_url=ollama_url)
+        if error:
+            return {'error': error}
+
+        if trigger_phrase:
+            existing = db.get_routine_by_trigger_phrase(trigger_phrase)
+            if existing and existing['name'].lower() != found['name'].lower():
+                return {'error': f"'{trigger_phrase}' is already the trigger for routine '{existing['name']}'"}
+
+        from services.routine_store import get_full_details
+        current = get_full_details(found)
+        if not current:
+            return {'error': f"Routine '{found['name']}' is indexed but its file is missing or unreadable"}
+
+        path = write_routine_file(
+            name=found['name'], description=current['description'], schedule=current['schedule'],
+            cron_expression=current['cron_expression'], target=current['target'],
+            instructions=current['instructions'], target_group=current['target_group'],
+            expects_response=current['expects_response'], response_window_hours=current['response_window_hours'],
+            trigger_phrase=trigger_phrase or '', trigger_action=action, trigger_ack_message=ack_message,
+        )
+        db.upsert_routine(
+            name=found['name'], file_path=str(path), description=current['description'],
+            trigger_phrase=trigger_phrase or None, clear_trigger_phrase=not trigger_phrase,
+        )
+        if not trigger_phrase:
+            return {'success': True, 'trigger': 'removed'}
+        return {'success': True, 'routine': found['name'], 'trigger_phrase': trigger_phrase, 'action': action}
+
+    @tool
     def delete_routine(routine_name: str) -> dict:
         """Permanently delete a routine definition (its index entry and file) -
         does not touch any currently scheduled job using it. Use delete_job for
@@ -509,7 +555,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
-            list_routines, get_routine_details, delete_routine,
+            list_routines, get_routine_details, set_routine_trigger, delete_routine,
             check_google_workspace_status,
             broadcast_once]
 

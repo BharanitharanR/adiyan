@@ -138,6 +138,7 @@ def init_db():
                 file_path TEXT NOT NULL,
                 description TEXT NOT NULL,
                 embedding TEXT,
+                trigger_phrase TEXT COLLATE NOCASE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -239,6 +240,9 @@ def init_db():
             if 'embedding' not in existing_routine_cols:
                 conn.execute("ALTER TABLE routines ADD COLUMN embedding TEXT")
                 logger.info("📇 Added embedding column to routines")
+            if 'trigger_phrase' not in existing_routine_cols:
+                conn.execute("ALTER TABLE routines ADD COLUMN trigger_phrase TEXT COLLATE NOCASE")
+                logger.info("📇 Added trigger_phrase column to routines")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -653,18 +657,41 @@ def delete_cron_job(job_id: int) -> bool:
 
 # ---------- routines (see services/routine_store.py) ----------
 
-def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None):
+def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None,
+                    trigger_phrase: Optional[str] = None, clear_trigger_phrase: bool = False):
+    """embedding and trigger_phrase are both preserve-by-default: a caller that
+    only wants to update one field (e.g. set_routine_trigger only changing
+    trigger_phrase, or create_job_record re-saving a routine with no idea a
+    trigger was ever configured) must never silently wipe the other via a bare
+    None. Passing None keeps whatever's already stored (COALESCE); pass an
+    explicit value to actually change it. clear_trigger_phrase=True is the one
+    exception, needed because COALESCE alone can't distinguish "don't touch
+    this" from "set it to NULL"."""
     now = _now()
     embedding_json = json.dumps(embedding) if embedding is not None else None
+    effective_trigger_phrase = None if clear_trigger_phrase else trigger_phrase
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO routines (name, file_path, description, embedding, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO routines (name, file_path, description, embedding, trigger_phrase, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET file_path=excluded.file_path, "
-            "description=excluded.description, embedding=excluded.embedding, updated_at=excluded.updated_at",
-            (name, file_path, description, embedding_json, now, now),
+            "description=excluded.description, "
+            "embedding=COALESCE(excluded.embedding, routines.embedding), "
+            "trigger_phrase=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.trigger_phrase, routines.trigger_phrase) END, "
+            "updated_at=excluded.updated_at",
+            (name, file_path, description, embedding_json, effective_trigger_phrase, now, now,
+             1 if clear_trigger_phrase else 0),
         )
         conn.commit()
+
+
+def get_routine_by_trigger_phrase(phrase: str) -> Optional[Dict[str, Any]]:
+    """Fast, indexed-column lookup - called on every owner self-chat message, so
+    this must not need reading any routine file. trigger_phrase's COLLATE NOCASE
+    on the column makes this comparison case-insensitive."""
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM routines WHERE trigger_phrase = ?", (phrase,)).fetchone()
+        return _row_to_routine_dict(row) if row else None
 
 
 def _row_to_routine_dict(row: sqlite3.Row) -> Dict[str, Any]:
