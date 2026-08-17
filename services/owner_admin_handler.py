@@ -646,6 +646,16 @@ class OwnerAdminHandler:
         messages = [system] + self._history + [human]
         result = await asyncio.wait_for(agent.ainvoke({"messages": messages}), timeout=ADMIN_AGENT_TIMEOUT_SECONDS)
 
+        # Only the messages THIS call actually generated, not the full returned
+        # state - self._history below carries prior turns' AIMessages forward,
+        # and each one still has its own OLD usage_metadata attached. Summing
+        # the full list would re-count every previous turn's tokens on every
+        # single subsequent call, compounding without bound.
+        from core.token_usage import record as record_token_usage
+        record_token_usage(
+            context_type='admin_agent', model=self.model, messages=result["messages"][len(messages):],
+        )
+
         final = result["messages"][-1]
         if not isinstance(final, AIMessage) or not final.content:
             raise Exception("Admin agent produced no final answer")

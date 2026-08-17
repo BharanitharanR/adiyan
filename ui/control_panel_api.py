@@ -1,4 +1,5 @@
 import hmac
+from datetime import datetime, timedelta
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 from config.control_plane import ControlPlane
@@ -373,6 +374,25 @@ def list_routines():
         details = get_full_details(row)
         routines.append(details or {'name': row['name'], 'description': row['description'], 'error': 'file missing'})
     return jsonify(routines)
+
+@app.route('/api/token-usage', methods=['GET'])
+def token_usage():
+    """Real per-call token counts (config/database.py's token_usage table,
+    populated from core/token_usage.py's instrumentation at every LLM call
+    site) - the concrete "this is what stays on your own hardware" number,
+    broken down by routine (the specific granularity asked for) and by which
+    part of the system spent it. ?days=N filters to the trailing window
+    (default: all-time)."""
+    days = request.args.get('days', type=int)
+    since = None
+    if days:
+        since = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S')
+    return jsonify({
+        'total': db.token_usage_total(since=since),
+        'by_routine': db.token_usage_by_routine(since=since),
+        'by_context_type': db.token_usage_by_context_type(since=since),
+        'recent': db.list_token_usage(limit=50),
+    })
 
 @app.route('/api/dashboard-auth/status', methods=['GET'])
 def dashboard_auth_status():
