@@ -139,6 +139,7 @@ def init_db():
                 description TEXT NOT NULL,
                 embedding TEXT,
                 trigger_phrase TEXT COLLATE NOCASE,
+                created_by_routine TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -267,6 +268,9 @@ def init_db():
             if 'trigger_phrase' not in existing_routine_cols:
                 conn.execute("ALTER TABLE routines ADD COLUMN trigger_phrase TEXT COLLATE NOCASE")
                 logger.info("📇 Added trigger_phrase column to routines")
+            if 'created_by_routine' not in existing_routine_cols:
+                conn.execute("ALTER TABLE routines ADD COLUMN created_by_routine TEXT")
+                logger.info("📇 Added created_by_routine column to routines")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -601,15 +605,20 @@ def _row_to_job_dict(row: sqlite3.Row) -> Dict[str, Any]:
 def create_cron_job(created_by: str, name: str, natural_language_schedule: str, cron_expression: str,
                      target: str, instructions: str, expects_response: bool = False,
                      response_window_hours: Optional[int] = None, next_run_at: Optional[str] = None,
-                     target_group: Optional[List[str]] = None) -> int:
+                     target_group: Optional[List[str]] = None, enabled: bool = True) -> int:
+    """enabled defaults true for the normal owner/client authoring paths, but a
+    routine created BY another routine (services/cron_scheduler.py's proactive
+    "chain reaction" creation tool) always passes enabled=False - it exists and
+    is visible, but never fires until a human explicitly turns it on. See that
+    module's build_proactive_creation_tool for why this default exists."""
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO cron_jobs (created_by, name, natural_language_schedule, cron_expression, target, "
             "target_group, instructions, expects_response, response_window_hours, enabled, created_at, "
-            "next_run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            "next_run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (created_by, name, natural_language_schedule, cron_expression, target,
              json.dumps(target_group) if target_group else None, instructions,
-             1 if expects_response else 0, response_window_hours, _now(), next_run_at),
+             1 if expects_response else 0, response_window_hours, 1 if enabled else 0, _now(), next_run_at),
         )
         conn.commit()
         return cur.lastrowid
@@ -682,7 +691,8 @@ def delete_cron_job(job_id: int) -> bool:
 # ---------- routines (see services/routine_store.py) ----------
 
 def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None,
-                    trigger_phrase: Optional[str] = None, clear_trigger_phrase: bool = False):
+                    trigger_phrase: Optional[str] = None, clear_trigger_phrase: bool = False,
+                    created_by_routine: Optional[str] = None):
     """embedding and trigger_phrase are both preserve-by-default: a caller that
     only wants to update one field (e.g. set_routine_trigger only changing
     trigger_phrase, or create_job_record re-saving a routine with no idea a
@@ -690,21 +700,28 @@ def upsert_routine(name: str, file_path: str, description: str, embedding: Optio
     None. Passing None keeps whatever's already stored (COALESCE); pass an
     explicit value to actually change it. clear_trigger_phrase=True is the one
     exception, needed because COALESCE alone can't distinguish "don't touch
-    this" from "set it to NULL"."""
+    this" from "set it to NULL".
+
+    created_by_routine is different: an immutable lineage fact (which routine,
+    if any, auto-created this one via services/cron_scheduler.py's proactive
+    creation tool), set once at INSERT and deliberately excluded from the
+    UPDATE clause entirely - a routine's origin never changes on a later
+    re-save, unlike the other fields above."""
     now = _now()
     embedding_json = json.dumps(embedding) if embedding is not None else None
     effective_trigger_phrase = None if clear_trigger_phrase else trigger_phrase
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO routines (name, file_path, description, embedding, trigger_phrase, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO routines (name, file_path, description, embedding, trigger_phrase, "
+            "created_by_routine, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET file_path=excluded.file_path, "
             "description=excluded.description, "
             "embedding=COALESCE(excluded.embedding, routines.embedding), "
             "trigger_phrase=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.trigger_phrase, routines.trigger_phrase) END, "
             "updated_at=excluded.updated_at",
-            (name, file_path, description, embedding_json, effective_trigger_phrase, now, now,
-             1 if clear_trigger_phrase else 0),
+            (name, file_path, description, embedding_json, effective_trigger_phrase, created_by_routine,
+             now, now, 1 if clear_trigger_phrase else 0),
         )
         conn.commit()
 

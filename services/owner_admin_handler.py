@@ -215,6 +215,86 @@ def _routine_engagement_by_client(name: Optional[str] = None) -> Dict[str, Dict[
     return engagement
 
 
+def build_owner_analytics_tools(ollama_url: str) -> List:
+    """Read-only client/engagement analytics tools (get_client_insights,
+    list_clients, get_job_responses, get_platform_stats) - the same ones
+    _build_admin_tools binds for the owner's own chat, extracted here so
+    services/cron_scheduler.py's job composer can bind them too, but ONLY for
+    a job whose target is 'self'. This is the exact same security boundary
+    already used for Gmail/Calendar: a composer's output can end up in a
+    client's chat (target='all_clients'/'group'/a specific client), so
+    anything that reveals data about OTHER clients must never be reachable
+    from that composer run - only when the output can only ever reach the
+    owner is it safe to hand these over. This is what makes a "proactive"
+    routine possible (one that analyzes engagement and surfaces a suggestion
+    on its own schedule, not just relays a fixed message) without needing any
+    new routine mechanism - see services/cron_scheduler.py's _compose_message
+    for where target='self' gates this."""
+    @tool
+    def get_client_insights(name: Optional[str] = None) -> dict:
+        """Combined engagement insights - registration info, message activity,
+        and routine/job responsiveness - for one client (by name) or a summary
+        across everyone (name omitted), sorted by engagement."""
+        message_stats = _message_stats_by_client()
+        routine_engagement = _routine_engagement_by_client(name)
+        if name:
+            found = db.get_client(name)
+            if not found:
+                return {'error': f"No client named '{name}'"}
+            stats = message_stats.get(name, {'count': 0, 'first': None, 'last': None})
+            return {
+                'contact_name': name,
+                'registered_at': found.get('registered_at'),
+                'is_whitelisted': bool(found.get('is_whitelisted')),
+                'tags': found.get('tags'),
+                'notes': found.get('notes'),
+                'message_count': stats['count'],
+                'first_interaction_at': stats['first'],
+                'last_interaction_at': stats['last'],
+                'routine_engagement': routine_engagement.get(name, {}),
+            }
+        summary = []
+        for c in db.list_clients():
+            cname = c['contact_name']
+            stats = message_stats.get(cname, {'count': 0, 'first': None, 'last': None})
+            summary.append({
+                'contact_name': cname,
+                'is_whitelisted': bool(c.get('is_whitelisted')),
+                'message_count': stats['count'],
+                'last_interaction_at': stats['last'],
+                'routines_responded_to': list(routine_engagement.get(cname, {}).keys()),
+            })
+        summary.sort(key=lambda x: x['message_count'], reverse=True)
+        return {'clients': summary}
+
+    @tool
+    def list_clients(only_active: bool = False) -> list:
+        """List registered clients. only_active=true limits to clients active in
+        the last 7 days."""
+        return db.list_clients(active_only=only_active)
+
+    @tool
+    def get_job_responses(job: str) -> dict:
+        """Read back what recipients have replied to a job so far - pass either
+        the job's id or its exact name."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job, ollama_url=ollama_url)
+        if error:
+            return {'error': error}
+        responses = db.read_job_data(found['id'])
+        if not responses:
+            return {'job_name': found['name'], 'responses': [], 'note': 'No responses collected yet'}
+        return {'job_name': found['name'], 'responses': responses}
+
+    @tool
+    def get_platform_stats() -> dict:
+        """Platform stats: total registered clients, clients active in the last
+        7 days, knowledge base documents/chunks."""
+        return db.get_platform_stats()
+
+    return [get_client_insights, list_clients, get_job_responses, get_platform_stats]
+
+
 def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_scheduler=None,
                         owner_mcp_tool_count: int = 0) -> List:
     @tool
