@@ -490,7 +490,23 @@ class CronScheduler:
         sent = 0
         for t in resolvable:
             try:
-                send_result = await self.openwa.send_message(t['chat_id'], message)
+                # A self-chat's messages are always fromMe=true regardless of which
+                # side sent them (Adiyan or the owner typing), so ADMIN_REPLY_TAG is
+                # the ONLY way services/kb_ingestion_poller.py can tell this job's
+                # own outgoing prompt apart from a genuine owner reply on its next
+                # poll. Without it (confirmed live, a real bug): the job's own
+                # prompt gets picked up on the very next poll, finds no tag, falls
+                # through to "is this an answer to a pending job response" - and
+                # finds the pending row THIS SAME send just created seconds earlier,
+                # capturing the prompt text itself as the "response" before the
+                # owner ever got a chance to actually reply. Every other target
+                # (a real client's own chat, never a self-chat) has a genuine
+                # inbound/outbound distinction and needs no tag.
+                outgoing = message
+                if t['contact_name'] == OWNER_PSEUDO_CONTACT:
+                    from services.owner_admin_handler import ADMIN_REPLY_TAG
+                    outgoing = f"{message}\n\n{ADMIN_REPLY_TAG}"
+                send_result = await self.openwa.send_message(t['chat_id'], outgoing)
                 sent += 1
                 if job['expects_response']:
                     db.set_pending_job_response(
