@@ -46,6 +46,16 @@ JOB_COMPOSER_TIMEOUT_SECONDS = 120
 # against runaway creation, not full rate-limiting infra. The owner has no cap.
 CLIENT_JOB_CAP = 5
 
+# propose_new_routine makes its OWN nested Ollama call (parse_natural_schedule)
+# from inside a composer call that's already running under JOB_COMPOSER_TIMEOUT_SECONDS.
+# Confirmed live (2026-08-17): that nested call inherited whatever was left of the
+# outer 120s budget rather than a fresh one, and when it lost that race the
+# resulting CancelledError propagated all the way up and killed the entire job -
+# so the routine's real message never sent, not just the proposal. This gives the
+# proposal its own small, independent budget so it fails fast and leaves the
+# composer's own budget intact for the send that actually matters.
+PROACTIVE_CREATION_TIMEOUT_SECONDS = 30
+
 JOB_COMPOSER_SYSTEM_PROMPT = (
     "You compose one WhatsApp message for a scheduled job, following the "
     "instructions below. This exact text is sent as-is to every recipient - there "
@@ -174,6 +184,7 @@ async def create_job_record(
     target_group: Optional[List[str]] = None, description: Optional[str] = None,
     check_routines: bool = True, write_routine: bool = True,
     enabled: bool = True, created_by_routine: Optional[str] = None,
+    job_type: str = 'standard',
 ) -> Dict[str, Any]:
     """Shared by both authoring paths (owner admin tools, client self-service
     tools) - one validated write path, never a freeform db insert. Raises
@@ -229,7 +240,7 @@ async def create_job_record(
         cron_expression=cron_expression, target=target, instructions=instructions,
         expects_response=expects_response, response_window_hours=response_window_hours,
         next_run_at=_fmt(next_run), target_group=target_group if target == 'group' else None,
-        enabled=enabled,
+        enabled=enabled, job_type=job_type,
     )
 
     if write_routine:
@@ -345,16 +356,32 @@ def build_proactive_creation_tool(creator_routine_name: str, model_name: str, ol
                 'error': f'Already proposed {created_count} routine(s) this run '
                          f'(limit {MAX_PROACTIVE_ROUTINE_CREATIONS_PER_RUN}) - mention any further ideas in your reply instead.'
             }
+        # Bounded and broadly caught on purpose: this is a side-effect the composer
+        # decided to attempt on top of its real job (sending the actual message).
+        # A slow or failing proposal must degrade to "skip it, mention it in the
+        # reply instead" - it must never be able to take the parent job's send
+        # down with it the way an uncaught CancelledError/TimeoutError would.
         try:
-            job = await create_job_record(
-                created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
-                target='self', instructions=instructions, expects_response=expects_response,
-                response_window_hours=response_window_hours or None,
-                model_name=model_name, ollama_url=ollama_url,
-                enabled=False, created_by_routine=creator_routine_name,
+            job = await asyncio.wait_for(
+                create_job_record(
+                    created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
+                    target='self', instructions=instructions, expects_response=expects_response,
+                    response_window_hours=response_window_hours or None,
+                    model_name=model_name, ollama_url=ollama_url,
+                    enabled=False, created_by_routine=creator_routine_name,
+                ),
+                timeout=PROACTIVE_CREATION_TIMEOUT_SECONDS,
             )
         except (ValueError, RoutineAlreadyExists) as e:
             return {'error': str(e)}
+        except asyncio.TimeoutError:
+            return {
+                'error': f'Timed out drafting that routine (>{PROACTIVE_CREATION_TIMEOUT_SECONDS}s) - '
+                         'skip it and just mention the idea in your reply instead.'
+            }
+        except Exception as e:
+            logger.error(f"propose_new_routine('{name}') failed unexpectedly: {e}", exc_info=True)
+            return {'error': f'Could not create that routine: {e}'}
         created_count += 1
         return {
             'success': True, 'job_id': job['id'], 'enabled': False,
@@ -371,18 +398,25 @@ async def _compose_message(job: Dict[str, Any], mcp_tools: List, model_name: str
     own data. Sending is deliberately not a tool available here - dispatch below is
     always deterministic Python, never an LLM decision.
 
-    When job['target'] == 'self' (this routine's output can only ever reach the
-    owner, never a client), also binds read-only client/engagement analytics
-    tools and the capped proactive-routine-creation tool above - see
-    services/owner_admin_handler.py's build_owner_analytics_tools docstring for
-    why target='self' is exactly the boundary that makes this safe. Any other
-    target never gets these, full stop."""
+    Owner-only analytics/proactive tools require created_by == OWNER_PSEUDO_CONTACT
+    *and* target == 'self' - target == 'self' alone is NOT enough. It originally
+    was, back when only the owner could ever author a self-target job, so
+    target == 'self' implied "this message can only ever reach the owner." That
+    stopped being true once clients got self-service job creation (target forced
+    to 'self', created_by forced to the client) - a client's own self-target job
+    (e.g. a personal nightly journal check-in) sends its output straight back to
+    that same client, so binding get_client_insights/list_clients/
+    propose_new_routine there would hand every other client's engagement data,
+    and the ability to spawn owner routines, to whichever client's job composed
+    the message. See run_now()'s identical created_by == OWNER_PSEUDO_CONTACT
+    check and services/owner_admin_handler.py's build_owner_analytics_tools
+    docstring for the same boundary enforced elsewhere."""
     from langchain_ollama import ChatOllama
     from langgraph.prebuilt import create_react_agent
 
     model = ChatOllama(model=model_name, base_url=ollama_url, temperature=0.5)
     tools = list(mcp_tools) + [_build_job_data_tool(job['id'])]
-    if job.get('target') == 'self' and control_plane is not None:
+    if job.get('target') == 'self' and job.get('created_by') == OWNER_PSEUDO_CONTACT and control_plane is not None:
         from services.owner_admin_handler import build_owner_analytics_tools
         tools += build_owner_analytics_tools(ollama_url)
         tools.append(build_proactive_creation_tool(job['name'], model_name, ollama_url))
@@ -546,6 +580,12 @@ class CronScheduler:
         calling this) and the owner admin channel's manual "trigger this job now to
         test it" tool, which must NOT consume or shift the job's real next
         occurrence just because the owner wanted to see what it sends."""
+        if job.get('job_type') == 'client_reports_digest':
+            from services.client_report_generator import run_client_reports_digest
+            return await run_client_reports_digest(
+                self.openwa, await self._resolve_owner_chat_id(), self.model_name, self.ollama_url,
+            )
+
         if job['created_by'] == OWNER_PSEUDO_CONTACT and job['target'] == 'self':
             targets = [{'contact_name': OWNER_PSEUDO_CONTACT, 'chat_id': await self._resolve_owner_chat_id()}]
         else:
