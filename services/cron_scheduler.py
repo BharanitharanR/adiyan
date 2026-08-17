@@ -15,6 +15,7 @@ exactly: async start()/stop(), joined into the same background thread in main.py
 """
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -81,15 +82,35 @@ def _fmt(dt: datetime) -> str:
     return dt.strftime('%Y-%m-%dT%H:%M:%S')
 
 
-def resolve_job(identifier: str, created_by: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Resolves a job by either its numeric id or its exact name (case-insensitive) -
-    every job-management tool below takes this instead of a bare job_id, so a
-    conversation can refer to "the daily_stock_report job" instead of tracking
-    numeric ids across turns. Confirmed live as a real problem: the admin agent
-    repeatedly mixed up which job ids 19/20/21/22 actually referred to mid-
-    conversation. If created_by is given, only that contact's own jobs are
-    considered (client self-service scoping) - a client can never resolve or act
-    on another client's job by guessing its name, even if they know it.
+def _normalize_job_name(s: str) -> str:
+    """Lowercase with every run of whitespace/underscore/hyphen collapsed out, so
+    "Daily Office Check", "daily_office_check", and "daily-office-check" all
+    compare equal. Confirmed live as a real miss: the admin agent naturally
+    snake_cases a spoken job name ("Daily Office Check" -> "daily_office_check")
+    when calling a tool, which a bare case-insensitive comparison never catches -
+    the underscore vs. space difference alone made resolve_job report the job
+    "doesn't exist" for a name that plainly does."""
+    return re.sub(r'[\s_-]+', '', s.strip().lower())
+
+
+def resolve_job(identifier: str, created_by: Optional[str] = None,
+                 ollama_url: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Resolves a job by its numeric id, its name (whitespace/case/separator-
+    insensitive), or - if ollama_url is given - by semantic similarity to a
+    routine's name+description, same matching create_job's own duplicate check
+    uses. Every job-management tool below takes this instead of a bare job_id,
+    so a conversation can refer to "the daily office check" without reproducing
+    a stored name's exact spacing, case, or separators. Confirmed live as a real
+    problem twice: the admin agent mixed up which numeric id 19/20/21/22
+    referred to mid-conversation, and separately asked to trigger
+    "daily_office_check" (its own snake_cased phrasing) against a job actually
+    named "Daily Office Check" and got "doesn't exist" from a bare exact match.
+    If created_by is given, only that contact's own jobs are considered (client
+    self-service scoping) - a client can never resolve or act on another
+    client's job by guessing its name, even if they know it. The semantic
+    fallback is owner-scoped only (created_by=None) - client jobs are never
+    routine-indexed (see create_job_record's write_routine param), so there's
+    nothing for it to match against for a client anyway.
 
     Returns (job, None) on a clean match, or (None, error) - including, when a
     name matches more than one job, an error listing every match's id so the
@@ -105,7 +126,27 @@ def resolve_job(identifier: str, created_by: Optional[str] = None) -> Tuple[Opti
         return None, f"No job with id {identifier}"
 
     candidates = db.list_cron_jobs(created_by=created_by) if created_by else db.list_cron_jobs()
+
     matches = [j for j in candidates if j['name'].lower() == identifier.lower()]
+    if not matches:
+        normalized = _normalize_job_name(identifier)
+        matches = [j for j in candidates if _normalize_job_name(j['name']) == normalized]
+
+    if not matches and ollama_url and created_by is None:
+        from services.routine_store import find_similar_routine
+        # A lower, separately-calibrated threshold than create_job's duplicate
+        # check: this query is a short bare phrase with no description (a
+        # weaker embedding signal than name+description), and a resolve-time
+        # mismatch is lower-stakes than a create-time one - the reply always
+        # names which job it triggered, so a wrong match is immediately visible
+        # and correctable, unlike silently reusing the wrong routine at create
+        # time. Empirically checked: a genuine match ("office attendance check"
+        # -> "Daily Office Check") scored 0.69, a genuinely unrelated phrase
+        # topped out at 0.52 against the same library - 0.60 sits in that gap.
+        routine = find_similar_routine(identifier, '', ollama_url, threshold=0.60)
+        if routine:
+            matches = [j for j in candidates if j['name'].lower() == routine['name'].lower()]
+
     if not matches:
         return None, f"No job named '{identifier}'"
     if len(matches) > 1:

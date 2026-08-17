@@ -390,7 +390,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         """Enable or disable a scheduled job (does not delete it) - pass either its
         id or its exact name (e.g. "daily_stock_report" or 20)."""
         from services.cron_scheduler import resolve_job
-        found, error = resolve_job(job)
+        found, error = resolve_job(job, ollama_url=ollama_url)
         if error:
             return {'error': error}
         db.update_cron_job(found['id'], enabled=enabled)
@@ -400,7 +400,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
     def delete_job(job: str) -> dict:
         """Permanently delete a scheduled job - pass either its id or its exact name."""
         from services.cron_scheduler import resolve_job
-        found, error = resolve_job(job)
+        found, error = resolve_job(job, ollama_url=ollama_url)
         if error:
             return {'error': error}
         db.delete_cron_job(found['id'])
@@ -440,7 +440,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         before a call. Pass either the job's id or its exact name. Each response
         includes who sent it and when."""
         from services.cron_scheduler import resolve_job
-        found, error = resolve_job(job)
+        found, error = resolve_job(job, ollama_url=ollama_url)
         if error:
             return {'error': error}
         responses = db.read_job_data(found['id'])
@@ -458,7 +458,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         if not cron_scheduler:
             return {'error': 'Cron scheduler is not available yet (still starting up)'}
         from services.cron_scheduler import resolve_job
-        found, error = resolve_job(job)
+        found, error = resolve_job(job, ollama_url=ollama_url)
         if error:
             return {'error': error}
         return await cron_scheduler.run_now(found)
