@@ -330,6 +330,13 @@ async def _compose_message(job: Dict[str, Any], mcp_tools: List, model_name: str
         HumanMessage(content=job['instructions']),
     ]
     result = await asyncio.wait_for(agent.ainvoke({"messages": messages}), timeout=JOB_COMPOSER_TIMEOUT_SECONDS)
+
+    from core.token_usage import record as record_token_usage
+    record_token_usage(
+        context_type='job_composer', model=model_name, messages=result["messages"],
+        context_label=job.get('name'), routine_name=job.get('name'), job_id=job.get('id'),
+    )
+
     final = result["messages"][-1]
     if not isinstance(final, AIMessage) or not final.content:
         raise Exception("Job composer produced no final message")

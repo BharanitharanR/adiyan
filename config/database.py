@@ -138,6 +138,7 @@ def init_db():
                 file_path TEXT NOT NULL,
                 description TEXT NOT NULL,
                 embedding TEXT,
+                trigger_phrase TEXT COLLATE NOCASE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -174,6 +175,30 @@ def init_db():
                 contact_name TEXT,
                 created_at TEXT NOT NULL
             );
+
+            -- Real per-call token usage (from ChatOllama's own usage_metadata, not an
+            -- estimate) - the intended use is a dashboard showing exactly how many
+            -- tokens each routine run / coaching turn / admin call actually cost, as a
+            -- concrete "this is what stays on your own hardware" number. context_type
+            -- is 'job_composer' | 'reasoning_stage' | 'admin_agent' | 'client_plain';
+            -- context_label is the specific stage name ('hermes') or similar within
+            -- that type. routine_name/job_id/contact_name are whichever apply to that
+            -- call - all nullable since not every context has all three.
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                context_type TEXT NOT NULL,
+                context_label TEXT,
+                routine_name TEXT,
+                job_id INTEGER,
+                contact_name TEXT,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_token_usage_routine ON token_usage(routine_name);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_recorded_at ON token_usage(recorded_at);
 
             -- Ephemeral dispatch state: "is the next message from this contact an
             -- answer to a job we sent." Separate from job_data (durable content).
@@ -239,6 +264,9 @@ def init_db():
             if 'embedding' not in existing_routine_cols:
                 conn.execute("ALTER TABLE routines ADD COLUMN embedding TEXT")
                 logger.info("📇 Added embedding column to routines")
+            if 'trigger_phrase' not in existing_routine_cols:
+                conn.execute("ALTER TABLE routines ADD COLUMN trigger_phrase TEXT COLLATE NOCASE")
+                logger.info("📇 Added trigger_phrase column to routines")
 
         for agent_id, (name, kind, tools) in PIPELINE_AGENT_DEFAULTS.items():
             defaults = {'model': 'qwen3:8b-16k', 'temperature': 0.7, 'timeout': 60} if agent_id == 'llm' else {}
@@ -653,18 +681,41 @@ def delete_cron_job(job_id: int) -> bool:
 
 # ---------- routines (see services/routine_store.py) ----------
 
-def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None):
+def upsert_routine(name: str, file_path: str, description: str, embedding: Optional[List[float]] = None,
+                    trigger_phrase: Optional[str] = None, clear_trigger_phrase: bool = False):
+    """embedding and trigger_phrase are both preserve-by-default: a caller that
+    only wants to update one field (e.g. set_routine_trigger only changing
+    trigger_phrase, or create_job_record re-saving a routine with no idea a
+    trigger was ever configured) must never silently wipe the other via a bare
+    None. Passing None keeps whatever's already stored (COALESCE); pass an
+    explicit value to actually change it. clear_trigger_phrase=True is the one
+    exception, needed because COALESCE alone can't distinguish "don't touch
+    this" from "set it to NULL"."""
     now = _now()
     embedding_json = json.dumps(embedding) if embedding is not None else None
+    effective_trigger_phrase = None if clear_trigger_phrase else trigger_phrase
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO routines (name, file_path, description, embedding, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO routines (name, file_path, description, embedding, trigger_phrase, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET file_path=excluded.file_path, "
-            "description=excluded.description, embedding=excluded.embedding, updated_at=excluded.updated_at",
-            (name, file_path, description, embedding_json, now, now),
+            "description=excluded.description, "
+            "embedding=COALESCE(excluded.embedding, routines.embedding), "
+            "trigger_phrase=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.trigger_phrase, routines.trigger_phrase) END, "
+            "updated_at=excluded.updated_at",
+            (name, file_path, description, embedding_json, effective_trigger_phrase, now, now,
+             1 if clear_trigger_phrase else 0),
         )
         conn.commit()
+
+
+def get_routine_by_trigger_phrase(phrase: str) -> Optional[Dict[str, Any]]:
+    """Fast, indexed-column lookup - called on every owner self-chat message, so
+    this must not need reading any routine file. trigger_phrase's COLLATE NOCASE
+    on the column makes this comparison case-insensitive."""
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM routines WHERE trigger_phrase = ?", (phrase,)).fetchone()
+        return _row_to_routine_dict(row) if row else None
 
 
 def _row_to_routine_dict(row: sqlite3.Row) -> Dict[str, Any]:
@@ -716,6 +767,82 @@ def read_job_data(job_id: int, key: Optional[str] = None, contact_name: Optional
             {'key': r['key'], 'value': r['value'], 'contact_name': r['contact_name'], 'created_at': r['created_at']}
             for r in rows
         ]
+
+
+# ---------- token_usage ----------
+
+def record_token_usage(context_type: str, model: str, prompt_tokens: int, completion_tokens: int,
+                        total_tokens: int, context_label: Optional[str] = None,
+                        routine_name: Optional[str] = None, job_id: Optional[int] = None,
+                        contact_name: Optional[str] = None):
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO token_usage (recorded_at, context_type, context_label, routine_name, job_id, "
+            "contact_name, model, prompt_tokens, completion_tokens, total_tokens) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), context_type, context_label, routine_name, job_id, contact_name,
+             model, prompt_tokens, completion_tokens, total_tokens),
+        )
+        conn.commit()
+
+
+def token_usage_by_routine(since: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Total tokens per routine - the specific breakdown asked for ("which routine
+    run consumed how much"). Rows with no routine_name (reasoning-cycle client
+    turns, admin calls) are grouped under NULL, surfaced separately by the
+    caller, not silently dropped."""
+    with _connect() as conn:
+        query = (
+            "SELECT routine_name, COUNT(*) as calls, SUM(prompt_tokens) as prompt_tokens, "
+            "SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens "
+            "FROM token_usage"
+        )
+        params: List[Any] = []
+        if since:
+            query += " WHERE recorded_at >= ?"
+            params.append(since)
+        query += " GROUP BY routine_name ORDER BY total_tokens DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def token_usage_by_context_type(since: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        query = (
+            "SELECT context_type, COUNT(*) as calls, SUM(prompt_tokens) as prompt_tokens, "
+            "SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens "
+            "FROM token_usage"
+        )
+        params: List[Any] = []
+        if since:
+            query += " WHERE recorded_at >= ?"
+            params.append(since)
+        query += " GROUP BY context_type ORDER BY total_tokens DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def token_usage_total(since: Optional[str] = None) -> Dict[str, int]:
+    with _connect() as conn:
+        query = (
+            "SELECT COUNT(*) as calls, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, "
+            "COALESCE(SUM(completion_tokens), 0) as completion_tokens, COALESCE(SUM(total_tokens), 0) as total_tokens "
+            "FROM token_usage"
+        )
+        params: List[Any] = []
+        if since:
+            query += " WHERE recorded_at >= ?"
+            params.append(since)
+        row = conn.execute(query, params).fetchone()
+        return dict(row)
+
+
+def list_token_usage(limit: int = 100) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM token_usage ORDER BY recorded_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def set_pending_job_response(contact_name: str, job_id: int, expires_at: Optional[str] = None,

@@ -273,6 +273,9 @@ class LLMAgent(BaseAgent):
             timeout=self.timeout,
         )
 
+        from core.token_usage import record as record_token_usage
+        record_token_usage(context_type='client_plain', model=self.model, messages=result["messages"])
+
         final = result["messages"][-1]
         if not isinstance(final, AIMessage) or not final.content:
             raise Exception("Tool-calling loop finished without a final answer")
@@ -302,6 +305,23 @@ class LLMAgent(BaseAgent):
                 raise Exception(f"Ollama returned {response.status_code}: {detail}")
 
             data = response.json()
+
+            # Raw /api/generate, not a LangChain ChatOllame call - no usage_metadata
+            # object, but Ollama's own response JSON carries the same counts under
+            # its native field names.
+            prompt_tokens = data.get('prompt_eval_count') or 0
+            completion_tokens = data.get('eval_count') or 0
+            if prompt_tokens or completion_tokens:
+                try:
+                    import config.database as db
+                    db.record_token_usage(
+                        context_type='client_plain', model=self.model, context_label='raw_generate',
+                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                        total_tokens=prompt_tokens + completion_tokens,
+                    )
+                except Exception:
+                    self.logger.warning('Failed to record token usage for raw Ollama call', exc_info=True)
+
             return data.get('response', '').strip()
 
         except requests.exceptions.ConnectionError:

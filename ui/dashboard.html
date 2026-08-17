@@ -439,6 +439,19 @@
             </div>
 
             <div class="card">
+                <h2>🪙 Token Usage</h2>
+                <p style="font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;">
+                    Real per-call token counts from the local model - everything here runs on your
+                    own hardware, nothing sent to an outside API.
+                </p>
+                <div id="token-usage-total" style="font-size: 12px; margin-bottom: 10px;"></div>
+                <div style="font-size: 11px; color: var(--ink-faint); margin-bottom: 4px;">By routine</div>
+                <div id="token-usage-by-routine" style="font-size: 12px; max-height: 140px; overflow-y: auto; margin-bottom: 10px;"></div>
+                <div style="font-size: 11px; color: var(--ink-faint); margin-bottom: 4px;">By system component</div>
+                <div id="token-usage-by-context" style="font-size: 12px; max-height: 140px; overflow-y: auto;"></div>
+            </div>
+
+            <div class="card">
                 <h2>📝 Recent Interactions</h2>
                 <div id="history-list" style="font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
             </div>
@@ -694,6 +707,43 @@
 
             } catch (error) {
                 console.error('Failed to load routines:', error);
+            }
+        }
+
+        async function loadTokenUsage() {
+            try {
+                const response = await fetch(`${API_URL}/token-usage`);
+                const data = await response.json();
+
+                const t = data.total;
+                document.getElementById('token-usage-total').innerHTML = t.calls > 0
+                    ? `<strong>${t.total_tokens.toLocaleString()}</strong> tokens across <strong>${t.calls.toLocaleString()}</strong> calls
+                       <br><span style="color: var(--ink-faint);">${t.prompt_tokens.toLocaleString()} prompt + ${t.completion_tokens.toLocaleString()} completion</span>`
+                    : '<span style="color: var(--ink-faint);">No usage recorded yet</span>';
+
+                const byRoutine = document.getElementById('token-usage-by-routine');
+                const routineRows = data.by_routine.filter(r => r.routine_name);
+                byRoutine.innerHTML = routineRows.length === 0
+                    ? '<p style="color: var(--ink-faint);">No routine runs recorded yet</p>'
+                    : routineRows.map(r => `
+                        <div style="display:flex; justify-content:space-between; padding: 4px 0; border-bottom: 1px solid var(--line);">
+                            <span>${escapeHtml(r.routine_name)}</span>
+                            <span style="color: var(--ink-faint);">${r.total_tokens.toLocaleString()} tok (${r.calls}x)</span>
+                        </div>
+                    `).join('');
+
+                const byContext = document.getElementById('token-usage-by-context');
+                byContext.innerHTML = data.by_context_type.length === 0
+                    ? '<p style="color: var(--ink-faint);">No usage recorded yet</p>'
+                    : data.by_context_type.map(r => `
+                        <div style="display:flex; justify-content:space-between; padding: 4px 0; border-bottom: 1px solid var(--line);">
+                            <span>${escapeHtml(r.context_type)}</span>
+                            <span style="color: var(--ink-faint);">${r.total_tokens.toLocaleString()} tok (${r.calls}x)</span>
+                        </div>
+                    `).join('');
+
+            } catch (error) {
+                console.error('Failed to load token usage:', error);
             }
         }
 
@@ -1005,11 +1055,13 @@
         loadWhatsAppQR();
         loadPersonas();
         loadRoutines();
+        loadTokenUsage();
 
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);
         setInterval(loadHistory, 5000);
         setInterval(loadRoutines, 15000);
+        setInterval(loadTokenUsage, 15000);
         // Deliberately NOT on a timer: this hits OpenWA's own REST API directly
         // (ui/control_panel_api.py's /api/whatsapp/status), which shares OpenWA's
         // rate limit budget with OpenWAPoller/KBIngestionPoller/CronScheduler -

@@ -190,6 +190,55 @@ class KBIngestionPoller:
         for message in reversed(messages):
             await self._handle_message(message)
 
+    async def _handle_routine_trigger(self, routine: dict):
+        """Fires a routine whose configured trigger phrase was just said - see
+        services/owner_admin_handler.py's set_routine_trigger. Two modes:
+        'log' records the event as this routine's data for today (and sends
+        ack_message only if one was configured - empty means fully silent) and
+        never runs the composer or sends anything else. 'run' actually executes
+        the routine's full instructions via the same path trigger_job_now uses -
+        its own composed-and-sent message IS the response, so ack_message is
+        unused there."""
+        from services.routine_store import get_full_details
+        details = get_full_details(routine)
+        if not details:
+            logger.error(f"❌ Routine '{routine['name']}' trigger fired but its file is missing or unreadable")
+            return
+
+        if details['trigger_action'] == 'run':
+            if not self.admin_handler or not self.admin_handler.cron_scheduler:
+                logger.error(f"❌ Routine '{routine['name']}' trigger fired but the cron scheduler isn't available")
+                return
+            from services.cron_scheduler import resolve_job
+            job, error = resolve_job(routine['name'])
+            if error:
+                logger.error(f"❌ Routine '{routine['name']}' trigger fired but has no active scheduled job: {error}")
+                await self.openwa.send_message(
+                    self._owner_chat_id,
+                    f"'{routine['name']}' has a trigger phrase but no active scheduled job to run - "
+                    f"create_job it again first.\n\n{ADMIN_REPLY_TAG}",
+                )
+                return
+            await self.admin_handler.cron_scheduler.run_now(job)
+            return
+
+        # 'log' mode - a data point, not a message. contact_name uses
+        # OWNER_PSEUDO_CONTACT since this always fires from the owner's own
+        # self-chat (routine triggers are owner-only, unlike jobs generally).
+        from services.cron_scheduler import resolve_job, OWNER_PSEUDO_CONTACT
+        job, _ = resolve_job(routine['name'])
+        if job:
+            db.write_job_data(
+                job['id'], key=f"trigger:{time.strftime('%Y-%m-%d')}",
+                value=routine['trigger_phrase'], contact_name=OWNER_PSEUDO_CONTACT,
+            )
+        else:
+            logger.warning(f"⚠️  Routine '{routine['name']}' trigger fired but has no active job to log against")
+
+        ack_message = details.get('trigger_ack_message')
+        if ack_message:
+            await self.openwa.send_message(self._owner_chat_id, f"{ack_message}\n\n{ADMIN_REPLY_TAG}")
+
     async def _handle_message(self, message: dict):
         message_id = message.get('id') or message.get('waMessageId')
         if not message_id or message_id in self._processed_ids:
@@ -225,6 +274,18 @@ class KBIngestionPoller:
 
         if message.get('type') != 'document':
             if body:
+                # Does this exact message match a routine's configured trigger
+                # phrase (services/owner_admin_handler.py's set_routine_trigger)?
+                # Checked before the pending-job-response capture below - a
+                # trigger phrase fires immediately whenever said, with no
+                # scheduled prompt needing to have gone out first, unlike a
+                # normal job response. Indexed lookup (config/database.py's
+                # trigger_phrase column), so this costs nothing on every message
+                # that isn't one.
+                routine = db.get_routine_by_trigger_phrase(body)
+                if routine:
+                    await self._handle_routine_trigger(routine)
+                    return
                 # Is this answering an owner-'self' scheduled job (services/cron_scheduler.py)?
                 # If so, capture it as job_data instead of treating it as a fresh admin
                 # request - the client-facing equivalent of this check lives in

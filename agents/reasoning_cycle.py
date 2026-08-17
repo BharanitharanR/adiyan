@@ -138,6 +138,13 @@ class ReasoningCycle:
             agent.ainvoke({"messages": messages}),
             timeout=agent_cfg.timeout or 60,
         )
+
+        from core.token_usage import record as record_token_usage
+        record_token_usage(
+            context_type='reasoning_stage', model=agent_cfg.model, messages=result["messages"],
+            context_label=agent_cfg.name,
+        )
+
         final = result["messages"][-1]
         if not isinstance(final, AIMessage) or not final.content:
             raise Exception("Stage produced no final answer")

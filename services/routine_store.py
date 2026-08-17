@@ -145,13 +145,31 @@ def routine_file_path(name: str) -> Path:
 def write_routine_file(*, name: str, description: str, schedule: str, cron_expression: str,
                         target: str, instructions: str, target_group: Optional[List[str]] = None,
                         expects_response: bool = False,
-                        response_window_hours: Optional[int] = None) -> Path:
+                        response_window_hours: Optional[int] = None,
+                        trigger_phrase: Optional[str] = None, trigger_action: Optional[str] = None,
+                        trigger_ack_message: Optional[str] = None) -> Path:
     """Writes (or overwrites) this routine's definition file. cron_expression is
     stored alongside the original natural_language_schedule so re-hydrating a
     deleted cron_jobs row from this file never needs a second LLM schedule-parse
-    call - the already-parsed result round-trips through the file exactly."""
+    call - the already-parsed result round-trips through the file exactly.
+
+    The three trigger_* params default to preserving whatever's already in the
+    file (None = "don't touch it") rather than blanking it - most callers (e.g.
+    every create_job re-save of an already-existing routine) have no idea a
+    trigger phrase was configured separately via set_routine_trigger and must
+    never silently wipe it. Pass an explicit value (including '' to clear) to
+    actually change it."""
     ROUTINES_DIR.mkdir(parents=True, exist_ok=True)
     path = routine_file_path(name)
+
+    existing = read_routine_file(path)
+    if trigger_phrase is None:
+        trigger_phrase = (existing or {}).get('trigger_phrase') or ''
+    if trigger_action is None:
+        trigger_action = (existing or {}).get('trigger_action') or 'log'
+    if trigger_ack_message is None:
+        trigger_ack_message = (existing or {}).get('trigger_ack_message') or ''
+
     frontmatter = [
         '---',
         f'name: {name}',
@@ -162,6 +180,9 @@ def write_routine_file(*, name: str, description: str, schedule: str, cron_expre
         f'target_group: {",".join(target_group) if target_group else ""}',
         f'expects_response: {"true" if expects_response else "false"}',
         f'response_window_hours: {response_window_hours if response_window_hours is not None else ""}',
+        f'trigger_phrase: {trigger_phrase}',
+        f'trigger_action: {trigger_action}',
+        f'trigger_ack_message: {trigger_ack_message}',
         '---',
         '',
     ]
@@ -200,6 +221,9 @@ def read_routine_file(path: Path) -> Optional[Dict[str, Any]]:
         'target_group': target_group,
         'expects_response': meta.get('expects_response', 'false').lower() == 'true',
         'response_window_hours': int(response_window_hours) if response_window_hours.isdigit() else None,
+        'trigger_phrase': meta.get('trigger_phrase') or None,
+        'trigger_action': meta.get('trigger_action') or 'log',
+        'trigger_ack_message': meta.get('trigger_ack_message') or '',
         'instructions': body.strip(),
     }
 
