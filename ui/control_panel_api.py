@@ -431,12 +431,23 @@ def test_owner_message():
     if not message:
         return jsonify({'error': 'message is required'}), 400
 
+    # CronScheduler keeps its OWN openwa reference, set once in main.py at
+    # construction - entirely separate from kb_poller.openwa and
+    # admin_handler.openwa. Confirmed live: missing this swap let a real job
+    # (created via this exact test endpoint, "reuse an existing routine"
+    # path) send a genuine WhatsApp message through the real connection
+    # instead of the fake - the routing logic ran correctly, only the actual
+    # send escaped the fake. All three references must be swapped together.
+    cron_scheduler = kb_poller.admin_handler.cron_scheduler
     fake_openwa = _CapturingOpenWA()
     original_kb_openwa = kb_poller.openwa
     original_admin_openwa = kb_poller.admin_handler.openwa
+    original_scheduler_openwa = cron_scheduler.openwa if cron_scheduler else None
     original_owner_chat_id = kb_poller._owner_chat_id
     kb_poller.openwa = fake_openwa
     kb_poller.admin_handler.openwa = fake_openwa
+    if cron_scheduler:
+        cron_scheduler.openwa = fake_openwa
     kb_poller._owner_chat_id = 'test-owner-chat'
     try:
         import uuid as _uuid
@@ -452,6 +463,8 @@ def test_owner_message():
     finally:
         kb_poller.openwa = original_kb_openwa
         kb_poller.admin_handler.openwa = original_admin_openwa
+        if cron_scheduler:
+            cron_scheduler.openwa = original_scheduler_openwa
         kb_poller._owner_chat_id = original_owner_chat_id
 
     return jsonify({'sent_messages': fake_openwa.sent})
