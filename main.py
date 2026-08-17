@@ -398,6 +398,12 @@ class AdiyanService:
         # Make services available to Flask
         flask_app.config['WHATSAPP_BRIDGE'] = self.whatsapp_bridge
         flask_app.config['OPENWA_RECEIVER'] = self.openwa_receiver
+        # Exposed so ui/control_panel_api.py's /api/test/* endpoints can drive the
+        # real client pipeline and owner-message routing directly (routines, jobs,
+        # trigger phrases, admin flows) without going through actual WhatsApp -
+        # see that module's test endpoints for why and how.
+        flask_app.config['ORCHESTRATOR'] = self.orchestrator
+        flask_app.config['KB_POLLER'] = self.kb_poller
         flask_app.config['OWNER_MCP_TOOL_COUNT'] = len(self.owner_mcp_tools or [])
 
         def run_flask():
