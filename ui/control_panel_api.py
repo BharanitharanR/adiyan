@@ -360,6 +360,20 @@ def google_workspace_status():
         return jsonify({'status': 'configured_but_unavailable', 'tool_count': 0})
     return jsonify({'status': 'connected', 'tool_count': tool_count})
 
+@app.route('/api/routines', methods=['GET'])
+def list_routines():
+    """The full routines library, each merged with its file content (schedule,
+    target, instructions) - config/database.py's routines table alone only has
+    name/description, not enough to show what a routine actually does. Small
+    library (a handful to maybe dozens of routines for one business), so
+    reading every file per request is cheap - no caching needed."""
+    from services.routine_store import get_full_details
+    routines = []
+    for row in db.list_routines():
+        details = get_full_details(row)
+        routines.append(details or {'name': row['name'], 'description': row['description'], 'error': 'file missing'})
+    return jsonify(routines)
+
 @app.route('/api/dashboard-auth/status', methods=['GET'])
 def dashboard_auth_status():
     """Whether the dashboard is actually password-protected right now. Reachable even

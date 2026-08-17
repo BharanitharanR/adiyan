@@ -368,6 +368,22 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         return [{k: v for k, v in r.items() if k != 'embedding'} for r in db.list_routines()]
 
     @tool
+    def get_routine_details(routine_name: str) -> dict:
+        """Full details of one routine - its actual schedule, target, and the
+        exact instructions it sends, not just the short description
+        list_routines shows. routine_name can be the exact name, close wording
+        ("office check" for "Daily Office Check"), or a different phrasing of
+        the same idea - matched the same way create_job avoids duplicates."""
+        from services.routine_store import resolve_routine, get_full_details
+        found, error = resolve_routine(routine_name, ollama_url=ollama_url)
+        if error:
+            return {'error': error}
+        details = get_full_details(found)
+        if not details:
+            return {'error': f"Routine '{found['name']}' is indexed but its file is missing or unreadable"}
+        return details
+
+    @tool
     def delete_routine(routine_name: str) -> dict:
         """Permanently delete a routine definition (its index entry and file) -
         does not touch any currently scheduled job using it. Use delete_job for
@@ -493,7 +509,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
-            list_routines, delete_routine,
+            list_routines, get_routine_details, delete_routine,
             check_google_workspace_status,
             broadcast_once]
 

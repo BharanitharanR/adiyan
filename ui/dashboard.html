@@ -430,6 +430,15 @@
             </div>
 
             <div class="card">
+                <h2>🔁 Routines</h2>
+                <p style="font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;">
+                    Every job the owner creates over WhatsApp is saved here as a reusable, named
+                    template - asking for the same thing again re-runs it instead of duplicating it.
+                </p>
+                <div id="routines-list" style="font-size: 12px; max-height: 320px; overflow-y: auto;"></div>
+            </div>
+
+            <div class="card">
                 <h2>📝 Recent Interactions</h2>
                 <div id="history-list" style="font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
             </div>
@@ -648,6 +657,43 @@
 
             } catch (error) {
                 console.error('Failed to load history:', error);
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        async function loadRoutines() {
+            try {
+                const response = await fetch(`${API_URL}/routines`);
+                const routines = await response.json();
+
+                const list = document.getElementById('routines-list');
+                if (routines.length === 0) {
+                    list.innerHTML = '<p style="color: var(--ink-faint);">No routines yet</p>';
+                    return;
+                }
+                list.innerHTML = routines.map(r => {
+                    if (r.error) {
+                        return `<div style="padding: 8px 0; border-bottom: 1px solid var(--line);">
+                            <strong>${escapeHtml(r.name)}</strong>
+                            <br><span style="color: var(--ink-faint);">⚠️ ${escapeHtml(r.error)}</span>
+                        </div>`;
+                    }
+                    const target = r.target === 'group' && r.target_group
+                        ? `group (${r.target_group.map(escapeHtml).join(', ')})`
+                        : escapeHtml(r.target);
+                    return `<div style="padding: 8px 0; border-bottom: 1px solid var(--line);">
+                        <strong>${escapeHtml(r.name)}</strong>
+                        <br><span style="color: var(--ink-faint);">${escapeHtml(r.description)}</span>
+                        <br><span style="font-size: 11px;">🕐 ${escapeHtml(r.schedule)} &nbsp;→&nbsp; 🎯 ${target}</span>
+                        <br><span style="font-size: 11px; color: var(--ink-faint);">"${escapeHtml(r.instructions)}"</span>
+                    </div>`;
+                }).join('');
+
+            } catch (error) {
+                console.error('Failed to load routines:', error);
             }
         }
 
@@ -958,10 +1004,12 @@
         loadLogs();
         loadWhatsAppQR();
         loadPersonas();
+        loadRoutines();
 
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);
         setInterval(loadHistory, 5000);
+        setInterval(loadRoutines, 15000);
         // Deliberately NOT on a timer: this hits OpenWA's own REST API directly
         // (ui/control_panel_api.py's /api/whatsapp/status), which shares OpenWA's
         // rate limit budget with OpenWAPoller/KBIngestionPoller/CronScheduler -
