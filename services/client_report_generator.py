@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import config.database as db
 from services.openwa_service import OpenWAService
+from services.owner_admin_handler import ADMIN_REPLY_TAG
 from services.pdf_service import generate_pdf_from_markdown
 
 logger = logging.getLogger('ClientReportGenerator')
@@ -92,9 +93,18 @@ async def run_client_reports_digest(openwa: OpenWAService, owner_chat_id: Option
                 report_markdown, title=f"Personality Report: {client['contact_name']}",
             )
             filename = f"{client['contact_name'].replace(' ', '_')}_report_{datetime.now().strftime('%Y%m%d')}.pdf"
+            # OpenWA persists a sent document's caption back into the message's
+            # `body` field (penwa's message.service.js sendDocument: body =
+            # caption || filename) - which is exactly the field
+            # kb_ingestion_poller.py checks for ADMIN_REPLY_TAG before its
+            # self-chat routing. Without the tag here, this PDF looks
+            # indistinguishable from the owner uploading a document to ingest -
+            # it would loop back on the next poll and get silently added to the
+            # knowledge base, the document-message equivalent of the "job
+            # answering its own prompt" bug fixed earlier for text messages.
             await openwa.send_document(
                 owner_chat_id, filename=filename, data=pdf_bytes,
-                caption=f"Personality report: {client['contact_name']}",
+                caption=f"Personality report: {client['contact_name']}\n\n{ADMIN_REPLY_TAG}",
             )
             sent += 1
         except Exception as e:
