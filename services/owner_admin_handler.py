@@ -755,7 +755,7 @@ class OwnerAdminHandler:
     self-chat message."""
 
     def __init__(self, control_plane, openwa_service, ollama_url: str = None, cron_scheduler=None,
-                 owner_mcp_tools: Optional[List] = None):
+                 owner_mcp_tools: Optional[List] = None, mcp_tools: Optional[List] = None):
         self.control_plane = control_plane
         self.openwa = openwa_service
         self.ollama_url = ollama_url or control_plane.config.ollama_url
@@ -769,6 +769,13 @@ class OwnerAdminHandler:
         # this module's own docstring for why this must never be the
         # client-facing pool.
         self.owner_mcp_tools = owner_mcp_tools or []
+        # The SAME general-purpose MCP tools client conversations already get
+        # (duckduckgo search/fetch_content, crawl4ai - main.py's self.mcp_tools),
+        # bound here too on request: this channel is owner-only regardless (see
+        # module docstring), so there's no new exposure in handing it tools a
+        # client's own conversation can already reach - unlike owner_mcp_tools
+        # above, which must stay exclusive to this handler.
+        self.mcp_tools = mcp_tools or []
         # Reuses the 'llm' agent's configured model rather than inventing a separate
         # admin-specific one - one less thing to independently configure.
         llm_cfg = control_plane.get_agent_config('llm')
@@ -823,7 +830,7 @@ class OwnerAdminHandler:
         model = ChatOllama(model=self.model, base_url=self.ollama_url, temperature=0.2)
         tools = _build_admin_tools(self.control_plane, self.model, self.ollama_url, self.cron_scheduler,
                                     owner_mcp_tool_count=len(self.owner_mcp_tools))
-        tools = tools + self.owner_mcp_tools
+        tools = tools + self.owner_mcp_tools + self.mcp_tools
         agent = create_react_agent(model, tools)
 
         human = HumanMessage(content=message_body)

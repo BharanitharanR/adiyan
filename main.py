@@ -322,6 +322,7 @@ class AdiyanService:
             admin_handler = OwnerAdminHandler(
                 self.control_plane, self.openwa_service, ollama_url=cfg.ollama_url,
                 cron_scheduler=self.cron_scheduler, owner_mcp_tools=self.owner_mcp_tools,
+                mcp_tools=self.mcp_tools,
             )
             self.kb_poller = KBIngestionPoller(
                 openwa_service=self.openwa_service,
