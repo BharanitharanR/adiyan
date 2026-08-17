@@ -15,12 +15,74 @@ immediately instead of creating a duplicate - and if the routine's live
 cron_jobs row was since deleted, the job is transparently recreated from the
 routine file (schedule, target, and instructions all round-trip through it)
 rather than lost.
+
+Matching isn't exact-name-only: a routine's (name + description) is also
+embedded with the same local model already used for coaching memory
+(nomic-embed-text via Ollama - see core/memory_index.py) and compared by
+cosine similarity, so "office_attendance_check" still finds an existing
+"Daily Office Check" routine even though the strings don't match at all.
+Embedding is best-effort - if Ollama is briefly unreachable, the routine is
+still created/indexed, just without semantic matching until it's next saved.
 """
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 ROUTINES_DIR = Path.home() / '.Adiyan' / 'routines'
+
+# Cosine similarity floor for treating two routines as "the same thing".
+# Empirically calibrated against this project's own nomic-embed-text/Ollama
+# setup (short name+description strings score meaningfully lower in absolute
+# terms than intuition from other embedding contexts suggests): two live
+# genuine-match tests scored 0.77 and 0.85 against their real counterparts,
+# while a genuinely unrelated request topped out at 0.58 against the entire
+# existing library. 0.72 sits in that gap. Re-tune from real usage, not
+# guesswork - if a real duplicate is being missed or an unrelated routine is
+# firing, check the actual score (find_similar_routine callers can log it)
+# before moving this number.
+SIMILARITY_THRESHOLD = 0.72
+
+
+def compute_embedding(name: str, description: str, ollama_url: str) -> Optional[List[float]]:
+    try:
+        from llama_index.embeddings.ollama import OllamaEmbedding
+        embed_model = OllamaEmbedding(model_name='nomic-embed-text', base_url=ollama_url)
+        return embed_model.get_text_embedding(f"{name}: {description}")
+    except Exception:
+        return None
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def find_similar_routine(name: str, description: str, ollama_url: str,
+                          threshold: float = SIMILARITY_THRESHOLD) -> Optional[Dict[str, Any]]:
+    """Returns the closest existing routine by (name + description) meaning, if
+    it's above threshold - or None if nothing's close enough (including if
+    embedding fails, which degrades to "no semantic match found" rather than an
+    error, matching the rest of this codebase's graceful-degradation posture for
+    optional local-model capabilities)."""
+    query_embedding = compute_embedding(name, description, ollama_url)
+    if not query_embedding:
+        return None
+
+    import config.database as db
+    best_match, best_score = None, 0.0
+    for routine in db.list_routines():
+        if not routine.get('embedding'):
+            continue
+        score = _cosine_similarity(query_embedding, routine['embedding'])
+        if score > best_score:
+            best_match, best_score = routine, score
+
+    return best_match if best_score >= threshold else None
 
 
 def _slugify(name: str) -> str:

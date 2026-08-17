@@ -155,8 +155,13 @@ async def create_job_record(
     "morning check-in") commonly reuses a generic name another client (or the
     owner) might also use, and those must never collide or cross-trigger
     through one global name index the way owner routines deliberately do."""
+    routine_description = description or instructions[:200]
+
     if check_routines:
         existing_routine = db.get_routine(name)
+        if not existing_routine:
+            from services.routine_store import find_similar_routine
+            existing_routine = find_similar_routine(name, routine_description, ollama_url)
         if existing_routine:
             raise RoutineAlreadyExists(existing_routine)
 
@@ -185,15 +190,15 @@ async def create_job_record(
     )
 
     if write_routine:
-        from services.routine_store import write_routine_file
-        routine_description = description or instructions[:200]
+        from services.routine_store import write_routine_file, compute_embedding
         path = write_routine_file(
             name=name, description=routine_description, schedule=natural_language_schedule,
             cron_expression=cron_expression, target=target, instructions=instructions,
             target_group=target_group, expects_response=expects_response,
             response_window_hours=response_window_hours,
         )
-        db.upsert_routine(name=name, file_path=str(path), description=routine_description)
+        embedding = compute_embedding(name, routine_description, ollama_url)
+        db.upsert_routine(name=name, file_path=str(path), description=routine_description, embedding=embedding)
 
     return db.get_cron_job(job_id)
 
