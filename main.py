@@ -313,6 +313,7 @@ class AdiyanService:
             mcp_tools=self.mcp_tools or [],
             model_name=llm_config.model if llm_config else 'qwen3:8b-16k',
             ollama_url=cfg.ollama_url,
+            control_plane=self.control_plane,
         )
         logger.info("✅ Cron scheduler (AI Cron Jobs) configured")
 

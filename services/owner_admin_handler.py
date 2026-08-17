@@ -29,7 +29,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -86,6 +86,12 @@ ADMIN_SYSTEM_PROMPT = (
     "was said - report back facts (quote or summarize what was actually said), never invent "
     "content, and never give coaching advice yourself based on it. There is no tool to edit or "
     "delete a client's conversation history, by design.\n\n"
+    "For \"how engaged is X\" / \"give me insights on my customers\" / anything combining message "
+    "activity with routine engagement, use get_client_insights (one client by name, or omit the "
+    "name for a summary across everyone, sorted by engagement) - it already merges registration "
+    "info, message counts/recency, and which routines each client has actually responded to. "
+    "Never say this kind of analysis isn't possible or ask the owner to supply data you can "
+    "already pull yourself - reach for this tool first.\n\n"
     "You can also schedule recurring WhatsApp jobs (create_job/list_jobs/enable_job/delete_job) - "
     "e.g. a weekly broadcast to all clients, or a nightly prompt-and-log routine. Confirm back "
     "the parsed schedule in plain terms (e.g. \"Scheduled for Sundays at 6:00 PM\") so the owner "
@@ -149,6 +155,144 @@ def _extract_google_auth_url(tool_message: ToolMessage) -> Optional[str]:
         return None
     match = GOOGLE_AUTH_URL_PATTERN.search(content)
     return match.group(0) if match else None
+
+
+def _message_stats_by_client() -> Dict[str, Dict[str, Any]]:
+    """One pass over interaction_history.jsonl (the same file
+    get_recent_client_messages already reads), returning
+    {contact_name: {'count', 'first', 'last'}} - message volume and recency
+    per client, the piece get_client_insights adds on top of what
+    list_clients/get_job_responses can each show individually."""
+    stats: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(INTERACTION_HISTORY_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                name = record.get('contact_name')
+                if not name:
+                    continue
+                ts = record.get('timestamp')
+                entry = stats.setdefault(name, {'count': 0, 'first': ts, 'last': ts})
+                entry['count'] += 1
+                if ts:
+                    if not entry['first'] or ts < entry['first']:
+                        entry['first'] = ts
+                    if not entry['last'] or ts > entry['last']:
+                        entry['last'] = ts
+    except FileNotFoundError:
+        pass
+    return stats
+
+
+def _routine_engagement_by_client(name: Optional[str] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """{contact_name: {job_name: {'response_count', 'last_response_at'}}} - how
+    many times each client has actually responded to each job/routine that
+    reached them, derived from job_data (which every job's captured reply
+    already writes to, regardless of target type). Scoped to one client's
+    name when given, to avoid scanning every job's full response history for
+    a single-client lookup."""
+    from services.cron_scheduler import OWNER_PSEUDO_CONTACT
+    engagement: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for job in db.list_cron_jobs():
+        responses = db.read_job_data(job['id'])
+        for r in responses:
+            contact = r.get('contact_name')
+            if not contact or contact == OWNER_PSEUDO_CONTACT:
+                continue
+            if name and contact.lower() != name.lower():
+                continue
+            per_client = engagement.setdefault(contact, {})
+            job_entry = per_client.setdefault(job['name'], {'response_count': 0, 'last_response_at': None})
+            job_entry['response_count'] += 1
+            if not job_entry['last_response_at'] or r['created_at'] > job_entry['last_response_at']:
+                job_entry['last_response_at'] = r['created_at']
+    return engagement
+
+
+def build_owner_analytics_tools(ollama_url: str) -> List:
+    """Read-only client/engagement analytics tools (get_client_insights,
+    list_clients, get_job_responses, get_platform_stats) - the same ones
+    _build_admin_tools binds for the owner's own chat, extracted here so
+    services/cron_scheduler.py's job composer can bind them too, but ONLY for
+    a job whose target is 'self'. This is the exact same security boundary
+    already used for Gmail/Calendar: a composer's output can end up in a
+    client's chat (target='all_clients'/'group'/a specific client), so
+    anything that reveals data about OTHER clients must never be reachable
+    from that composer run - only when the output can only ever reach the
+    owner is it safe to hand these over. This is what makes a "proactive"
+    routine possible (one that analyzes engagement and surfaces a suggestion
+    on its own schedule, not just relays a fixed message) without needing any
+    new routine mechanism - see services/cron_scheduler.py's _compose_message
+    for where target='self' gates this."""
+    @tool
+    def get_client_insights(name: Optional[str] = None) -> dict:
+        """Combined engagement insights - registration info, message activity,
+        and routine/job responsiveness - for one client (by name) or a summary
+        across everyone (name omitted), sorted by engagement."""
+        message_stats = _message_stats_by_client()
+        routine_engagement = _routine_engagement_by_client(name)
+        if name:
+            found = db.get_client(name)
+            if not found:
+                return {'error': f"No client named '{name}'"}
+            stats = message_stats.get(name, {'count': 0, 'first': None, 'last': None})
+            return {
+                'contact_name': name,
+                'registered_at': found.get('registered_at'),
+                'is_whitelisted': bool(found.get('is_whitelisted')),
+                'tags': found.get('tags'),
+                'notes': found.get('notes'),
+                'message_count': stats['count'],
+                'first_interaction_at': stats['first'],
+                'last_interaction_at': stats['last'],
+                'routine_engagement': routine_engagement.get(name, {}),
+            }
+        summary = []
+        for c in db.list_clients():
+            cname = c['contact_name']
+            stats = message_stats.get(cname, {'count': 0, 'first': None, 'last': None})
+            summary.append({
+                'contact_name': cname,
+                'is_whitelisted': bool(c.get('is_whitelisted')),
+                'message_count': stats['count'],
+                'last_interaction_at': stats['last'],
+                'routines_responded_to': list(routine_engagement.get(cname, {}).keys()),
+            })
+        summary.sort(key=lambda x: x['message_count'], reverse=True)
+        return {'clients': summary}
+
+    @tool
+    def list_clients(only_active: bool = False) -> list:
+        """List registered clients. only_active=true limits to clients active in
+        the last 7 days."""
+        return db.list_clients(active_only=only_active)
+
+    @tool
+    def get_job_responses(job: str) -> dict:
+        """Read back what recipients have replied to a job so far - pass either
+        the job's id or its exact name."""
+        from services.cron_scheduler import resolve_job
+        found, error = resolve_job(job, ollama_url=ollama_url)
+        if error:
+            return {'error': error}
+        responses = db.read_job_data(found['id'])
+        if not responses:
+            return {'job_name': found['name'], 'responses': [], 'note': 'No responses collected yet'}
+        return {'job_name': found['name'], 'responses': responses}
+
+    @tool
+    def get_platform_stats() -> dict:
+        """Platform stats: total registered clients, clients active in the last
+        7 days, knowledge base documents/chunks."""
+        return db.get_platform_stats()
+
+    return [get_client_insights, list_clients, get_job_responses, get_platform_stats]
 
 
 def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_scheduler=None,
@@ -312,6 +456,52 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         limit = max(1, min(limit, 10))
         results = memory.retrieve(query, contact_name=name, top_k=limit)
         return results or {'error': f"No relevant history found for '{name}'"}
+
+    @tool
+    def get_client_insights(name: Optional[str] = None) -> dict:
+        """Combined engagement insights - registration info, message activity
+        (count, first/last interaction), and routine/job responsiveness (which
+        routines they've engaged with, how many times) - the single-view
+        answer to "how engaged is X" or "give me insights across my
+        customers", which no other individual tool assembles on its own. Pass
+        a client's exact name for a detailed single-client breakdown, or omit
+        it for a summary across every client sorted by message count (most to
+        least engaged), useful for spotting who's active vs. gone quiet.
+        Read-only, same boundary as get_recent_client_messages - never
+        invents a number it can't actually derive from stored data."""
+        message_stats = _message_stats_by_client()
+        routine_engagement = _routine_engagement_by_client(name)
+
+        if name:
+            found = db.get_client(name)
+            if not found:
+                return {'error': f"No client named '{name}'"}
+            stats = message_stats.get(name, {'count': 0, 'first': None, 'last': None})
+            return {
+                'contact_name': name,
+                'registered_at': found.get('registered_at'),
+                'is_whitelisted': bool(found.get('is_whitelisted')),
+                'tags': found.get('tags'),
+                'notes': found.get('notes'),
+                'message_count': stats['count'],
+                'first_interaction_at': stats['first'],
+                'last_interaction_at': stats['last'],
+                'routine_engagement': routine_engagement.get(name, {}),
+            }
+
+        summary = []
+        for c in db.list_clients():
+            cname = c['contact_name']
+            stats = message_stats.get(cname, {'count': 0, 'first': None, 'last': None})
+            summary.append({
+                'contact_name': cname,
+                'is_whitelisted': bool(c.get('is_whitelisted')),
+                'message_count': stats['count'],
+                'last_interaction_at': stats['last'],
+                'routines_responded_to': list(routine_engagement.get(cname, {}).keys()),
+            })
+        summary.sort(key=lambda x: x['message_count'], reverse=True)
+        return {'clients': summary}
 
     @tool
     async def create_job(name: str, natural_language_schedule: str, target: str, instructions: str,
@@ -553,7 +743,7 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
 
     return [list_agent_configs, get_agent_config, update_agent_config, get_client, list_clients,
             add_client, update_client, remove_client, get_platform_stats,
-            get_recent_client_messages, search_client_messages,
+            get_recent_client_messages, search_client_messages, get_client_insights,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
             list_routines, get_routine_details, set_routine_trigger, delete_routine,
             check_google_workspace_status,

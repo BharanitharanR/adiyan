@@ -173,6 +173,7 @@ async def create_job_record(
     model_name: str, ollama_url: str, cap: Optional[int] = None,
     target_group: Optional[List[str]] = None, description: Optional[str] = None,
     check_routines: bool = True, write_routine: bool = True,
+    enabled: bool = True, created_by_routine: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Shared by both authoring paths (owner admin tools, client self-service
     tools) - one validated write path, never a freeform db insert. Raises
@@ -228,6 +229,7 @@ async def create_job_record(
         cron_expression=cron_expression, target=target, instructions=instructions,
         expects_response=expects_response, response_window_hours=response_window_hours,
         next_run_at=_fmt(next_run), target_group=target_group if target == 'group' else None,
+        enabled=enabled,
     )
 
     if write_routine:
@@ -239,7 +241,8 @@ async def create_job_record(
             response_window_hours=response_window_hours,
         )
         embedding = compute_embedding(name, routine_description, ollama_url)
-        db.upsert_routine(name=name, file_path=str(path), description=routine_description, embedding=embedding)
+        db.upsert_routine(name=name, file_path=str(path), description=routine_description, embedding=embedding,
+                           created_by_routine=created_by_routine)
 
     return db.get_cron_job(job_id)
 
@@ -309,16 +312,80 @@ def _build_job_data_tool(job_id: int):
     return read_job_data
 
 
-async def _compose_message(job: Dict[str, Any], mcp_tools: List, model_name: str, ollama_url: str) -> str:
+# A "proactive" routine (target='self') can propose new routines as part of
+# its own analysis - but capped hard per run, matching a real chain reaction's
+# control rods rather than an unbounded cascade: one bad inference should
+# never spawn a dozen jobs in a single composer run.
+MAX_PROACTIVE_ROUTINE_CREATIONS_PER_RUN = 2
+
+
+def build_proactive_creation_tool(creator_routine_name: str, model_name: str, ollama_url: str):
+    """A create_job-like tool for a proactive (target='self') routine's own
+    composer - lets it act on its analysis by creating a new routine, not just
+    describing one in prose. Damped by design, not fully autonomous: every
+    routine created this way is forced enabled=False (visible, but never
+    fires until the owner explicitly turns it on) and target='self' (a
+    routine spawned by another routine's own judgment must stay in the same
+    owner-only sandbox, never reach a client directly), and capped at
+    MAX_PROACTIVE_ROUTINE_CREATIONS_PER_RUN per composer run via the mutable
+    counter closed over here. created_by_routine records the lineage so a
+    chain is always traceable in the routines table, never silent."""
+    created_count = 0
+
+    @tool
+    async def propose_new_routine(name: str, natural_language_schedule: str, instructions: str,
+                                   expects_response: bool = False, response_window_hours: int = 0) -> dict:
+        """Creates a new owner-only routine based on what you've found - it will
+        be created DISABLED and will not fire until the owner explicitly
+        enables it, so use this freely when you have a genuinely specific,
+        well-justified idea rather than only describing it in your reply."""
+        nonlocal created_count
+        if created_count >= MAX_PROACTIVE_ROUTINE_CREATIONS_PER_RUN:
+            return {
+                'error': f'Already proposed {created_count} routine(s) this run '
+                         f'(limit {MAX_PROACTIVE_ROUTINE_CREATIONS_PER_RUN}) - mention any further ideas in your reply instead.'
+            }
+        try:
+            job = await create_job_record(
+                created_by=OWNER_PSEUDO_CONTACT, name=name, natural_language_schedule=natural_language_schedule,
+                target='self', instructions=instructions, expects_response=expects_response,
+                response_window_hours=response_window_hours or None,
+                model_name=model_name, ollama_url=ollama_url,
+                enabled=False, created_by_routine=creator_routine_name,
+            )
+        except (ValueError, RoutineAlreadyExists) as e:
+            return {'error': str(e)}
+        created_count += 1
+        return {
+            'success': True, 'job_id': job['id'], 'enabled': False,
+            'note': 'Created disabled - the owner must explicitly enable it before it ever fires.',
+        }
+
+    return propose_new_routine
+
+
+async def _compose_message(job: Dict[str, Any], mcp_tools: List, model_name: str, ollama_url: str,
+                            control_plane=None) -> str:
     """One tool-capable LLM call, bound to the full MCP tool set (identical to what
     every agents/reasoning_cycle.py stage gets) plus a read-only view of this job's
     own data. Sending is deliberately not a tool available here - dispatch below is
-    always deterministic Python, never an LLM decision."""
+    always deterministic Python, never an LLM decision.
+
+    When job['target'] == 'self' (this routine's output can only ever reach the
+    owner, never a client), also binds read-only client/engagement analytics
+    tools and the capped proactive-routine-creation tool above - see
+    services/owner_admin_handler.py's build_owner_analytics_tools docstring for
+    why target='self' is exactly the boundary that makes this safe. Any other
+    target never gets these, full stop."""
     from langchain_ollama import ChatOllama
     from langgraph.prebuilt import create_react_agent
 
     model = ChatOllama(model=model_name, base_url=ollama_url, temperature=0.5)
     tools = list(mcp_tools) + [_build_job_data_tool(job['id'])]
+    if job.get('target') == 'self' and control_plane is not None:
+        from services.owner_admin_handler import build_owner_analytics_tools
+        tools += build_owner_analytics_tools(ollama_url)
+        tools.append(build_proactive_creation_tool(job['name'], model_name, ollama_url))
     agent = create_react_agent(model, tools)
 
     system_prompt = JOB_COMPOSER_SYSTEM_PROMPT
@@ -410,12 +477,18 @@ class CronScheduler:
     every ~60s (cron's own granularity floor - no point polling faster)."""
 
     def __init__(self, openwa_service: OpenWAService, mcp_tools: List,
-                 model_name: str, ollama_url: str, tick_interval_seconds: float = TICK_INTERVAL_SECONDS):
+                 model_name: str, ollama_url: str, tick_interval_seconds: float = TICK_INTERVAL_SECONDS,
+                 control_plane=None):
         self.openwa = openwa_service
         self.mcp_tools = mcp_tools
         self.model_name = model_name
         self.ollama_url = ollama_url
         self.tick_interval_seconds = tick_interval_seconds
+        # Only used to gate _compose_message's owner-only analytics/proactive-
+        # creation tools onto target='self' runs - optional so existing
+        # construction call sites (main.py, tests) don't break if omitted;
+        # proactive routines simply get no analytics tools without it.
+        self.control_plane = control_plane
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._owner_chat_id: Optional[str] = None
@@ -488,7 +561,8 @@ class CronScheduler:
             logger.warning(f"⚠️  Job '{job['name']}' (id={job['id']}) has no resolvable targets - nothing sent")
             return {'sent': 0, 'skipped': skipped, 'message': None}
 
-        message = await _compose_message(job, self.mcp_tools, self.model_name, self.ollama_url)
+        message = await _compose_message(job, self.mcp_tools, self.model_name, self.ollama_url,
+                                          control_plane=self.control_plane)
 
         expires_at = None
         if job['response_window_hours']:
