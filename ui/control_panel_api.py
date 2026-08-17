@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 from datetime import datetime, timedelta
 from flask import Flask, Response, jsonify, request, send_file
@@ -393,6 +394,111 @@ def token_usage():
         'by_context_type': db.token_usage_by_context_type(since=since),
         'recent': db.list_token_usage(limit=50),
     })
+
+class _CapturingOpenWA:
+    """A fake OpenWAService for test endpoints below - records what WOULD have
+    been sent instead of touching the real WhatsApp connection, so routines/
+    jobs/admin flows can be exercised repeatedly from a test suite without
+    spamming a real chat or needing WhatsApp linked at all."""
+    def __init__(self):
+        self.sent = []
+
+    async def send_message(self, chat_id, message):
+        self.sent.append({'chat_id': chat_id, 'message': message})
+        return {'messageId': f'test-{len(self.sent)}'}
+
+
+@app.route('/api/test/owner-message', methods=['POST'])
+def test_owner_message():
+    """Drives the exact same owner self-chat routing a real WhatsApp message
+    would (trigger phrase -> pending job response -> admin agent fallback -
+    services/kb_ingestion_poller.py's _handle_message) without WhatsApp.
+
+    Reuses the live kb_poller/admin_handler singletons (so routine/job state
+    changes are real, checkable via /api/routines etc.) but temporarily swaps
+    both their .openwa references to a capturing fake for the duration of this
+    one call, so nothing gets sent to your real WhatsApp. Restored in a
+    finally block even on error. Note: this briefly shares mutable state with
+    the live background poller (which ticks every ~20s) - a real incoming
+    owner message arriving in that exact window could interleave. Acceptable
+    for a local, single-owner dev/test workflow; not something to run under
+    concurrent load."""
+    kb_poller = app.config.get('KB_POLLER')
+    if not kb_poller or not kb_poller.admin_handler:
+        return jsonify({'error': 'KB poller / admin handler not available yet (still starting up?)'}), 503
+
+    message = (request.json or {}).get('message', '')
+    if not message:
+        return jsonify({'error': 'message is required'}), 400
+
+    fake_openwa = _CapturingOpenWA()
+    original_kb_openwa = kb_poller.openwa
+    original_admin_openwa = kb_poller.admin_handler.openwa
+    original_owner_chat_id = kb_poller._owner_chat_id
+    kb_poller.openwa = fake_openwa
+    kb_poller.admin_handler.openwa = fake_openwa
+    kb_poller._owner_chat_id = 'test-owner-chat'
+    try:
+        import uuid as _uuid
+        fake_message = {
+            'id': f'test-{_uuid.uuid4()}',
+            'timestamp': int(time.time()) + 1,
+            'body': message,
+            'type': 'chat',
+        }
+        asyncio.run(kb_poller._handle_message(fake_message))
+    except Exception as e:
+        return jsonify({'error': str(e) or type(e).__name__}), 500
+    finally:
+        kb_poller.openwa = original_kb_openwa
+        kb_poller.admin_handler.openwa = original_admin_openwa
+        kb_poller._owner_chat_id = original_owner_chat_id
+
+    return jsonify({'sent_messages': fake_openwa.sent})
+
+
+@app.route('/api/test/client-message', methods=['POST'])
+def test_client_message():
+    """Drives a real client message through the full 7-agent pipeline
+    (Parser -> Validator -> Router -> LLM -> Synthesizer -> Storage ->
+    Publisher), exactly as OpenWAPoller would, without WhatsApp. Body:
+    {"contact_name": str, "message": str, "lid": str (optional)}. Unlike the
+    owner-message test above, this does NOT fake the WhatsApp send (the
+    Publisher stage sends via whatever whatsapp_sender the orchestrator was
+    built with) - harmless against a real test client's own chat, and avoids
+    reimplementing Publisher's registration/error/normal-reply branching here.
+    Returns the actual response text (state.llm_response)."""
+    orchestrator = app.config.get('ORCHESTRATOR')
+    if not orchestrator:
+        return jsonify({'error': 'Orchestrator not available yet (still starting up?)'}), 503
+
+    data = request.json or {}
+    contact_name = data.get('contact_name')
+    message = data.get('message', '')
+    if not contact_name or not message:
+        return jsonify({'error': 'contact_name and message are required'}), 400
+
+    from core.base_agent import AgentState
+    import uuid as _uuid
+    state = AgentState(
+        message_id=f'test-{_uuid.uuid4()}',
+        contact_name=contact_name,
+        lid=data.get('lid', f'{contact_name}@test'),
+        message_body=message,
+    )
+    try:
+        result = asyncio.run(orchestrator.execute_pipeline(state))
+    except Exception as e:
+        return jsonify({'error': str(e) or type(e).__name__}), 500
+
+    return jsonify({
+        'response': result.llm_response,
+        'error': result.error,
+        'is_registration': result.is_registration,
+        'is_job_response': result.is_job_response,
+        'metadata': result.metadata,
+    })
+
 
 @app.route('/api/dashboard-auth/status', methods=['GET'])
 def dashboard_auth_status():

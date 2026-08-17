@@ -29,6 +29,7 @@ Adiyan (அடியேன் — "your humble servant") is a self-hosted AI bus
 - **Resilient WhatsApp connectivity.** Recovers on its own from disconnects and rate limits; a persisted dedup ledger means a restart can't cause a duplicate reply.
 - **Everything credential-related lives in your Mac's own encrypted credential vault** (the OS Keychain) — never a plaintext file on disk.
 - **A local dashboard** for agent configuration, persona editing, client management, and connection status (WhatsApp, Google Workspace) — optionally password-protected (HTTP Basic Auth, set via `tools/set_secret.py DASHBOARD_PASSWORD`), which matters if you ever expose it beyond your own machine (e.g. through a tunnel like ngrok for remote support).
+- **A real automated test suite** (`Tests/http/`) that drives routines, jobs, trigger phrases, and the reasoning cycle through the same logic a real WhatsApp message would, without needing WhatsApp connected or spamming a real chat.
 
 ## Known current gaps
 

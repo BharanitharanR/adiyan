@@ -24,3 +24,6 @@ croniter>=2.0.0
 crawl4ai>=0.9.0
 keyring>=25.0.0
 workspace-mcp>=1.24.0
+
+# Dev/test only - needed to run Tests/http/, not by the running app itself.
+pytest>=8.0.0
