@@ -27,7 +27,7 @@ still created/indexed, just without semantic matching until it's next saved.
 import math
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 ROUTINES_DIR = Path.home() / '.Adiyan' / 'routines'
 
@@ -83,6 +83,54 @@ def find_similar_routine(name: str, description: str, ollama_url: str,
             best_match, best_score = routine, score
 
     return best_match if best_score >= threshold else None
+
+
+def _normalize(s: str) -> str:
+    """Lowercase with every run of whitespace/underscore/hyphen collapsed out -
+    same normalization services/cron_scheduler.py's resolve_job uses, so
+    "office_attendance_check" and "Office Attendance Check" compare equal
+    without needing a model call."""
+    return re.sub(r'[\s_-]+', '', s.strip().lower())
+
+
+def resolve_routine(identifier: str, ollama_url: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Finds a routine by exact name, normalized name, or (if ollama_url is
+    given) semantic similarity - same three-tier matching services/cron_scheduler.py's
+    resolve_job uses for jobs, so "find the office check routine" works as well
+    as the exact stored name does. Returns (routine, None) or (None, error)."""
+    identifier = (identifier or '').strip()
+    if not identifier:
+        return None, "No routine name given"
+
+    import config.database as db
+    all_routines = db.list_routines()
+
+    matches = [r for r in all_routines if r['name'].lower() == identifier.lower()]
+    if not matches:
+        normalized = _normalize(identifier)
+        matches = [r for r in all_routines if _normalize(r['name']) == normalized]
+    if not matches and ollama_url:
+        match = find_similar_routine(identifier, '', ollama_url, threshold=0.60)
+        if match:
+            matches = [match]
+
+    if not matches:
+        return None, f"No routine named '{identifier}'"
+    return matches[0], None
+
+
+def get_full_details(routine_index_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Merges a routines-table index row (name/description/timestamps) with its
+    full file content (schedule/target/instructions/etc) - the index alone
+    never has enough to actually explain what a routine does."""
+    file_details = read_routine_file(routine_file_path(routine_index_row['name']))
+    if not file_details:
+        return None
+    return {
+        **file_details,
+        'created_at': routine_index_row.get('created_at'),
+        'updated_at': routine_index_row.get('updated_at'),
+    }
 
 
 def _slugify(name: str) -> str:
