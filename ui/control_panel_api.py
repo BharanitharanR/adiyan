@@ -474,11 +474,19 @@ def test_owner_message():
     changes are real, checkable via /api/routines etc.) but temporarily swaps
     both their .openwa references to a capturing fake for the duration of this
     one call, so nothing gets sent to your real WhatsApp. Restored in a
-    finally block even on error. Note: this briefly shares mutable state with
-    the live background poller (which ticks every ~20s) - a real incoming
-    owner message arriving in that exact window could interleave. Acceptable
-    for a local, single-owner dev/test workflow; not something to run under
-    concurrent load."""
+    finally block even on error.
+
+    Guarded by services/dev_test_lock.py's TEST_SWAP_LOCK, held for this
+    entire swapped window - every real poll tick (KBIngestionPoller,
+    CronScheduler) takes the same lock non-blocking and skips itself if a
+    test call currently holds it, rather than racing into the fake object.
+    Confirmed live as a real outage before this lock existed (2026-08-18): a
+    slow test call held the swap in place across several real poll ticks, one
+    of which was a real scheduled job's actual send - it silently failed
+    against the fake, and repeat failures were logged only once before
+    dropping to debug level, so the owner got no replies for over an hour
+    with nothing visible in the logs after the first failure. See
+    services/dev_test_lock.py's docstring for the full incident."""
     kb_poller = app.config.get('KB_POLLER')
     if not kb_poller or not kb_poller.admin_handler:
         return jsonify({'error': 'KB poller / admin handler not available yet (still starting up?)'}), 503
@@ -486,6 +494,14 @@ def test_owner_message():
     message = (request.json or {}).get('message', '')
     if not message:
         return jsonify({'error': 'message is required'}), 400
+
+    from services.dev_test_lock import TEST_SWAP_LOCK
+    # Slightly longer than ADMIN_AGENT_TIMEOUT_SECONDS (180s) - a second
+    # overlapping test call queues behind the first rather than corrupting
+    # its swap; only errors out if something is stuck well past what a
+    # single call should ever legitimately take.
+    if not TEST_SWAP_LOCK.acquire(timeout=200):
+        return jsonify({'error': 'Another test call is still in progress - try again shortly'}), 503
 
     # CronScheduler keeps its OWN openwa reference, set once in main.py at
     # construction - entirely separate from kb_poller.openwa and
@@ -522,6 +538,7 @@ def test_owner_message():
         if cron_scheduler:
             cron_scheduler.openwa = original_scheduler_openwa
         kb_poller._owner_chat_id = original_owner_chat_id
+        TEST_SWAP_LOCK.release()
 
     return jsonify({'sent_messages': fake_openwa.sent})
 

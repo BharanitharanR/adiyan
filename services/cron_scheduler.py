@@ -520,14 +520,30 @@ class CronScheduler:
             await asyncio.sleep(self.tick_interval_seconds)
 
     async def _tick_once(self):
-        for job in db.get_due_cron_jobs():
-            try:
-                await self._run_job(job)
-            except Exception as e:
-                logger.error(f"❌ Job '{job['name']}' (id={job['id']}) failed: {e}", exc_info=True)
-                # Advance next_run_at even on failure - a permanently-broken job
-                # (bad instructions, unreachable target) must not spin every tick.
-                self._advance(job)
+        # ui/control_panel_api.py's /api/test/owner-message swaps self.openwa
+        # to a fake for the duration of one test call - skip this WHOLE tick
+        # (not per-job) rather than racing into it, and critically do NOT
+        # call self._advance() here - a due job must stay due and retry next
+        # tick, not get silently marked as "ran" against the wrong object.
+        # Confirmed live as a real outage before this guard existed: a due
+        # job hit the fake mid-test-call, failed, and its schedule still
+        # advanced (the ordinary failure path always advances, to stop a
+        # permanently-broken job from spinning) - so it silently missed its
+        # only chance to send today. See services/dev_test_lock.py.
+        from services.dev_test_lock import TEST_SWAP_LOCK
+        if not TEST_SWAP_LOCK.acquire(blocking=False):
+            return
+        try:
+            for job in db.get_due_cron_jobs():
+                try:
+                    await self._run_job(job)
+                except Exception as e:
+                    logger.error(f"❌ Job '{job['name']}' (id={job['id']}) failed: {e}", exc_info=True)
+                    # Advance next_run_at even on failure - a permanently-broken job
+                    # (bad instructions, unreachable target) must not spin every tick.
+                    self._advance(job)
+        finally:
+            TEST_SWAP_LOCK.release()
 
     async def _resolve_owner_chat_id(self) -> Optional[str]:
         if not self._owner_chat_id:
