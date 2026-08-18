@@ -148,6 +148,34 @@ class OpenWAService:
         logger.info(f"Sent message to {chat_id}: {result.get('messageId')}")
         return result
 
+    async def send_document(self, chat_id: str, filename: str, data: bytes,
+                             mimetype: str = 'application/pdf', caption: Optional[str] = None) -> Dict[str, Any]:
+        """Send a file (e.g. a generated PDF report) to a chat, base64-encoded
+        over OpenWA's send-document endpoint. Own client timeout, not the default
+        10s send_message uses - a report-sized PDF, base64-inflated ~33%, is a
+        meaningfully bigger payload than a text message on the same local hop."""
+        import base64
+        session_id = await self._session_id_or_refresh()
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={'X-API-Key': self.api_key, 'Content-Type': 'application/json'},
+            timeout=60.0,
+        ) as client:
+            response = await client.post(
+                f'/api/sessions/{session_id}/messages/send-document',
+                json={
+                    'chatId': chat_id,
+                    'base64': base64.b64encode(data).decode('ascii'),
+                    'mimetype': mimetype,
+                    'filename': filename,
+                    **({'caption': caption} if caption else {}),
+                },
+            )
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Sent document '{filename}' to {chat_id}: {result.get('messageId')}")
+        return result
+
     async def get_session_status(self) -> Dict[str, Any]:
         """Return the raw session record (status, phone, pushName, etc.)."""
         session_id = await self._session_id_or_refresh()

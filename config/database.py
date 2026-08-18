@@ -256,6 +256,17 @@ def init_db():
             conn.execute("ALTER TABLE cron_jobs ADD COLUMN target_group TEXT")
             logger.info("📇 Added target_group column to cron_jobs")
 
+        # 'standard' jobs go through the LLM composer -> one text message -> the
+        # resolved targets (services/cron_scheduler.py's _compose_message). A
+        # 'client_reports_digest' job is structurally different - one PDF per
+        # active client, not one message to a shared target set - so it skips the
+        # composer entirely and runs dedicated Python (see
+        # services/client_report_generator.py). Additive/nullable-with-default so
+        # every pre-existing job is unaffected and implicitly 'standard'.
+        if 'job_type' not in existing_job_cols:
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'standard'")
+            logger.info("📇 Added job_type column to cron_jobs")
+
         # Same additive-column pattern for routines predating semantic matching
         # (services/routine_store.py) - nullable, so a routine created before this
         # column existed just has no embedding until it's next created/updated,
@@ -599,13 +610,15 @@ def _row_to_job_dict(row: sqlite3.Row) -> Dict[str, Any]:
         'created_at': row['created_at'],
         'last_run_at': row['last_run_at'],
         'next_run_at': row['next_run_at'],
+        'job_type': row['job_type'] if 'job_type' in row.keys() else 'standard',
     }
 
 
 def create_cron_job(created_by: str, name: str, natural_language_schedule: str, cron_expression: str,
                      target: str, instructions: str, expects_response: bool = False,
                      response_window_hours: Optional[int] = None, next_run_at: Optional[str] = None,
-                     target_group: Optional[List[str]] = None, enabled: bool = True) -> int:
+                     target_group: Optional[List[str]] = None, enabled: bool = True,
+                     job_type: str = 'standard') -> int:
     """enabled defaults true for the normal owner/client authoring paths, but a
     routine created BY another routine (services/cron_scheduler.py's proactive
     "chain reaction" creation tool) always passes enabled=False - it exists and
@@ -615,10 +628,11 @@ def create_cron_job(created_by: str, name: str, natural_language_schedule: str, 
         cur = conn.execute(
             "INSERT INTO cron_jobs (created_by, name, natural_language_schedule, cron_expression, target, "
             "target_group, instructions, expects_response, response_window_hours, enabled, created_at, "
-            "next_run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "next_run_at, job_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (created_by, name, natural_language_schedule, cron_expression, target,
              json.dumps(target_group) if target_group else None, instructions,
-             1 if expects_response else 0, response_window_hours, 1 if enabled else 0, _now(), next_run_at),
+             1 if expects_response else 0, response_window_hours, 1 if enabled else 0, _now(), next_run_at,
+             job_type),
         )
         conn.commit()
         return cur.lastrowid
@@ -782,6 +796,25 @@ def read_job_data(job_id: int, key: Optional[str] = None, contact_name: Optional
         rows = conn.execute(query + " ORDER BY created_at DESC", params).fetchall()
         return [
             {'key': r['key'], 'value': r['value'], 'contact_name': r['contact_name'], 'created_at': r['created_at']}
+            for r in rows
+        ]
+
+
+def read_job_data_for_contact(contact_name: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """Same shape as read_job_data, but across every job this contact has ever
+    responded to (e.g. journal entries under one job, poll replies under
+    another) - what a personality/engagement report needs, since a client's
+    real activity isn't confined to a single job_id. Newest first, capped at
+    `limit` so a long-running client can't blow up a single report's prompt."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT job_data.*, cron_jobs.name as job_name FROM job_data "
+            "JOIN cron_jobs ON cron_jobs.id = job_data.job_id "
+            "WHERE job_data.contact_name = ? ORDER BY job_data.created_at DESC LIMIT ?",
+            (contact_name, limit),
+        ).fetchall()
+        return [
+            {'key': r['key'], 'value': r['value'], 'job_name': r['job_name'], 'created_at': r['created_at']}
             for r in rows
         ]
 
