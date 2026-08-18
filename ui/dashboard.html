@@ -439,6 +439,16 @@
             </div>
 
             <div class="card">
+                <h2>🔌 MCP Servers</h2>
+                <p style="font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;">
+                    Every tool server Adiyan can call - built-in ones and anything registered from the
+                    admin WhatsApp chat. Changes here take effect within ~60s, no restart needed.
+                </p>
+                <div id="mcp-servers-list" style="font-size: 12px; max-height: 280px; overflow-y: auto; margin-bottom: 10px;"></div>
+                <button onclick="openMcpServerForm()" style="font-size: 11px; padding: 4px 10px;">+ Add Server</button>
+            </div>
+
+            <div class="card">
                 <h2>🪙 Token Usage</h2>
                 <p style="font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;">
                     Real per-call token counts from the local model - everything here runs on your
@@ -481,6 +491,49 @@
             <div class="config-buttons">
                 <button onclick="savePersonaForm()">💾 Save</button>
                 <button onclick="closePersonaForm()" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+
+        <div class="card" id="mcp-form-card" style="display:none;">
+            <h2 id="mcp-form-title">Add MCP Server</h2>
+            <div class="config-row">
+                <label>Name</label>
+                <input type="text" id="mcp-form-name" style="width:100%;" />
+            </div>
+            <div class="config-row">
+                <label>Transport</label>
+                <select id="mcp-form-transport" onchange="toggleMcpTransportFields()">
+                    <option value="stdio">stdio (a local command)</option>
+                    <option value="streamable_http">streamable_http (a URL)</option>
+                </select>
+            </div>
+            <div class="config-row" id="mcp-form-command-row">
+                <label>Command</label>
+                <input type="text" id="mcp-form-command" style="width:100%;" placeholder="e.g. npx" />
+            </div>
+            <div class="config-row" id="mcp-form-args-row">
+                <label>Args (comma&#8209;separated)</label>
+                <input type="text" id="mcp-form-args" style="width:100%;" placeholder="e.g. -y, @some/mcp-server" />
+            </div>
+            <div class="config-row" id="mcp-form-url-row" style="display:none;">
+                <label>URL</label>
+                <input type="text" id="mcp-form-url" style="width:100%;" placeholder="e.g. http://localhost:9000/mcp" />
+            </div>
+            <div class="config-row">
+                <label>Env var names (comma&#8209;separated)</label>
+                <input type="text" id="mcp-form-envvars" style="width:100%;" placeholder="e.g. NOTION_API_KEY" />
+                <br><span style="color: var(--ink-faint); font-size: 11px;">The actual secret values must already be set via tools/set_secret.py - only the key names go here.</span>
+            </div>
+            <div class="config-row">
+                <label>Scope</label>
+                <select id="mcp-form-scope">
+                    <option value="owner_only">owner_only - only the admin chat can use it</option>
+                    <option value="client_facing">client_facing - clients' own conversations can use it too</option>
+                </select>
+            </div>
+            <div class="config-buttons">
+                <button onclick="saveMcpServerForm()">💾 Save</button>
+                <button onclick="closeMcpServerForm()" class="btn-secondary">Cancel</button>
             </div>
         </div>
     </div>
@@ -707,6 +760,142 @@
 
             } catch (error) {
                 console.error('Failed to load routines:', error);
+            }
+        }
+
+        let mcpServersCache = [];
+        let editingMcpServerName = null;
+
+        function mcpStatusPill(status) {
+            const s = status || 'unknown';
+            const colors = {
+                verified: '#2e7d32', failed: '#c62828', unknown: 'var(--ink-faint)', 'not yet checked': '#8a6d00',
+            };
+            const color = colors[s] || 'var(--ink-faint)';
+            return `<span style="display:inline-block; padding:1px 7px; border:1px solid ${color}; color:${color}; border-radius:3px; font-size:10px; text-transform:uppercase; letter-spacing:0.03em;">${escapeHtml(s)}</span>`;
+        }
+
+        async function loadMcpServers() {
+            try {
+                const response = await fetch(`${API_URL}/mcp-servers`);
+                const servers = await response.json();
+                if (!Array.isArray(servers)) return;
+                mcpServersCache = servers;
+
+                const list = document.getElementById('mcp-servers-list');
+                list.innerHTML = servers.map(s => {
+                    const meta = [
+                        s.transport,
+                        s.scope ? escapeHtml(s.scope) : '',
+                        typeof s.tool_count === 'number' ? `${s.tool_count} tool(s)` : '',
+                    ].filter(Boolean).join(' &middot; ');
+                    const errorLine = s.status === 'failed' && s.error
+                        ? `<br><span style="color:#c62828; font-size:11px;">${escapeHtml(s.error)}</span>`
+                        : '';
+                    const actions = s.built_in
+                        ? '<span style="color: var(--ink-faint); font-size:11px;">built&#8209;in</span>'
+                        : `<a href="#" onclick="openMcpServerForm('${escapeHtml(s.name)}'); return false;" style="font-size:11px;">edit</a>
+                           &nbsp;&middot;&nbsp;
+                           <a href="#" onclick="deleteMcpServer('${escapeHtml(s.name)}'); return false;" style="font-size:11px; color:#c62828;">remove</a>`;
+                    return `<div style="padding: 8px 0; border-bottom: 1px solid var(--line); display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                        <div>
+                            <strong>${escapeHtml(s.name)}</strong> ${mcpStatusPill(s.status)}
+                            <br><span style="color: var(--ink-faint); font-size:11px;">${meta}</span>
+                            ${errorLine}
+                        </div>
+                        <div style="white-space:nowrap;">${actions}</div>
+                    </div>`;
+                }).join('') || '<p style="color: var(--ink-faint);">No servers</p>';
+            } catch (error) {
+                console.error('Failed to load MCP servers:', error);
+            }
+        }
+
+        function toggleMcpTransportFields() {
+            const isStdio = document.getElementById('mcp-form-transport').value === 'stdio';
+            document.getElementById('mcp-form-command-row').style.display = isStdio ? '' : 'none';
+            document.getElementById('mcp-form-args-row').style.display = isStdio ? '' : 'none';
+            document.getElementById('mcp-form-url-row').style.display = isStdio ? 'none' : '';
+        }
+
+        function openMcpServerForm(name) {
+            editingMcpServerName = name || null;
+            document.getElementById('mcp-form-title').textContent = name ? `Edit ${name}` : 'Add MCP Server';
+            document.getElementById('mcp-form-name').disabled = !!name;
+
+            const existing = name ? mcpServersCache.find(s => s.name === name) : null;
+            document.getElementById('mcp-form-name').value = existing ? existing.name : '';
+            document.getElementById('mcp-form-transport').value = existing ? existing.transport : 'stdio';
+            document.getElementById('mcp-form-command').value = (existing && existing.command) || '';
+            document.getElementById('mcp-form-args').value = (existing && existing.args) ? existing.args.join(', ') : '';
+            document.getElementById('mcp-form-url').value = (existing && existing.url) || '';
+            document.getElementById('mcp-form-envvars').value = (existing && existing.env_var_names) ? existing.env_var_names.join(', ') : '';
+            document.getElementById('mcp-form-scope').value = (existing && existing.scope) || 'owner_only';
+            toggleMcpTransportFields();
+
+            document.getElementById('mcp-form-card').style.display = 'block';
+            document.getElementById('mcp-form-card').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function closeMcpServerForm() {
+            document.getElementById('mcp-form-card').style.display = 'none';
+            document.getElementById('mcp-form-name').disabled = false;
+            editingMcpServerName = null;
+        }
+
+        async function saveMcpServerForm() {
+            const name = document.getElementById('mcp-form-name').value.trim();
+            const transport = document.getElementById('mcp-form-transport').value;
+            const scope = document.getElementById('mcp-form-scope').value;
+            const envVarNames = document.getElementById('mcp-form-envvars').value
+                .split(',').map(s => s.trim()).filter(Boolean);
+
+            if (!name) { showMessage('Name is required', 'error'); return; }
+
+            const payload = { transport, scope, env_var_names: envVarNames };
+            if (transport === 'stdio') {
+                payload.command = document.getElementById('mcp-form-command').value.trim();
+                payload.args = document.getElementById('mcp-form-args').value
+                    .split(',').map(s => s.trim()).filter(Boolean);
+            } else {
+                payload.url = document.getElementById('mcp-form-url').value.trim();
+            }
+            if (!editingMcpServerName) payload.name = name;
+
+            try {
+                const response = editingMcpServerName
+                    ? await fetch(`${API_URL}/mcp-servers/${encodeURIComponent(editingMcpServerName)}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+                    })
+                    : await fetch(`${API_URL}/mcp-servers`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+                    });
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage('✓ Saved - will connect within ~60s', 'success');
+                    closeMcpServerForm();
+                    loadMcpServers();
+                } else {
+                    showMessage(result.error || 'Failed to save server', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteMcpServer(name) {
+            if (!confirm(`Remove MCP server "${name}"?`)) return;
+            try {
+                const response = await fetch(`${API_URL}/mcp-servers/${encodeURIComponent(name)}`, { method: 'DELETE' });
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage('✓ Removed', 'success');
+                    loadMcpServers();
+                } else {
+                    showMessage(result.error || 'Failed to remove server', 'error');
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
             }
         }
 
@@ -1056,12 +1245,14 @@
         loadPersonas();
         loadRoutines();
         loadTokenUsage();
+        loadMcpServers();
 
         // Refresh logs every 2 seconds
         setInterval(loadLogs, 2000);
         setInterval(loadHistory, 5000);
         setInterval(loadRoutines, 15000);
         setInterval(loadTokenUsage, 15000);
+        setInterval(loadMcpServers, 15000);
         // Deliberately NOT on a timer: this hits OpenWA's own REST API directly
         // (ui/control_panel_api.py's /api/whatsapp/status), which shares OpenWA's
         // rate limit budget with OpenWAPoller/KBIngestionPoller/CronScheduler -

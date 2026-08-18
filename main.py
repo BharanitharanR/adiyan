@@ -54,6 +54,7 @@ from services.openwa_poller import OpenWAPoller
 from services.kb_ingestion_poller import KBIngestionPoller
 from services.owner_admin_handler import OwnerAdminHandler
 from services.cron_scheduler import CronScheduler
+from services.mcp_reload_poller import MCPServerPoller
 from services.qdrant_service import QdrantService
 from core.mcp_tools import load_mcp_tools, load_owner_mcp_tools, load_google_credentials
 from services.workspace_mcp_service import WorkspaceMCPService
@@ -83,6 +84,8 @@ class AdiyanService:
         self.mcp_tools = None
         self.owner_mcp_tools = None
         self.workspace_mcp_service = None
+        self.google_owner_email = None
+        self.mcp_reload_poller = None
         self._openwa_loop = None
         self._openwa_poller_thread = None
         self._openwa_shutdown = threading.Event()
@@ -121,9 +124,10 @@ class AdiyanService:
                 owner_email=google_creds.get('GOOGLE_OWNER_EMAIL'),
             )
             asyncio.run(self.workspace_mcp_service.start())
+            self.google_owner_email = google_creds.get('GOOGLE_OWNER_EMAIL')
             self.owner_mcp_tools = asyncio.run(load_owner_mcp_tools(
                 self.workspace_mcp_service.url,
-                owner_email=google_creds.get('GOOGLE_OWNER_EMAIL'),
+                owner_email=self.google_owner_email,
             ))
         else:
             self.owner_mcp_tools = asyncio.run(load_owner_mcp_tools())
@@ -308,14 +312,33 @@ class AdiyanService:
         # Constructed before OwnerAdminHandler so its trigger_job_now tool can call
         # cron_scheduler.run_now() directly instead of duplicating job-send logic.
         llm_config = self.control_plane.get_agent_config(AGENT_CLASS_TO_KEY['LLMAgent'])
+        # `self.mcp_tools`, not `self.mcp_tools or []` - see agents/llm_agent.py's
+        # identical fix. self.mcp_tools is already a real list (never None) by
+        # this point (set in setup_agents()), so `or []` here would only ever
+        # matter when it's empty - and that's exactly the case where it would
+        # silently swap in a different list object, breaking the shared
+        # identity services/mcp_reload_poller.py's in-place mutation depends on.
         self.cron_scheduler = CronScheduler(
             openwa_service=self.openwa_service,
-            mcp_tools=self.mcp_tools or [],
+            mcp_tools=self.mcp_tools,
             model_name=llm_config.model if llm_config else 'qwen3:8b-16k',
             ollama_url=cfg.ollama_url,
             control_plane=self.control_plane,
         )
         logger.info("✅ Cron scheduler (AI Cron Jobs) configured")
+
+        # Watches services/mcp_registry.py's mcp_servers.json and hot-reloads
+        # self.mcp_tools/self.owner_mcp_tools in place on change - every consumer
+        # constructed above already holds these exact list objects by reference
+        # (see the `is not None`-not-`or []` fixes throughout this file and
+        # agents/llm_agent.py), so nothing more needs wiring up per-consumer.
+        self.mcp_reload_poller = MCPServerPoller(
+            mcp_tools_list=self.mcp_tools,
+            owner_mcp_tools_list=self.owner_mcp_tools,
+            workspace_mcp_url=self.workspace_mcp_service.url if self.workspace_mcp_service else None,
+            owner_email=self.google_owner_email,
+        )
+        logger.info("✅ MCP reload poller configured")
 
         memory_index = get_memory_index(cfg.qdrant_url, cfg.ollama_url)
         if memory_index:
@@ -355,6 +378,8 @@ class AdiyanService:
                         await self.kb_poller.start()
                     if self.cron_scheduler:
                         await self.cron_scheduler.start()
+                    if self.mcp_reload_poller:
+                        await self.mcp_reload_poller.start()
                     if attempt:
                         logger.info(f"✅ OpenWA poller connected after {attempt} failed attempt(s)")
                     return True
@@ -380,6 +405,8 @@ class AdiyanService:
                 logger.error(f"❌ OpenWA poller thread error: {e}")
             finally:
                 try:
+                    if self.mcp_reload_poller:
+                        loop.run_until_complete(self.mcp_reload_poller.stop())
                     if self.cron_scheduler:
                         loop.run_until_complete(self.cron_scheduler.stop())
                     if self.kb_poller:

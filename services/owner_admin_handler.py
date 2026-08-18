@@ -63,6 +63,11 @@ MAX_HISTORY_MESSAGES = 10
 # nothing here is blocking an interactive UI, so the extra headroom costs nothing.
 ADMIN_AGENT_TIMEOUT_SECONDS = 180
 
+# Caps download_and_ingest_pdf's fetch - a sane ceiling against an
+# accidentally (or maliciously) huge file, not a real expected size; most
+# coaching-relevant PDFs (books, articles, reports) are well under this.
+DOWNLOAD_PDF_MAX_BYTES = 50 * 1024 * 1024
+
 ALL_AGENT_IDS = {
     'parser', 'validator', 'router', 'llm', 'synthesizer', 'storage', 'publisher',
     'hermes', 'prometheus', 'pythia', 'hephaestus', 'calliope', 'momus',
@@ -106,10 +111,15 @@ ADMIN_SYSTEM_PROMPT = (
     "and that step has its own web search/page-reading tools, even though you yourself don't. "
     "So a request like \"every morning, look up X and summarize it for everyone\" is still a "
     "plain create_job call - never refuse a scheduling/broadcast request just because look-up "
-    "or research is involved; that happens later, at send time, not now. If the owner wants to review what people replied (e.g. "
-    "before a call), use get_job_responses - never invent, guess, or give an example of "
-    "what someone might have replied. A job that was just sent has no replies yet; say so "
-    "plainly rather than fabricating one.\n\n"
+    "or research is involved; that happens later, at send time, not now. ANY question about "
+    "what a job's recipients have sent back - reviewing replies before a call, counting how "
+    "many times someone answered a certain way (e.g. \"how many times did I say reached p\"), "
+    "listing who responded, checking if someone specific replied - always call "
+    "get_job_responses first and compute the answer yourself from what it returns. Never "
+    "say you lack access to this, and never ask the owner to manually provide data you can "
+    "already pull yourself - that data is real and this tool reads it directly. Only say "
+    "\"no replies yet\" when get_job_responses actually returns an empty list, never as an "
+    "assumption. Never invent, guess, or give an example of what someone might have replied.\n\n"
     "IMPORTANT - targeting specific people: if a request names or implies a specific subset "
     "of clients (\"the people who said yes\", \"those who enrolled\", \"everyone who replied to "
     "job 21\"), that is target='group' with those exact names in target_group - NEVER "
@@ -741,12 +751,154 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
             'message': f'Gmail/Calendar are connected ({owner_mcp_tool_count} tools available, read-only).',
         }
 
+    @tool
+    def add_mcp_server(name: str, transport: str, command: Optional[str] = None,
+                        command_args: Optional[List[str]] = None, url: Optional[str] = None,
+                        env_var_names: Optional[List[str]] = None, scope: str = 'owner_only') -> dict:
+        """Register a new MCP tool server. transport is 'stdio' (needs command,
+        optionally command_args - e.g. command='npx', command_args=['-y', '@some/mcp-server'])
+        or 'streamable_http' (needs url instead). env_var_names lists secret KEY
+        NAMES the server needs (e.g. ['NOTION_API_KEY']) - the actual values must
+        already be in the vault (tools/set_secret.py), never pass a raw secret
+        value here. scope defaults to 'owner_only' (only this admin chat can use
+        its tools) - only pass scope='client_facing' if the owner explicitly asks
+        for clients to be able to use it too.
+
+        If you don't know a server's exact command/url, search the web for it
+        first (its GitHub README or npm/PyPI page usually has the run command)
+        rather than guessing - a wrong command will be caught safely at the next
+        reload (~60s) and reported by list_mcp_servers, never silently trusted.
+        Don't ask the owner to confirm the exact command before registering -
+        register it, then check its status and fix it if needed."""
+        from services.mcp_registry import add_server
+        try:
+            record = add_server(name, transport, command=command, args=command_args, url=url,
+                                 env_var_names=env_var_names, scope=scope)
+        except ValueError as e:
+            return {'error': str(e)}
+        return {
+            'success': True, 'server': record,
+            'note': 'Registered - will attempt to connect on the next reload (~60s). '
+                    'Ask me to check its status shortly to confirm it actually works.',
+        }
+
+    @tool
+    def update_mcp_server(name: str, transport: Optional[str] = None, command: Optional[str] = None,
+                           command_args: Optional[List[str]] = None, url: Optional[str] = None,
+                           env_var_names: Optional[List[str]] = None, scope: Optional[str] = None) -> dict:
+        """Change fields on an already-registered MCP server (e.g. fix a wrong
+        command after list_mcp_servers showed it failing to connect). Only pass
+        the fields you're changing - everything else stays as it was."""
+        from services.mcp_registry import update_server
+        try:
+            record = update_server(name, transport=transport, command=command, args=command_args,
+                                    url=url, env_var_names=env_var_names, scope=scope)
+        except ValueError as e:
+            return {'error': str(e)}
+        return {'success': True, 'server': record, 'note': 'Updated - will re-connect on the next reload (~60s).'}
+
+    @tool
+    def remove_mcp_server(name: str) -> dict:
+        """Unregister an MCP server - its tools stop being available after the
+        next reload (~60s). Built-in servers (duckduckgo, crawl4ai,
+        google_workspace) can't be removed this way."""
+        from services.mcp_registry import remove_server, RESERVED_NAMES
+        if name in RESERVED_NAMES:
+            return {'error': f"'{name}' is a built-in server and can't be removed"}
+        if not remove_server(name):
+            return {'error': f"No server named '{name}' is registered"}
+        return {'success': True}
+
+    @tool
+    def list_mcp_servers() -> dict:
+        """List every MCP server - built-in and registered - with its live
+        status (verified/failed/never checked) and, if it's currently failing,
+        the exact error from the last connection attempt. Use this to check
+        whether a server you just added or edited actually works, and to
+        troubleshoot one that isn't."""
+        from services.mcp_registry import list_servers, RESERVED_NAMES
+        from core.mcp_tools import get_mcp_server_status
+        status = get_mcp_server_status()
+        try:
+            registered = list_servers()
+        except ValueError as e:
+            return {'error': f'mcp_servers.json is corrupt, fix or remove it: {e}'}
+
+        servers = [{'name': n, 'built_in': True, **status.get(n, {'status': 'unknown'})} for n in RESERVED_NAMES]
+        servers += [
+            {**r, 'built_in': False, **status.get(r['name'], {'status': 'not yet checked'})}
+            for r in registered
+        ]
+        return {'servers': servers}
+
+    @tool
+    async def download_and_ingest_pdf(url: str) -> dict:
+        """Download a PDF from a direct URL and add it to the knowledge base -
+        fills the gap search/fetch_content/crawl_page can't: those read HTML
+        pages as text, never binary files. Use this whenever the owner wants a
+        PDF from a link added to the knowledge base, instead of saying this
+        isn't possible - it is, this is the tool for it. If the owner only
+        named a book/document without a link, search for it first and confirm
+        you found a direct PDF link (not a landing/preview page) before
+        calling this.
+
+        Fails clearly (never silently) if the URL doesn't actually return a
+        PDF, is too large (50MB cap), or the PDF has no extractable text (a
+        scanned image with no OCR layer)."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                async with client.stream('GET', url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get('content-type', '')
+                    chunks = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > DOWNLOAD_PDF_MAX_BYTES:
+                            return {
+                                'error': f'File exceeds the {DOWNLOAD_PDF_MAX_BYTES // (1024*1024)}MB limit - '
+                                         'too large to download and ingest.',
+                            }
+                        chunks.append(chunk)
+                    content = b''.join(chunks)
+        except httpx.HTTPStatusError as e:
+            return {'error': f'The server returned {e.response.status_code} for that URL'}
+        except Exception as e:
+            return {'error': f'Could not download from that URL: {e}'}
+
+        if 'application/pdf' not in content_type and not content.startswith(b'%PDF-'):
+            return {
+                'error': f"That URL didn't return a PDF (content-type: {content_type or 'unknown'}) - "
+                         "check the link points directly to the PDF file itself, not a landing or preview page.",
+            }
+
+        memory_index = get_memory_index(control_plane.config.qdrant_url, control_plane.config.ollama_url)
+        if not memory_index:
+            return {'error': 'Knowledge base is not available right now'}
+
+        filename = (url.rstrip('/').rsplit('/', 1)[-1] or 'document').split('?')[0]
+        if not filename.lower().endswith('.pdf'):
+            filename += '.pdf'
+        try:
+            chunk_count = memory_index.ingest_pdf(
+                content=content, filename=filename, timestamp=datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            )
+        except Exception as e:
+            return {'error': f"Downloaded the file but couldn't parse it as a PDF: {e}"}
+
+        db.add_kb_document(filename, chunk_count, source='url_download')
+        return {'success': True, 'filename': filename, 'chunk_count': chunk_count}
+
     return [list_agent_configs, get_agent_config, update_agent_config, get_client, list_clients,
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages, get_client_insights,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
             list_routines, get_routine_details, set_routine_trigger, delete_routine,
-            check_google_workspace_status,
+            check_google_workspace_status, add_mcp_server, update_mcp_server,
+            download_and_ingest_pdf,
+            remove_mcp_server, list_mcp_servers,
             broadcast_once]
 
 
@@ -764,18 +916,24 @@ class OwnerAdminHandler:
         # "not available yet") since main.py constructs the scheduler in the same
         # step as this handler and always passes it through.
         self.cron_scheduler = cron_scheduler
-        # Owner-only MCP tools (Gmail, Calendar - core/mcp_tools.py's
-        # load_owner_mcp_tools()). Empty list, never None, if unconfigured - see
-        # this module's own docstring for why this must never be the
-        # client-facing pool.
-        self.owner_mcp_tools = owner_mcp_tools or []
+        # Owner-only MCP tools (Gmail, Calendar, plus any registered server with
+        # scope='owner_only' - core/mcp_tools.py's load_owner_mcp_tools()). Empty
+        # list, never None, if unconfigured - see this module's own docstring for
+        # why this must never be the client-facing pool. `is not None`, not
+        # `or []` - see agents/llm_agent.py's identical fix for why an empty-but-
+        # real list must never get silently swapped for a new one: it would break
+        # the shared-reference-by-identity services/mcp_reload_poller.py depends
+        # on to hot-reload every consumer at once, without a restart.
+        self.owner_mcp_tools = owner_mcp_tools if owner_mcp_tools is not None else []
         # The SAME general-purpose MCP tools client conversations already get
-        # (duckduckgo search/fetch_content, crawl4ai - main.py's self.mcp_tools),
-        # bound here too on request: this channel is owner-only regardless (see
-        # module docstring), so there's no new exposure in handing it tools a
-        # client's own conversation can already reach - unlike owner_mcp_tools
-        # above, which must stay exclusive to this handler.
-        self.mcp_tools = mcp_tools or []
+        # (duckduckgo search/fetch_content, crawl4ai, plus any registered server
+        # with scope='client_facing' - main.py's self.mcp_tools), bound here too:
+        # this channel is owner-only regardless (see module docstring), so there's
+        # no new exposure in handing it tools a client's own conversation can
+        # already reach - unlike owner_mcp_tools above, which must stay exclusive
+        # to this handler. Together the two pools give this channel access to
+        # every registered MCP server irrespective of scope, by design.
+        self.mcp_tools = mcp_tools if mcp_tools is not None else []
         # Reuses the 'llm' agent's configured model rather than inventing a separate
         # admin-specific one - one less thing to independently configure.
         llm_cfg = control_plane.get_agent_config('llm')

@@ -179,16 +179,27 @@ class KBIngestionPoller:
         return backoff
 
     async def _poll_once(self):
-        if not self._owner_chat_id:
-            self._owner_chat_id = await self._try_resolve_owner_chat_id()
+        # ui/control_panel_api.py's /api/test/owner-message swaps self.openwa
+        # (and admin_handler.openwa, which _handle_message below can reach
+        # via the admin fallback) to a fake for the duration of one test call
+        # - skip this WHOLE tick, fetch through message handling, rather than
+        # racing into it partway through. Confirmed live as a real outage
+        # before this guard existed: see services/dev_test_lock.py.
+        from services.dev_test_lock import TEST_SWAP_LOCK
+        if not TEST_SWAP_LOCK.acquire(blocking=False):
+            return
+        try:
             if not self._owner_chat_id:
-                return  # session still not linked - nothing to poll yet
+                self._owner_chat_id = await self._try_resolve_owner_chat_id()
+                if not self._owner_chat_id:
+                    return  # session still not linked - nothing to poll yet
 
-        messages = await self.openwa.get_messages(self._owner_chat_id, limit=self.message_fetch_limit)
-
-        # Oldest-first so confirmation replies land in the order the PDFs were sent.
-        for message in reversed(messages):
-            await self._handle_message(message)
+            messages = await self.openwa.get_messages(self._owner_chat_id, limit=self.message_fetch_limit)
+            # Oldest-first so confirmation replies land in the order the PDFs were sent.
+            for message in reversed(messages):
+                await self._handle_message(message)
+        finally:
+            TEST_SWAP_LOCK.release()
 
     async def _handle_routine_trigger(self, routine: dict):
         """Fires a routine whose configured trigger phrase was just said - see

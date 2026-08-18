@@ -395,6 +395,62 @@ def token_usage():
         'recent': db.list_token_usage(limit=50),
     })
 
+@app.route('/api/mcp-servers', methods=['GET'])
+def list_mcp_servers():
+    """Every MCP server - the 3 built-in ones (services/mcp_registry.py's
+    RESERVED_NAMES) plus anything registered - merged with its live status
+    (core/mcp_tools.py's in-memory map, populated at every load/reload, never
+    persisted). Same data services/owner_admin_handler.py's list_mcp_servers
+    admin-chat tool returns - this is the dashboard door into the identical
+    read, not a second implementation."""
+    from services.mcp_registry import list_servers, RESERVED_NAMES
+    from core.mcp_tools import get_mcp_server_status
+    status = get_mcp_server_status()
+    try:
+        registered = list_servers()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 500
+    servers = [{'name': n, 'built_in': True, **status.get(n, {'status': 'unknown'})} for n in RESERVED_NAMES]
+    servers += [{**r, 'built_in': False, **status.get(r['name'], {'status': 'not yet checked'})} for r in registered]
+    return jsonify(servers)
+
+@app.route('/api/mcp-servers', methods=['POST'])
+def add_mcp_server():
+    """Add a server. Same validated services/mcp_registry.py.add_server() the
+    admin-chat add_mcp_server tool calls - a malformed request is rejected
+    here exactly the way it would be rejected there, never a second set of
+    rules to keep in sync."""
+    from services.mcp_registry import add_server
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        record = add_server(
+            body.get('name'), body.get('transport'), command=body.get('command'),
+            args=body.get('args'), url=body.get('url'), env_var_names=body.get('env_var_names'),
+            scope=body.get('scope', 'owner_only'),
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(record), 201
+
+@app.route('/api/mcp-servers/<name>', methods=['PUT'])
+def update_mcp_server(name):
+    from services.mcp_registry import update_server
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        record = update_server(name, **body)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(record)
+
+@app.route('/api/mcp-servers/<name>', methods=['DELETE'])
+def delete_mcp_server(name):
+    from services.mcp_registry import remove_server, RESERVED_NAMES
+    if name in RESERVED_NAMES:
+        return jsonify({'error': f"'{name}' is a built-in server and can't be removed"}), 400
+    if not remove_server(name):
+        return jsonify({'error': f"No server named '{name}' is registered"}), 404
+    return jsonify({'success': True})
+
 class _CapturingOpenWA:
     """A fake OpenWAService for test endpoints below - records what WOULD have
     been sent instead of touching the real WhatsApp connection, so routines/
@@ -418,11 +474,19 @@ def test_owner_message():
     changes are real, checkable via /api/routines etc.) but temporarily swaps
     both their .openwa references to a capturing fake for the duration of this
     one call, so nothing gets sent to your real WhatsApp. Restored in a
-    finally block even on error. Note: this briefly shares mutable state with
-    the live background poller (which ticks every ~20s) - a real incoming
-    owner message arriving in that exact window could interleave. Acceptable
-    for a local, single-owner dev/test workflow; not something to run under
-    concurrent load."""
+    finally block even on error.
+
+    Guarded by services/dev_test_lock.py's TEST_SWAP_LOCK, held for this
+    entire swapped window - every real poll tick (KBIngestionPoller,
+    CronScheduler) takes the same lock non-blocking and skips itself if a
+    test call currently holds it, rather than racing into the fake object.
+    Confirmed live as a real outage before this lock existed (2026-08-18): a
+    slow test call held the swap in place across several real poll ticks, one
+    of which was a real scheduled job's actual send - it silently failed
+    against the fake, and repeat failures were logged only once before
+    dropping to debug level, so the owner got no replies for over an hour
+    with nothing visible in the logs after the first failure. See
+    services/dev_test_lock.py's docstring for the full incident."""
     kb_poller = app.config.get('KB_POLLER')
     if not kb_poller or not kb_poller.admin_handler:
         return jsonify({'error': 'KB poller / admin handler not available yet (still starting up?)'}), 503
@@ -430,6 +494,14 @@ def test_owner_message():
     message = (request.json or {}).get('message', '')
     if not message:
         return jsonify({'error': 'message is required'}), 400
+
+    from services.dev_test_lock import TEST_SWAP_LOCK
+    # Slightly longer than ADMIN_AGENT_TIMEOUT_SECONDS (180s) - a second
+    # overlapping test call queues behind the first rather than corrupting
+    # its swap; only errors out if something is stuck well past what a
+    # single call should ever legitimately take.
+    if not TEST_SWAP_LOCK.acquire(timeout=200):
+        return jsonify({'error': 'Another test call is still in progress - try again shortly'}), 503
 
     # CronScheduler keeps its OWN openwa reference, set once in main.py at
     # construction - entirely separate from kb_poller.openwa and
@@ -466,6 +538,7 @@ def test_owner_message():
         if cron_scheduler:
             cron_scheduler.openwa = original_scheduler_openwa
         kb_poller._owner_chat_id = original_owner_chat_id
+        TEST_SWAP_LOCK.release()
 
     return jsonify({'sent_messages': fake_openwa.sent})
 

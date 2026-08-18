@@ -40,6 +40,7 @@ import importlib.util
 import logging
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -47,6 +48,18 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 logger = logging.getLogger('MCPTools')
+
+# Live-only, never persisted: name -> {'status', 'error', 'tool_count', 'checked_at'}.
+# Updated every time _load_one_server runs (startup AND every reload poll) - see
+# services/mcp_reload_poller.py. Read by owner_admin_handler.py's list_mcp_servers
+# tool and ui/control_panel_api.py's dashboard endpoint, so "why isn't X working"
+# gets the real exception, not a shrug. Deliberately not written back into
+# mcp_servers.json - see that file's own note on why status must stay out of it.
+_server_status: Dict[str, dict] = {}
+
+
+def get_mcp_server_status() -> Dict[str, dict]:
+    return dict(_server_status)
 
 DUCKDUCKGO_MCP_COMMAND = "duckduckgo-mcp-server"
 CRAWL4AI_SERVER_SCRIPT = Path(__file__).resolve().parent.parent / 'mcp_servers' / 'crawl4ai_server.py'
@@ -116,24 +129,90 @@ def _build_server_configs() -> Dict[str, dict]:
     return servers
 
 
+def _registered_server_config(record: dict) -> dict:
+    """Converts one services/mcp_registry.py record into the shape
+    MultiServerMCPClient expects. Env var NAMES on the record are resolved to
+    real values from the vault here, at load time - the record itself (and the
+    JSON file it lives in) only ever holds key names, never secret values."""
+    if record['transport'] == 'stdio':
+        env = {}
+        if record.get('env_var_names'):
+            from config.secrets_vault import get_secret
+            for var_name in record['env_var_names']:
+                value = get_secret(var_name)
+                if value:
+                    env[var_name] = value
+                else:
+                    logger.warning(f"⚠️  '{record['name']}': vault has no value for {var_name}")
+        return {
+            "command": record['command'], "args": record.get('args') or [],
+            "transport": "stdio", **({"env": env} if env else {}),
+        }
+    return {"url": record['url'], "transport": "streamable_http"}
+
+
+def _load_registered_server_configs(scope: str) -> Dict[str, dict]:
+    """Every server in mcp_servers.json matching `scope`, converted to
+    MultiServerMCPClient config. A single malformed record is logged and
+    skipped, never allowed to take the others down with it - the same
+    per-entry isolation _load_one_server applies to the connection itself."""
+    from services import mcp_registry
+    try:
+        records = mcp_registry.list_servers()
+    except ValueError as e:
+        logger.error(f"❌ Could not read mcp_servers.json, skipping registered servers this pass: {e}")
+        return {}
+
+    configs = {}
+    for record in records:
+        if record.get('scope') != scope:
+            continue
+        try:
+            configs[record['name']] = _registered_server_config(record)
+        except (KeyError, TypeError) as e:
+            logger.error(f"❌ Registered server '{record.get('name', '?')}' has a malformed record, skipping: {e}")
+    return configs
+
+
+async def _load_one_server(name: str, config: dict) -> List[BaseTool]:
+    """One server, one connection attempt, fully isolated from every other
+    server - a failure here only ever affects this one entry's own tools and
+    its own status record, never the batch. Records the real exception into
+    _server_status so list_mcp_servers/the dashboard can show it verbatim,
+    not just "failed"."""
+    try:
+        client = MultiServerMCPClient({name: config})
+        tools = await client.get_tools()
+        _server_status[name] = {
+            'status': 'verified', 'error': None, 'tool_count': len(tools),
+            'checked_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        }
+        return tools
+    except Exception as e:
+        logger.error(f"❌ MCP server '{name}' failed to connect: {e}")
+        _server_status[name] = {
+            'status': 'failed', 'error': str(e), 'tool_count': 0,
+            'checked_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        }
+        return []
+
+
 async def load_mcp_tools() -> List[BaseTool]:
-    """Load the shared CLIENT-FACING tool pool. Returns [] (not an error) if none
-    are available, so Adiyan still runs without tool-calling. Never add an
-    owner-only integration (email, calendar, anything reading the owner's own
-    personal accounts) to this pool - see the module docstring."""
-    servers = _build_server_configs()
+    """Load the shared CLIENT-FACING tool pool: the built-in servers plus any
+    mcp_servers.json entry marked scope='client_facing'. Returns [] (not an
+    error) if none are available, so Adiyan still runs without tool-calling.
+    Never add an owner-only integration (email, calendar, anything reading the
+    owner's own personal accounts) to this pool - see the module docstring."""
+    servers = {**_build_server_configs(), **_load_registered_server_configs('client_facing')}
     if not servers:
         logger.warning("⚠️  No MCP servers available - LLM will run without tools")
         return []
 
-    try:
-        client = MultiServerMCPClient(servers)
-        tools = await client.get_tools()
-        logger.info(f"✅ Loaded {len(tools)} MCP tool(s) from {list(servers)}: {[t.name for t in tools]}")
-        return tools
-    except Exception as e:
-        logger.error(f"❌ Failed to load MCP tools: {e}")
-        return []
+    all_tools: List[BaseTool] = []
+    for name, config in servers.items():
+        all_tools.extend(await _load_one_server(name, config))
+    logger.info(f"✅ Loaded {len(all_tools)} MCP tool(s) from {list(servers)}: {[t.name for t in all_tools]}")
+    return all_tools
 
 
 def load_google_credentials() -> Optional[Dict[str, str]]:
@@ -217,23 +296,25 @@ async def load_owner_mcp_tools(workspace_mcp_url: Optional[str] = None,
     meaningfully different risk than a one-off request. Loosening this is a
     deliberate future opt-in, not a default.
     """
+    all_tools: List[BaseTool] = []
+
     if not workspace_mcp_url:
         logger.info(
             "ℹ️  Google Workspace service not running - owner Gmail/Calendar tools unavailable "
             "(run tools/set_secret.py GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET, "
             "then restart Adiyan, to enable)"
         )
-        return []
-
-    try:
-        client = MultiServerMCPClient({
-            "google_workspace": {"transport": "streamable_http", "url": workspace_mcp_url}
-        })
-        tools = await client.get_tools()
+    else:
+        workspace_tools = await _load_one_server(
+            "google_workspace", {"transport": "streamable_http", "url": workspace_mcp_url},
+        )
         if owner_email:
-            tools = [_pin_owner_email(t, owner_email) for t in tools]
-        logger.info(f"✅ Loaded {len(tools)} owner-only MCP tool(s): {[t.name for t in tools]}")
-        return tools
-    except Exception as e:
-        logger.error(f"❌ Failed to load owner MCP tools from {workspace_mcp_url}: {e}")
-        return []
+            workspace_tools = [_pin_owner_email(t, owner_email) for t in workspace_tools]
+        all_tools.extend(workspace_tools)
+
+    registered = _load_registered_server_configs('owner_only')
+    for name, config in registered.items():
+        all_tools.extend(await _load_one_server(name, config))
+
+    logger.info(f"✅ Loaded {len(all_tools)} owner-only MCP tool(s): {[t.name for t in all_tools]}")
+    return all_tools
