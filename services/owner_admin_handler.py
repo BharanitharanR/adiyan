@@ -63,6 +63,11 @@ MAX_HISTORY_MESSAGES = 10
 # nothing here is blocking an interactive UI, so the extra headroom costs nothing.
 ADMIN_AGENT_TIMEOUT_SECONDS = 180
 
+# Caps download_and_ingest_pdf's fetch - a sane ceiling against an
+# accidentally (or maliciously) huge file, not a real expected size; most
+# coaching-relevant PDFs (books, articles, reports) are well under this.
+DOWNLOAD_PDF_MAX_BYTES = 50 * 1024 * 1024
+
 ALL_AGENT_IDS = {
     'parser', 'validator', 'router', 'llm', 'synthesizer', 'storage', 'publisher',
     'hermes', 'prometheus', 'pythia', 'hephaestus', 'calliope', 'momus',
@@ -826,12 +831,73 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
         ]
         return {'servers': servers}
 
+    @tool
+    async def download_and_ingest_pdf(url: str) -> dict:
+        """Download a PDF from a direct URL and add it to the knowledge base -
+        fills the gap search/fetch_content/crawl_page can't: those read HTML
+        pages as text, never binary files. Use this whenever the owner wants a
+        PDF from a link added to the knowledge base, instead of saying this
+        isn't possible - it is, this is the tool for it. If the owner only
+        named a book/document without a link, search for it first and confirm
+        you found a direct PDF link (not a landing/preview page) before
+        calling this.
+
+        Fails clearly (never silently) if the URL doesn't actually return a
+        PDF, is too large (50MB cap), or the PDF has no extractable text (a
+        scanned image with no OCR layer)."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                async with client.stream('GET', url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get('content-type', '')
+                    chunks = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > DOWNLOAD_PDF_MAX_BYTES:
+                            return {
+                                'error': f'File exceeds the {DOWNLOAD_PDF_MAX_BYTES // (1024*1024)}MB limit - '
+                                         'too large to download and ingest.',
+                            }
+                        chunks.append(chunk)
+                    content = b''.join(chunks)
+        except httpx.HTTPStatusError as e:
+            return {'error': f'The server returned {e.response.status_code} for that URL'}
+        except Exception as e:
+            return {'error': f'Could not download from that URL: {e}'}
+
+        if 'application/pdf' not in content_type and not content.startswith(b'%PDF-'):
+            return {
+                'error': f"That URL didn't return a PDF (content-type: {content_type or 'unknown'}) - "
+                         "check the link points directly to the PDF file itself, not a landing or preview page.",
+            }
+
+        memory_index = get_memory_index(control_plane.config.qdrant_url, control_plane.config.ollama_url)
+        if not memory_index:
+            return {'error': 'Knowledge base is not available right now'}
+
+        filename = (url.rstrip('/').rsplit('/', 1)[-1] or 'document').split('?')[0]
+        if not filename.lower().endswith('.pdf'):
+            filename += '.pdf'
+        try:
+            chunk_count = memory_index.ingest_pdf(
+                content=content, filename=filename, timestamp=datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            )
+        except Exception as e:
+            return {'error': f"Downloaded the file but couldn't parse it as a PDF: {e}"}
+
+        db.add_kb_document(filename, chunk_count, source='url_download')
+        return {'success': True, 'filename': filename, 'chunk_count': chunk_count}
+
     return [list_agent_configs, get_agent_config, update_agent_config, get_client, list_clients,
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages, get_client_insights,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
             list_routines, get_routine_details, set_routine_trigger, delete_routine,
             check_google_workspace_status, add_mcp_server, update_mcp_server,
+            download_and_ingest_pdf,
             remove_mcp_server, list_mcp_servers,
             broadcast_once]
 
