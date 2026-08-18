@@ -395,6 +395,62 @@ def token_usage():
         'recent': db.list_token_usage(limit=50),
     })
 
+@app.route('/api/mcp-servers', methods=['GET'])
+def list_mcp_servers():
+    """Every MCP server - the 3 built-in ones (services/mcp_registry.py's
+    RESERVED_NAMES) plus anything registered - merged with its live status
+    (core/mcp_tools.py's in-memory map, populated at every load/reload, never
+    persisted). Same data services/owner_admin_handler.py's list_mcp_servers
+    admin-chat tool returns - this is the dashboard door into the identical
+    read, not a second implementation."""
+    from services.mcp_registry import list_servers, RESERVED_NAMES
+    from core.mcp_tools import get_mcp_server_status
+    status = get_mcp_server_status()
+    try:
+        registered = list_servers()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 500
+    servers = [{'name': n, 'built_in': True, **status.get(n, {'status': 'unknown'})} for n in RESERVED_NAMES]
+    servers += [{**r, 'built_in': False, **status.get(r['name'], {'status': 'not yet checked'})} for r in registered]
+    return jsonify(servers)
+
+@app.route('/api/mcp-servers', methods=['POST'])
+def add_mcp_server():
+    """Add a server. Same validated services/mcp_registry.py.add_server() the
+    admin-chat add_mcp_server tool calls - a malformed request is rejected
+    here exactly the way it would be rejected there, never a second set of
+    rules to keep in sync."""
+    from services.mcp_registry import add_server
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        record = add_server(
+            body.get('name'), body.get('transport'), command=body.get('command'),
+            args=body.get('args'), url=body.get('url'), env_var_names=body.get('env_var_names'),
+            scope=body.get('scope', 'owner_only'),
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(record), 201
+
+@app.route('/api/mcp-servers/<name>', methods=['PUT'])
+def update_mcp_server(name):
+    from services.mcp_registry import update_server
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        record = update_server(name, **body)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(record)
+
+@app.route('/api/mcp-servers/<name>', methods=['DELETE'])
+def delete_mcp_server(name):
+    from services.mcp_registry import remove_server, RESERVED_NAMES
+    if name in RESERVED_NAMES:
+        return jsonify({'error': f"'{name}' is a built-in server and can't be removed"}), 400
+    if not remove_server(name):
+        return jsonify({'error': f"No server named '{name}' is registered"}), 404
+    return jsonify({'success': True})
+
 class _CapturingOpenWA:
     """A fake OpenWAService for test endpoints below - records what WOULD have
     been sent instead of touching the real WhatsApp connection, so routines/

@@ -35,7 +35,14 @@ class LLMAgent(BaseAgent):
             self.temperature = config.get('temperature', 0.7) if config else 0.7
             self.timeout = config.get('timeout', 180) if config else 180
 
-        self.mcp_tools = mcp_tools or []
+        # `mcp_tools if mcp_tools is not None else []`, not `mcp_tools or []` - an
+        # empty list is falsy in Python, so `or []` would silently substitute a
+        # NEW list object whenever main.py's pool starts out empty (no MCP
+        # servers available yet), breaking the shared-reference-by-identity
+        # services/mcp_reload_poller.py's in-place mutation depends on to push a
+        # newly registered server's tools out to every consumer without a
+        # restart. An explicit None-check preserves identity in every case.
+        self.mcp_tools = mcp_tools if mcp_tools is not None else []
         self.control_plane = control_plane
         # None when no control_plane is wired in (e.g. isolated tests) - the reasoning
         # cycle just never engages then, same as Hermes being disabled.

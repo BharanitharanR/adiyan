@@ -741,12 +741,93 @@ def _build_admin_tools(control_plane, model_name: str, ollama_url: str, cron_sch
             'message': f'Gmail/Calendar are connected ({owner_mcp_tool_count} tools available, read-only).',
         }
 
+    @tool
+    def add_mcp_server(name: str, transport: str, command: Optional[str] = None,
+                        command_args: Optional[List[str]] = None, url: Optional[str] = None,
+                        env_var_names: Optional[List[str]] = None, scope: str = 'owner_only') -> dict:
+        """Register a new MCP tool server. transport is 'stdio' (needs command,
+        optionally command_args - e.g. command='npx', command_args=['-y', '@some/mcp-server'])
+        or 'streamable_http' (needs url instead). env_var_names lists secret KEY
+        NAMES the server needs (e.g. ['NOTION_API_KEY']) - the actual values must
+        already be in the vault (tools/set_secret.py), never pass a raw secret
+        value here. scope defaults to 'owner_only' (only this admin chat can use
+        its tools) - only pass scope='client_facing' if the owner explicitly asks
+        for clients to be able to use it too.
+
+        If you don't know a server's exact command/url, search the web for it
+        first (its GitHub README or npm/PyPI page usually has the run command)
+        rather than guessing - a wrong command will be caught safely at the next
+        reload (~60s) and reported by list_mcp_servers, never silently trusted.
+        Don't ask the owner to confirm the exact command before registering -
+        register it, then check its status and fix it if needed."""
+        from services.mcp_registry import add_server
+        try:
+            record = add_server(name, transport, command=command, args=command_args, url=url,
+                                 env_var_names=env_var_names, scope=scope)
+        except ValueError as e:
+            return {'error': str(e)}
+        return {
+            'success': True, 'server': record,
+            'note': 'Registered - will attempt to connect on the next reload (~60s). '
+                    'Ask me to check its status shortly to confirm it actually works.',
+        }
+
+    @tool
+    def update_mcp_server(name: str, transport: Optional[str] = None, command: Optional[str] = None,
+                           command_args: Optional[List[str]] = None, url: Optional[str] = None,
+                           env_var_names: Optional[List[str]] = None, scope: Optional[str] = None) -> dict:
+        """Change fields on an already-registered MCP server (e.g. fix a wrong
+        command after list_mcp_servers showed it failing to connect). Only pass
+        the fields you're changing - everything else stays as it was."""
+        from services.mcp_registry import update_server
+        try:
+            record = update_server(name, transport=transport, command=command, args=command_args,
+                                    url=url, env_var_names=env_var_names, scope=scope)
+        except ValueError as e:
+            return {'error': str(e)}
+        return {'success': True, 'server': record, 'note': 'Updated - will re-connect on the next reload (~60s).'}
+
+    @tool
+    def remove_mcp_server(name: str) -> dict:
+        """Unregister an MCP server - its tools stop being available after the
+        next reload (~60s). Built-in servers (duckduckgo, crawl4ai,
+        google_workspace) can't be removed this way."""
+        from services.mcp_registry import remove_server, RESERVED_NAMES
+        if name in RESERVED_NAMES:
+            return {'error': f"'{name}' is a built-in server and can't be removed"}
+        if not remove_server(name):
+            return {'error': f"No server named '{name}' is registered"}
+        return {'success': True}
+
+    @tool
+    def list_mcp_servers() -> dict:
+        """List every MCP server - built-in and registered - with its live
+        status (verified/failed/never checked) and, if it's currently failing,
+        the exact error from the last connection attempt. Use this to check
+        whether a server you just added or edited actually works, and to
+        troubleshoot one that isn't."""
+        from services.mcp_registry import list_servers, RESERVED_NAMES
+        from core.mcp_tools import get_mcp_server_status
+        status = get_mcp_server_status()
+        try:
+            registered = list_servers()
+        except ValueError as e:
+            return {'error': f'mcp_servers.json is corrupt, fix or remove it: {e}'}
+
+        servers = [{'name': n, 'built_in': True, **status.get(n, {'status': 'unknown'})} for n in RESERVED_NAMES]
+        servers += [
+            {**r, 'built_in': False, **status.get(r['name'], {'status': 'not yet checked'})}
+            for r in registered
+        ]
+        return {'servers': servers}
+
     return [list_agent_configs, get_agent_config, update_agent_config, get_client, list_clients,
             add_client, update_client, remove_client, get_platform_stats,
             get_recent_client_messages, search_client_messages, get_client_insights,
             create_job, list_jobs, enable_job, delete_job, trigger_job_now, get_job_responses,
             list_routines, get_routine_details, set_routine_trigger, delete_routine,
-            check_google_workspace_status,
+            check_google_workspace_status, add_mcp_server, update_mcp_server,
+            remove_mcp_server, list_mcp_servers,
             broadcast_once]
 
 
@@ -755,7 +836,7 @@ class OwnerAdminHandler:
     self-chat message."""
 
     def __init__(self, control_plane, openwa_service, ollama_url: str = None, cron_scheduler=None,
-                 owner_mcp_tools: Optional[List] = None):
+                 owner_mcp_tools: Optional[List] = None, mcp_tools: Optional[List] = None):
         self.control_plane = control_plane
         self.openwa = openwa_service
         self.ollama_url = ollama_url or control_plane.config.ollama_url
@@ -764,11 +845,24 @@ class OwnerAdminHandler:
         # "not available yet") since main.py constructs the scheduler in the same
         # step as this handler and always passes it through.
         self.cron_scheduler = cron_scheduler
-        # Owner-only MCP tools (Gmail, Calendar - core/mcp_tools.py's
-        # load_owner_mcp_tools()). Empty list, never None, if unconfigured - see
-        # this module's own docstring for why this must never be the
-        # client-facing pool.
-        self.owner_mcp_tools = owner_mcp_tools or []
+        # Owner-only MCP tools (Gmail, Calendar, plus any registered server with
+        # scope='owner_only' - core/mcp_tools.py's load_owner_mcp_tools()). Empty
+        # list, never None, if unconfigured - see this module's own docstring for
+        # why this must never be the client-facing pool. `is not None`, not
+        # `or []` - see agents/llm_agent.py's identical fix for why an empty-but-
+        # real list must never get silently swapped for a new one: it would break
+        # the shared-reference-by-identity services/mcp_reload_poller.py depends
+        # on to hot-reload every consumer at once, without a restart.
+        self.owner_mcp_tools = owner_mcp_tools if owner_mcp_tools is not None else []
+        # The SAME general-purpose MCP tools client conversations already get
+        # (duckduckgo search/fetch_content, crawl4ai, plus any registered server
+        # with scope='client_facing' - main.py's self.mcp_tools), bound here too:
+        # this channel is owner-only regardless (see module docstring), so there's
+        # no new exposure in handing it tools a client's own conversation can
+        # already reach - unlike owner_mcp_tools above, which must stay exclusive
+        # to this handler. Together the two pools give this channel access to
+        # every registered MCP server irrespective of scope, by design.
+        self.mcp_tools = mcp_tools if mcp_tools is not None else []
         # Reuses the 'llm' agent's configured model rather than inventing a separate
         # admin-specific one - one less thing to independently configure.
         llm_cfg = control_plane.get_agent_config('llm')
@@ -823,7 +917,7 @@ class OwnerAdminHandler:
         model = ChatOllama(model=self.model, base_url=self.ollama_url, temperature=0.2)
         tools = _build_admin_tools(self.control_plane, self.model, self.ollama_url, self.cron_scheduler,
                                     owner_mcp_tool_count=len(self.owner_mcp_tools))
-        tools = tools + self.owner_mcp_tools
+        tools = tools + self.owner_mcp_tools + self.mcp_tools
         agent = create_react_agent(model, tools)
 
         human = HumanMessage(content=message_body)
