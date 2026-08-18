@@ -1,4 +1,6 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Adiyan is an out-of-the-box AI business assistant that lives inside WhatsApp — no technical setup, no dashboard to learn, self-hosted on your own machine.">
 <title>Adiyan — Self-Hosted AI Business Assistant Platform</title>
 <style>
 
@@ -188,7 +190,12 @@ h1,h2,h3{
   align-items:center;
 }
 @media (max-width:860px){
-  .grid-split{ grid-template-columns:1fr; }
+  /* !important is deliberate here, not a specificity shortcut: a couple of
+     slides set grid-template-columns inline (e.g. 1.3fr .7fr for a wider
+     prose column) for their desktop ratio, and an inline style otherwise
+     always outranks a class rule regardless of media query - so without this,
+     those two slides silently never collapsed to one column on a phone. */
+  .grid-split{ grid-template-columns:1fr !important; }
 }
 .grid-split.reverse{ direction:rtl; }
 .grid-split.reverse > *{ direction:ltr; }
@@ -511,7 +518,7 @@ h1,h2,h3{
   <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
   <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
 </button>
-<div class="counter"><b id="cnum">01</b> / 12</div>
+<div class="counter"><b id="cnum">01</b> / 13</div>
 
 <main class="deck">
 
@@ -550,7 +557,7 @@ h1,h2,h3{
       <p class="prose" style="margin-top:1.2rem;">Adiyan runs entirely on your own machine — self-hosted, not rented from someone else's cloud — and reaches your clientele through WhatsApp, the app they already have open. Not a rigid, one-size-fits-all bot: tailored to how your business actually talks, and built to extend further as your needs grow.</p>
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">Self-hosted, not SaaS</span>
-        <span class="chip">Reaches your clientele on WhatsApp</span>
+        <span class="chip">End-to-end encrypted, on WhatsApp</span>
         <span class="chip">One phrase to join</span>
         <span class="chip">One phrase to leave</span>
       </div>
@@ -582,8 +589,32 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 05 : PROOF -->
+<!-- 05 : ROUTINES -->
 <section class="slide" id="s5">
+  <div class="grid-split">
+    <div>
+      <p class="eyebrow">Routines — set up by talking</p>
+      <h2 class="h2">Tell it what you want. <em>It figures out the rest.</em></h2>
+      <p class="prose" style="margin-top:1.2rem;">No dashboard to learn, no form to fill in, nothing to configure by hand. You describe what you want, in your own plain words — a nightly check-in, a weekly update to your clients, a one-time reminder — the same way you'd ask a real assistant. Adiyan reads the schedule back to you immediately, so a misunderstanding is obvious on the spot, not something you discover a week later.</p>
+      <div class="tag-row" style="margin-top:1.6rem;">
+        <span class="chip">A nightly check-in</span>
+        <span class="chip">A weekly client update</span>
+        <span class="chip">A one-time reminder</span>
+        <span class="chip">Fires on a keyword</span>
+      </div>
+    </div>
+    <div class="phone">
+      <div class="thread">
+        <div class="bubble bubble--sys">You, to Adiyan</div>
+        <div class="bubble bubble--out">Every Monday at 9am, check in with my clients on how their week's going</div>
+        <div class="bubble bubble--in">Set — every Monday at 9:00 AM, sent to your registered clients. I'll let you know once it's gone out.<span class="tag">Adiyan · just now</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 06 : PROOF -->
+<section class="slide" id="s6">
   <p class="eyebrow">In the wild</p>
   <h2 class="h2">Not a script. <em>An actual reply.</em></h2>
   <div class="grid-split">
@@ -597,8 +628,8 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 06 : GETTING STARTED -->
-<section class="slide" id="s6">
+<!-- 07 : GETTING STARTED -->
+<section class="slide" id="s7">
   <p class="eyebrow">Getting started</p>
   <h2 class="h2">Here's exactly what you do — <em>under a minute, start to finish.</em></h2>
   <div class="steps" style="margin-top:1rem;">
@@ -621,8 +652,8 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 07 : CONTROL / PRIVACY -->
-<section class="slide" id="s7">
+<!-- 08 : CONTROL / PRIVACY -->
+<section class="slide" id="s8">
   <p class="eyebrow">You're in control</p>
   <h2 class="h2">Nobody's added without asking. <em>Nobody's stuck once they're in.</em></h2>
   <div class="control-list" style="margin-top:1rem;">
@@ -632,8 +663,8 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 08 : LOCAL / DATA NEVER LEAVES -->
-<section class="slide" id="s8">
+<!-- 09 : LOCAL / DATA NEVER LEAVES -->
+<section class="slide" id="s9">
   <p class="eyebrow">Self-hosted, by design</p>
   <h2 class="h2">Nothing leaves the building. <em>Not even to us.</em></h2>
   <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
@@ -644,12 +675,13 @@ h1,h2,h3{
       <div class="control-item"><span class="control-mark">i.</span><p><strong>The AI itself runs locally.</strong> No conversation is sent to an outside AI provider over the internet — the model that writes every reply lives on your own machine.</p></div>
       <div class="control-item"><span class="control-mark">ii.</span><p><strong>Conversation memory stays put.</strong> It's stored on that same machine so Adiyan can follow context — never mirrored to a third-party database.</p></div>
       <div class="control-item"><span class="control-mark">iii.</span><p><strong>No vendor privacy policy to take on faith.</strong> There's no outside party holding your data in the first place — one less thing on your list of things to worry about.</p></div>
+      <div class="control-item"><span class="control-mark">iv.</span><p><strong>End-to-end protected the whole way.</strong> WhatsApp itself encrypts every message end-to-end between your clientele's phone and yours — Adiyan sits on your own side of that connection, so the privacy you already trust WhatsApp for extends all the way through.</p></div>
     </div>
   </div>
 </section>
 
-<!-- 09 : WHO IT'S FOR -->
-<section class="slide" id="s9">
+<!-- 10 : WHO IT'S FOR -->
+<section class="slide" id="s10">
   <p class="eyebrow">Who reaches for it</p>
   <h2 class="h2">Different businesses, <em>the same 11pm feeling.</em></h2>
   <div class="vignettes" style="margin-top:1rem;">
@@ -659,8 +691,8 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 10 : MEMORY -->
-<section class="slide" id="s10">
+<!-- 11 : MEMORY -->
+<section class="slide" id="s11">
   <div class="grid-split reverse">
     <div>
       <p class="eyebrow">It remembers</p>
@@ -677,8 +709,8 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 11 : DOWNLOAD -->
-<section class="slide" id="s11">
+<!-- 12 : DOWNLOAD -->
+<section class="slide" id="s12">
   <p class="eyebrow">Install — macOS, Apple Silicon</p>
   <h2 class="h2">Get Adiyan running <em>on your Mac.</em></h2>
   <p class="prose" style="max-width:52ch;">One line, no app store, no account, nothing to configure by hand.</p>
@@ -698,8 +730,8 @@ h1,h2,h3{
   <p class="download-alt">Prefer not to run a script? <a href="https://github.com/BharanitharanR/adiyan/releases/latest" target="_blank" rel="noopener">Download the zip file directly</a> instead, unzip it, then drag the folder into Terminal and run its <code>install.sh</code>. Requires macOS.</p>
 </section>
 
-<!-- 12 : CTA -->
-<section class="slide" id="s12">
+<!-- 13 : CTA -->
+<section class="slide" id="s13">
   <p class="eyebrow">Your turn</p>
   <h2 class="h2">Meet Adiyan. <em>See what comes back.</em></h2>
   <p class="cta-phrase">"Register me to make my life better"</p>
