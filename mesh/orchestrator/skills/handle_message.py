@@ -1,0 +1,361 @@
+"""
+handle_message's real body. Three stages: image/document intent (if an
+image is attached, decide what it means - see mesh/lib/vision.py's
+classify_image; a document's intent is never ambiguous the same way, so it
+skips straight to Knowledge Bank - this is a routing decision, so it
+belongs here, not in WhatsApp MCP, which only knows WhatsApp send/receive
+mechanics), the WhatsApp rules engine (rules_engine.py - registration/
+unregistration and the owner bypass), and - only for a message that passes
+the gate - routing to the right agent (router.py), forwarding the raw text
+(letting that agent's own classify_skill/extract_parameters interpret it -
+no duplicated NLU here), humanizing the structured result, and replying via
+the whatsapp MCP server's send_message (or send_document) tool.
+
+The one real difference from mesh/whatsapp_connector/'s retired version:
+delivery goes through an MCP tool call, not a direct OpenWAService import -
+this component knows nothing about WhatsApp's own API, only that something
+called 'whatsapp' exposes send_message/send_document tools. That's the
+actual point of "wired to WhatsApp as an MCP."
+
+Delivery convention: any target agent's skill result that carries a
+content_b64 key is understood as "deliver this as a file," not text -
+mesh/memory/skills/share_document.py is the first skill to use this, but
+nothing here is specific to that one skill_id; any future skill from any
+agent that wants to hand back a file just needs to return
+{content_b64, filename, mimetype} the same way.
+"""
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+from a2a.types import AgentSkill
+
+from mesh.lib import permissions, vision
+from mesh.lib.a2a_client import call_agent, call_agent_with_text
+from mesh.lib.config import load_runtime_config
+from mesh.lib.mcp_client import call_tool
+from mesh.lib.paths import state_db_path
+from mesh.lib.skill_router import classify
+from mesh.orchestrator import db, router, rules_engine
+from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL
+from mesh.orchestrator.humanize import humanize
+from mesh.orchestrator.router import route_to_agent
+
+AGENT_CODE_DIR = Path(__file__).parent.parent
+logger = logging.getLogger('HandleMessage')
+
+# A single-skill pool fed to skill_router.classify() purely as a yes/no
+# check: does this upload's caption read as an actual instruction (analyze,
+# review, find X), or is it just a plain label/description ("this is
+# Bharani's aadhar")? Reuses the same classify machinery every other "which
+# of these does this text mean" decision in this codebase already uses,
+# rather than a bespoke classifier.
+_UPLOAD_INSTRUCTION_SKILLS = [
+    AgentSkill(
+        id='analyze_upload',
+        name='Analyze Upload',
+        description=(
+            'The caption is an actual instruction to analyze, review, critique, '
+            'summarize, or find something in the document being uploaded - not '
+            'just a plain label or description of what it is.'
+        ),
+        tags=['upload', 'instruction'],
+        examples=[
+            'Analyse this presentation and share the mistakes you find',
+            'Find the spelling mistakes in this',
+            'Review this contract for issues',
+            'Summarize this document',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+async def _ingest_into_knowledge_base(
+    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """(reply, source_filename). reply is None only for a genuinely
+    unexpected failure (see this module's own silent-on-failure convention,
+    same reasoning as run()'s own except-block) - an anticipated, clearly-
+    worded outcome (storage unavailable, Docling couldn't read the file)
+    still gets a real reply, since this is a coach-initiated action they
+    need feedback on. source_filename is None whenever ingestion didn't
+    actually succeed, and set to Memory Agent's own resolved key on success
+    - the caller needs this to run analysis directly against the exact
+    document just ingested, without a separate resolution step.
+
+    Calls Memory Agent's ingest_document skill directly via a structured
+    DataPart (mesh/lib/a2a_client.py's call_agent, not call_agent_with_text)
+    - the caller already knows exactly what it wants, same reasoning
+    call_agent() itself documents. Not resolved through router.py's
+    classify pool (get_agent_url(), not route_to_agent()) - see
+    mesh/memory/skills/ingest.py's own docstring for why ingest_document
+    isn't in that pool at all.
+
+    media is either the resolved `document` param (a real WhatsApp file
+    upload, already carrying a real filename) or the resolved `image` param
+    (a photo/screenshot vision.py classified as knowledge content, which
+    WhatsApp never gives a filename for) - one synthesized here so Docling
+    still has an extension to format-sniff against.
+
+    username (passed to Memory Agent as who's storing this - see
+    memory_index.py's ingest_pdf docstring on why it folds into storage,
+    not just an access-control label) is contact_name when WhatsApp gave
+    one, falling back to the raw chat_id - the same 'Unknown' fallback
+    openwa_receiver.py already applies means contact_name is effectively
+    always populated in practice."""
+    memory_url = router.get_agent_url('memory')
+    if memory_url is None:
+        return "Knowledge Bank isn't reachable right now - try again in a moment.", None
+
+    mimetype = media.get('mimetype') or 'application/octet-stream'
+    filename = media.get('filename')
+    if not filename:
+        extension = 'pdf' if mimetype == 'application/pdf' else mimetype.split('/')[-1]
+        filename = f'whatsapp_upload.{extension}'
+
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        result = await call_agent(memory_url, 'ingest_document', {
+            'content_b64': media['data'],
+            'filename': filename,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'mimetype': mimetype,
+            'username': contact_name or chat_id,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'Ingestion failed for {chat_id}: {e}')
+        return None, None
+
+    if not result.get('available', True):
+        return "Knowledge Bank isn't available right now (its storage backend is unreachable) - try again later.", None
+    if not result.get('ingested'):
+        return f"Couldn't read that as a document: {result.get('error') or 'unknown reason'}", None
+    # int(...): A2A's Part.data travels through a protobuf Struct, which has
+    # no integer type, only double - confirmed live that the real int
+    # ingest.py returns for 'chunks' silently became 1.0 by the time it got
+    # here, printing "1.0 chunk(s) indexed" in an actual WhatsApp reply.
+    reply = f"Added to the knowledge base ({int(result['chunks'])} chunk(s) indexed)."
+    return reply, result.get('source_filename')
+
+
+async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Optional[str]:
+    """None if caption is just a label, not an instruction - the caller
+    then does a plain ingest-only reply, same as before this existed.
+    Otherwise returns caption itself, ready to hand straight to Analysis
+    Agent as its instruction param. Degrades to None (ingest-only) on any
+    classification failure - a caption misclassified as "just a label"
+    costs nothing the user would notice; failing this whole branch would
+    cost the ingest confirmation they're actually waiting for."""
+    if not caption or not caption.strip():
+        return None
+    try:
+        choice = await classify(caption, _UPLOAD_INSTRUCTION_SKILLS, cfg)
+    except Exception as e:
+        logger.error(f'Caption-intent classification failed: {e}')
+        return None
+    return caption if choice.skill_id == 'analyze_upload' else None
+
+
+async def _run_analysis(instruction: str, source_filename: str, chat_id: str, tier: str) -> Optional[Dict[str, Any]]:
+    """None on any failure (Analysis Agent unreachable, the call itself
+    erroring) - the caller falls back to the plain ingest confirmation
+    rather than surfacing a raw error, same silent-on-unexpected-failure
+    convention as the rest of this module. Calls Analysis Agent's
+    analyze_document directly with source_filename already known - no
+    resolution step needed here, unlike the free-text follow-up case
+    (a later message naming the document by topic), which goes through
+    router.py's normal classify pool and lets analyze_document's own
+    resolve_document call handle that fuzzy match instead."""
+    analysis_url = router.get_agent_url('analysis')
+    if analysis_url is None:
+        logger.error('Analysis Agent not present in the current agent pool')
+        return None
+
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        return await call_agent(analysis_url, 'analyze_document', {
+            'instruction': instruction,
+            'source_filename': source_filename,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'Analysis failed for {chat_id}: {e}')
+        return None
+
+
+async def _resolve_image_intent(text: str, image: Optional[Dict[str, Any]]) -> tuple:
+    """(text, kb_pending) - text unchanged unless the image turned out to be
+    a contact card, in which case it becomes a caption fed into the exact
+    same gate below a typed admin command goes through (no separate
+    registration logic here). kb_pending is True for an image vision.py
+    classified as knowledge content - handled as its own branch in run()
+    rather than silently falling through to normal routing. A real document
+    upload (the `document` param, not `image`) never goes through this
+    function at all - see run()'s own comment on why."""
+    if image is None:
+        return text, False
+
+    purpose = await vision.classify_image(image['data'], image['mimetype'])
+    if purpose == 'contact_card':
+        caption = await vision.describe_contact_image(image['data'], image['mimetype'])
+        return (caption or text), False
+    if purpose == 'knowledge_content':
+        return text, True
+    return text, False
+
+
+async def run(
+    text: str,
+    chat_id: str,
+    contact_name: Optional[str] = None,
+    from_number: Optional[str] = None,
+    image: Optional[Dict[str, Any]] = None,
+    document: Optional[Dict[str, Any]] = None,
+    is_self_chat: bool = False,
+) -> Dict[str, Any]:
+    cfg = load_runtime_config(AGENT_CODE_DIR)
+
+    text, kb_pending = await _resolve_image_intent(text, image)
+    if document is not None:
+        # A real document upload's purpose is never ambiguous the way an
+        # image's is (vision.classify_image has to tell a contact-card
+        # photo apart from actual knowledge content) - it always means "add
+        # this to the knowledge base," so it skips classification entirely
+        # and goes straight into the same kb_pending branch below.
+        kb_pending = True
+
+    conn = db.connect(state_db_path(AGENT_ID))
+    gate_reply, tier = await rules_engine.check(
+        conn, chat_id, contact_name, text, from_number, cfg['add_named_contact'],
+        is_self_chat=is_self_chat,
+    )
+    if gate_reply is None and tier is None:
+        # Unregistered stranger, no register/unregister command - stay
+        # completely silent (see rules_engine.check()'s docstring). Never
+        # reaches send_message at all, unlike every other branch below.
+        return {'chat_id': chat_id, 'reply': None, 'delivered': False}
+
+    # Strip any @Adiyan mention before routing - it's how an owner message
+    # earns eligibility (see rules_engine.check()), not part of the actual
+    # request, and left in it's just noise the skill classifier has to
+    # ignore. No-op for text that never had a mention (every registered
+    # client's own message, most owner messages).
+    text = rules_engine.strip_adiyan_mention(text)
+
+    pending_document = None
+    if gate_reply is not None:
+        # Registration, unregistration, or an unregistered-sender rejection
+        # already fully handled it - never reaches routing.
+        reply = gate_reply
+    elif kb_pending:
+        # Only reachable once the gate above has already let this sender
+        # through (owner or a registered client) - a stranger's image or
+        # document still gets the normal not-registered rejection, same as
+        # any other message from them. tier is never None here, same
+        # reasoning the routing branch below already documents for itself.
+        ingest_reply, source_filename = await _ingest_into_knowledge_base(
+            document or image, chat_id, tier, contact_name,
+        )
+        if ingest_reply is None or source_filename is None:
+            # Either ingestion itself failed outright (source_filename is
+            # also None in that case), or it succeeded without a resolvable
+            # source_filename (shouldn't happen given ingest_document's own
+            # contract, but analysis has nothing to run against either way)
+            # - the plain ingest outcome (possibly None, going silent) is
+            # already the right reply, nothing to add.
+            reply = ingest_reply
+        else:
+            # The caption ("analyse this presentation and share the
+            # mistakes you find") might be an actual instruction, not just
+            # a label - see _resolve_upload_instruction()'s own docstring.
+            # Only checked once ingestion has already succeeded: nothing to
+            # analyze if the document was never actually stored.
+            instruction = await _resolve_upload_instruction(text, cfg['caption_intent'])
+            if instruction is None:
+                reply = ingest_reply
+            else:
+                analysis = await _run_analysis(instruction, source_filename, chat_id, tier)
+                if analysis is None:
+                    # Analysis failed - still confirm the ingest, which did
+                    # genuinely succeed, rather than losing that feedback too.
+                    reply = ingest_reply
+                elif analysis.get('content_b64'):
+                    pending_document = analysis
+                    caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
+                    reply = await humanize(text, caption_source, cfg['humanize'])
+                else:
+                    reply = analysis.get('result') or ingest_reply
+    else:
+        try:
+            # tier is never None here - the only way to reach this branch is
+            # gate_reply being None, and rules_engine.check() only returns a
+            # None tier alongside a set reply (the not-registered rejection).
+            token = permissions.mint_token(chat_id, tier)
+            target_url = await route_to_agent(text, cfg['route_to_agent'])
+            if target_url is None:
+                reply = "Sorry, I'm not sure how to help with that yet."
+            else:
+                result = await call_agent_with_text(target_url, text, token=token)
+                if result.get('content_b64'):
+                    # See this module's own docstring on the content_b64
+                    # delivery convention. Humanize a caption from
+                    # everything except the blob itself - passing the raw
+                    # base64 into the humanize prompt would bloat it for no
+                    # reason, and result.get('content_b64') is already the
+                    # deliver-a-file signal, not something the caption needs
+                    # to restate.
+                    pending_document = result
+                    caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
+                    reply = await humanize(text, caption_source, cfg['humanize'])
+                else:
+                    reply = await humanize(text, result, cfg['humanize'])
+        except Exception as e:
+            # Confirmed live: this used to reply with the raw exception text
+            # ("Did you mean one of: recall_contact_memory,
+            # search_knowledge_base? Please clarify which one." - an
+            # ambiguous-classify RuntimeError straight out of
+            # mesh/lib/a2a_client.py's _extract_result) - internal,
+            # technical, and not something a WhatsApp user should ever see.
+            # Explicit instruction after that: a failure here means silence,
+            # the same treatment already given to an unregistered stranger
+            # above, not a best-effort apology message users have to parse.
+            logger.error(f'Failed to handle message for {chat_id}: {e}')
+            reply = None
+
+    if reply is None:
+        # Either the branch above failed outright, or nothing in this
+        # module ever set a reply (should be unreachable given every branch
+        # above sets one on success) - either way, no reply means no send.
+        return {'chat_id': chat_id, 'reply': None, 'delivered': False}
+
+    try:
+        # A service token, not the sender's own tier - delivering a reply
+        # (including a rejection to a stranger who has no tier at all) is
+        # Orchestrator's own action, not something authorized by whoever
+        # triggered this run.
+        delivery_token = permissions.mint_token('orchestrator', 'service')
+        if pending_document is not None:
+            await call_tool(WHATSAPP_MCP_URL, 'send_document', {
+                'chat_id': chat_id,
+                'filename': pending_document['filename'],
+                'content_b64': pending_document['content_b64'],
+                'mimetype': pending_document.get('mimetype') or 'application/octet-stream',
+                'caption': reply,
+            }, token=delivery_token)
+        else:
+            await call_tool(
+                WHATSAPP_MCP_URL, 'send_message', {'chat_id': chat_id, 'text': reply}, token=delivery_token,
+            )
+        delivered = True
+    except Exception as e:
+        # Confirmed live: an uncaught delivery failure here crashed the
+        # whole handle_message task with an opaque TaskGroup error - even
+        # though routing/forwarding/humanizing had already genuinely
+        # succeeded. Delivery failing is a separate, distinct outcome, same
+        # fix shape already applied once in the retired whatsapp_connector.
+        delivered = False
+        reply = f'{reply} (delivery failed: {e})'
+
+    return {'chat_id': chat_id, 'reply': reply, 'delivered': delivered}
