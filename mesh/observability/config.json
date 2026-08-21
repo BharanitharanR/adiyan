@@ -1,0 +1,5 @@
+{
+  "collector_endpoint": "http://localhost:6006/v1/traces",
+  "protocol": "http/protobuf",
+  "batch": true
+}

@@ -1,0 +1,42 @@
+{
+  "default_client_tier": "standard",
+  "tiers": {
+    "owner": {
+      "allow": ["*"]
+    },
+    "service": {
+      "description": "Internal machine-to-machine callers with no WhatsApp identity behind them - cron_trigger firing a scheduled job, one agent calling another as part of composing a reply. Deliberately not '*': scoped to exactly what today's internal flows need.",
+      "allow": [
+        "scheduler.run_routine",
+        "journal.craft_reflection_prompt",
+        "memory.recall_contact_memory",
+        "memory.search_knowledge_base",
+        "memory.share_knowledge_document",
+        "memory.resolve_document",
+        "memory.get_document_text",
+        "mcp.cron_trigger.register_trigger",
+        "mcp.cron_trigger.remove_trigger",
+        "mcp.whatsapp.send_message",
+        "mcp.whatsapp.send_document",
+        "mcp.whatsapp.get_own_phone",
+        "mcp.agent_registry.register_agent",
+        "mcp.agent_registry.list_agents"
+      ]
+    },
+    "standard": {
+      "description": "Default tier for a newly registered client - everything a client could already do before permission checks existed.",
+      "allow": [
+        "scheduler.schedule_job",
+        "scheduler.run_routine",
+        "scheduler.delete_job",
+        "scheduler.list_jobs",
+        "journal.craft_reflection_prompt",
+        "memory.recall_contact_memory",
+        "memory.search_knowledge_base",
+        "memory.share_knowledge_document",
+        "mcp.whatsapp.send_message",
+        "mcp.whatsapp.send_document"
+      ]
+    }
+  }
+}

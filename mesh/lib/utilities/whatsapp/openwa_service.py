@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from mesh.lib.utilities import watermark
+
 logger = logging.getLogger('OpenWAService')
 
 
@@ -39,11 +41,11 @@ class OpenWAService:
         request_timeout: float = 10.0,
     ):
         self.base_url = base_url.rstrip('/')
-        # Priority: OS Keychain vault (config/secrets_vault.py) > env var > the
+        # Priority: OS Keychain vault (mesh/lib/secrets_vault.py) > env var > the
         # api_key passed in (which itself already reflects the vault via
         # control_plane's own resolution - this is a defensive second check for
         # any caller that constructs OpenWAService directly, e.g. Tests/).
-        from config.secrets_vault import get_secret
+        from mesh.lib.secrets_vault import get_secret
         self.api_key = get_secret('OPENWA_API_KEY') or os.environ.get('OPENWA_API_KEY', api_key)
         self.session_name = session_name
         self.request_timeout = request_timeout
@@ -136,7 +138,15 @@ class OpenWAService:
         return data.get('messages', data if isinstance(data, list) else [])
 
     async def send_message(self, chat_id: str, text: str) -> Dict[str, Any]:
-        """Send a text message to a chat. Returns OpenWA's response ({'messageId', 'timestamp'})."""
+        """Send a text message to a chat. Returns OpenWA's response ({'messageId', 'timestamp'}).
+
+        Strict rule: every outgoing message carries the watermark
+        (services/watermark.py) - applied here, not in any individual
+        caller, because this is the one method every send path (mesh/'s
+        WhatsApp MCP send_message tool, Scheduler's run_routine calling
+        this directly, the legacy pipeline) ultimately goes through. No
+        caller can opt out."""
+        text = watermark.apply(text)
         session_id = await self._session_id_or_refresh()
         async with self._new_client() as client:
             response = await client.post(
