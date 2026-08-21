@@ -11,8 +11,13 @@ Two separate collections, same embedding model and Qdrant instance:
 - adiyan_knowledge_base: documents the coach uploads (PDFs, via Docling) -
   global, not scoped to any one contact.
 """
+import base64
 import io
+import json
 import logging
+import re
+import sqlite3
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from llama_index.core import Document, VectorStoreIndex
@@ -21,8 +26,115 @@ from llama_index.core.vector_stores import FilterOperator, MetadataFilter, Metad
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+from mesh.lib.paths import kb_documents_dir, state_db_path
+from mesh.memory.constants import AGENT_ID
 
 logger = logging.getLogger('MemoryIndex')
+
+DOCUMENTS_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kb_documents (
+    source_filename TEXT PRIMARY KEY,
+    stored_path TEXT NOT NULL,
+    mimetype TEXT,
+    ingested_at TEXT NOT NULL,
+    chunks INTEGER NOT NULL
+)
+"""
+
+
+def _safe_filename(filename: str) -> str:
+    """Strips any directory component and anything that isn't safe as a
+    bare filename - filename arrives from a WhatsApp upload's own name/
+    caption field, not something to trust blindly as a path component."""
+    name = Path(filename).name
+    return re.sub(r'[^A-Za-z0-9._-]', '_', name) or 'document'
+
+
+def _documents_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(state_db_path(AGENT_ID))
+    conn.execute(DOCUMENTS_TABLE_SCHEMA)
+    return conn
+
+
+def _extract_pptx_markdown(content: bytes, filename: str) -> str:
+    """Docling's own PPTX backend only extracts native text shapes and
+    represents embedded pictures as bare '<!-- image -->' placeholders - it
+    does not run OCR on them the way its image/PDF pipeline does. Confirmed
+    live: a 13-slide deck where every slide was a single full-slide picture
+    (a common export shape from slide-design tools) round-tripped through
+    the normal ingest path as twelve literal "<!-- image -->" lines and
+    nothing else - a spelling-mistake analysis had no real text to work
+    with at all, and reasonably reported finding none.
+
+    Works around this by handling PPTX specially: for each slide, prefer
+    its own real text shapes/tables if any exist; when a slide has none
+    (the all-picture case), OCR its picture shapes individually through
+    Docling's image pipeline instead - the same path that already works
+    correctly for a standalone photo/screenshot (this same ingest_pdf's
+    non-PPTX branch, proven live against an Aadhaar card)."""
+    from docling.document_converter import DocumentConverter
+    from docling_core.types.io import DocumentStream
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    def _collect_text(shapes) -> List[str]:
+        texts = []
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                texts.extend(_collect_text(shape.shapes))
+            elif shape.has_text_frame and shape.text_frame.text.strip():
+                texts.append(shape.text_frame.text)
+            elif shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            texts.append(cell.text)
+        return texts
+
+    def _collect_pictures(shapes) -> List:
+        pictures = []
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                pictures.extend(_collect_pictures(shape.shapes))
+            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                pictures.append(shape.image)
+        return pictures
+
+    prs = Presentation(io.BytesIO(content))
+    converter = DocumentConverter()
+    slide_blocks = []
+
+    for i, slide in enumerate(prs.slides):
+        texts = _collect_text(slide.shapes)
+        if texts:
+            slide_blocks.append(f'## Slide {i + 1}\n\n' + '\n\n'.join(texts))
+            continue
+
+        ocr_texts = []
+        for image in _collect_pictures(slide.shapes):
+            try:
+                result = converter.convert(
+                    DocumentStream(name=f'slide_{i + 1}.{image.ext}', stream=io.BytesIO(image.blob))
+                )
+                ocr_text = result.document.export_to_markdown().strip()
+                if ocr_text and ocr_text != '<!-- image -->':
+                    ocr_texts.append(ocr_text)
+            except Exception as e:
+                logger.warning(f"Could not OCR slide {i + 1} of {filename!r}: {e}")
+        if ocr_texts:
+            slide_blocks.append(f'## Slide {i + 1}\n\n' + '\n\n'.join(ocr_texts))
+        else:
+            # Not an exception - Docling's OCR ran and simply found nothing
+            # readable in this slide's picture(s) (confirmed live: happens
+            # even for a slide with a perfectly legible title, an inherent
+            # OCR reliability limit, not a bug in this loop). Logged, not
+            # silently dropped - a coach reviewing why their deck's
+            # analysis missed a slide should be able to find out why.
+            logger.warning(f"No extractable text from slide {i + 1} of {filename!r} - dropped from the ingested text")
+
+    return '\n\n'.join(slide_blocks)
 
 # New name, not the old 'coaching_history' the placeholder-vector code used to write to
 # (that collection held only fake constant vectors - nothing worth migrating from it).
@@ -44,6 +156,7 @@ class MemoryIndex:
     def __init__(self, qdrant_url: str, ollama_url: str, embed_model_name: str = 'nomic-embed-text'):
         self.embed_model = OllamaEmbedding(model_name=embed_model_name, base_url=ollama_url)
         client = QdrantClient(url=qdrant_url)
+        self._qdrant_client = client
 
         vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION_NAME)
         self.index = VectorStoreIndex.from_vector_store(vector_store, embed_model=self.embed_model)
@@ -74,32 +187,89 @@ class MemoryIndex:
         nodes = retriever.retrieve(query)
         return [n.node.get_content() for n in nodes]
 
-    def ingest_pdf(self, content: bytes, filename: str, timestamp: str) -> int:
-        """Parse a PDF with Docling, chunk it, and embed each chunk into the knowledge
-        base. Returns the number of chunks stored. Raises on parse failure - the caller
-        (kb_ingestion_poller) is expected to report that back to the coach over WhatsApp,
-        not swallow it, since this is a coach-initiated action they need feedback on."""
-        from docling.document_converter import DocumentConverter
-        from docling_core.types.io import DocumentStream
+    def ingest_pdf(
+        self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
+    ) -> tuple:
+        """Returns (chunks_count, source_filename) - source_filename is the composite
+        <username>/<filename> key this document is now stored under everywhere
+        (Qdrant chunk metadata, the raw-file index), needed by a caller that wants to
+        act on this exact document right after ingesting it (see
+        mesh/analysis/skills/analyze.py's source_filename param, used by the
+        upload+instruct combined flow in mesh/orchestrator/skills/handle_message.py to
+        skip a separate resolve_document lookup). Raises on parse failure - the caller
+        (mesh/memory/skills/ingest.py) is expected to report that back to the coach
+        over WhatsApp, not swallow it, since this is a coach-initiated action they need
+        feedback on.
 
-        converter = DocumentConverter()
-        result = converter.convert(DocumentStream(name=filename, stream=io.BytesIO(content)))
-        markdown = result.document.export_to_markdown()
+        Also saves the original bytes to disk under kb_documents_dir/<username>/ and
+        records them in a small local index (kb_documents table) - the knowledge base's
+        vectors alone can only answer "what does it say" (retrieve_knowledge_base),
+        never "send me that document back" (get_document/find_source_document), so a
+        later share needs the original file kept somewhere too.
+
+        username folds into source_filename's own identity (<username>/<filename>), not
+        just the physical path - so two different uploaders using the same original
+        filename never collide, in Qdrant chunk metadata and the raw-file index alike,
+        not only on disk."""
+        safe_user = _safe_filename(username)
+        safe_name = _safe_filename(filename)
+        source_key = f'{safe_user}/{safe_name}'
+
+        if safe_name.lower().endswith(('.pptx', '.ppt')):
+            # See _extract_pptx_markdown()'s own docstring - Docling's PPTX
+            # backend doesn't OCR embedded pictures, which every slide in a
+            # slide-design-tool export (Canva, Figma, NotebookLM, etc.)
+            # typically is.
+            markdown = _extract_pptx_markdown(content, safe_name)
+        else:
+            from docling.document_converter import DocumentConverter
+            from docling_core.types.io import DocumentStream
+
+            converter = DocumentConverter()
+            result = converter.convert(DocumentStream(name=safe_name, stream=io.BytesIO(content)))
+            markdown = result.document.export_to_markdown()
 
         if not markdown.strip():
             raise ValueError(f"Docling extracted no text from '{filename}' (scanned image with no OCR text?)")
+
+        # Delete any chunks already on file for this exact source_key before
+        # inserting fresh ones - .insert() below only adds, it doesn't
+        # replace, so re-ingesting the same document (a coach re-uploading
+        # it, or this same fix re-processing a document ingested before a
+        # quality improvement like _extract_pptx_markdown existed) would
+        # otherwise leave stale old chunks sitting alongside the new ones
+        # forever, with colliding chunk_index values confusing
+        # get_document_text()'s ordering.
+        self._qdrant_client.delete(
+            collection_name=KB_COLLECTION_NAME,
+            points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
+        )
 
         chunks = self._splitter.split_text(markdown)
         for i, chunk in enumerate(chunks):
             self.kb_index.insert(Document(
                 text=chunk,
                 metadata={
-                    'source_filename': filename,
+                    'source_filename': source_key,
                     'chunk_index': i,
                     'ingested_at': timestamp,
                 },
             ))
-        return len(chunks)
+
+        user_dir = kb_documents_dir(AGENT_ID) / safe_user
+        user_dir.mkdir(parents=True, exist_ok=True)
+        stored_path = user_dir / safe_name
+        stored_path.write_bytes(content)
+        conn = _documents_db()
+        conn.execute(
+            'INSERT OR REPLACE INTO kb_documents '
+            '(source_filename, stored_path, mimetype, ingested_at, chunks) VALUES (?, ?, ?, ?, ?)',
+            (source_key, str(stored_path), mimetype, timestamp, len(chunks)),
+        )
+        conn.commit()
+        conn.close()
+
+        return len(chunks), source_key
 
     def retrieve_knowledge_base(self, query: str, top_k: int = KB_DEFAULT_TOP_K) -> List[str]:
         """Return up to top_k relevant knowledge-base chunks, most relevant first.
@@ -107,6 +277,76 @@ class MemoryIndex:
         retriever = self.kb_index.as_retriever(similarity_top_k=top_k)
         nodes = retriever.retrieve(query)
         return [n.node.get_content() for n in nodes]
+
+    def find_source_document(self, query: str) -> Optional[str]:
+        """The source_filename of the single best-matching knowledge-base
+        chunk for query, or None if the knowledge base has nothing at all.
+        Reuses the same chunk-level semantic search retrieve_knowledge_base()
+        does - "which document answers this" is a different question from
+        "what does it say," but the same search answers both, just keeping
+        the winning chunk's metadata this time instead of discarding it."""
+        retriever = self.kb_index.as_retriever(similarity_top_k=1)
+        nodes = retriever.retrieve(query)
+        if not nodes:
+            return None
+        return nodes[0].node.metadata.get('source_filename')
+
+    def get_document_text(self, source_filename: str) -> Optional[str]:
+        """Full text of a document ingested via ingest_pdf(), reconstructed by
+        concatenating every stored chunk for source_filename in chunk_index order -
+        not a similarity search (kb_index.as_retriever() only supports "most similar
+        to a query," never "every chunk belonging to this exact document"), so this
+        goes straight through the underlying Qdrant client instead. None if no chunks
+        are on file for source_filename at all.
+
+        LlamaIndex stores each chunk's own text inside its payload's _node_content
+        field (a JSON-serialized TextNode), not as a plain top-level field - confirmed
+        by inspecting a real stored point directly, not assumed."""
+        points, _ = self._qdrant_client.scroll(
+            collection_name=KB_COLLECTION_NAME,
+            scroll_filter=Filter(
+                must=[FieldCondition(key='source_filename', match=MatchValue(value=source_filename))]
+            ),
+            limit=10000,
+            with_payload=True,
+        )
+        if not points:
+            return None
+        ordered = sorted(points, key=lambda p: p.payload.get('chunk_index', 0))
+        texts = []
+        for point in ordered:
+            node_content = point.payload.get('_node_content')
+            if node_content:
+                texts.append(json.loads(node_content).get('text', ''))
+        return '\n\n'.join(texts)
+
+    def get_document(self, source_filename: str) -> Optional[Dict[str, str]]:
+        """Raw bytes (base64) plus mimetype for a document previously ingested via
+        ingest_pdf(), keyed by the same source_filename its chunks carry in Qdrant -
+        or None if no such document is on file (never actually ingested, or ingested
+        before this raw-storage index existed, or its stored file went missing).
+
+        The returned 'filename' is just the original basename, not the internal
+        <username>/<filename> key - that composite form is this index's own identity
+        for avoiding cross-user collisions, not something that should show up as a
+        WhatsApp attachment's displayed name."""
+        conn = _documents_db()
+        row = conn.execute(
+            'SELECT stored_path, mimetype FROM kb_documents WHERE source_filename = ?',
+            (source_filename,),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        stored_path, mimetype = row
+        path = Path(stored_path)
+        if not path.exists():
+            return None
+        return {
+            'filename': source_filename.rsplit('/', 1)[-1],
+            'mimetype': mimetype or 'application/octet-stream',
+            'content_b64': base64.b64encode(path.read_bytes()).decode('ascii'),
+        }
 
 
 def get_memory_index(qdrant_url: str, ollama_url: str) -> Optional[MemoryIndex]:
