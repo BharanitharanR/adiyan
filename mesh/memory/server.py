@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     agent_card = adiyan_card(
         name='Memory Agent',
-        description="Looks up what's known about one specific person from their past conversations.",
+        description="Looks up what's known about one person or business from their past conversations.",
         skills=SKILLS,
         host=HOST,
         port=PORT,
