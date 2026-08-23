@@ -17,7 +17,12 @@ SKILLS = [
             "conversations - actual back-and-forth chat history (moods, goals, updates "
             "someone told the coach directly), never a specific fact, ID number, or "
             "document's contents - that's search_knowledge_base's job even when the "
-            "message says the word 'memory'."
+            "message says the word 'memory'. Only for a raw read-back of that history - "
+            "'what do we know', 'what has X told us'. Not for a question that uses that "
+            "history as input to reason, advise, or suggest something ('based on what "
+            "you know about me, what should I focus on' / 'suggest a weekend plan for "
+            "me') - that's a general-reasoning request, analyse_this's job, even though "
+            "it also happens to reference personal history."
         ),
         tags=['memory', 'recall'],
         examples=[
