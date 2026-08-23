@@ -1,16 +1,13 @@
-"""Real semantic memory over past coaching interactions, plus the coach's uploaded
-knowledge base.
+"""The coach's/business owner's uploaded knowledge base - documents (PDFs,
+photos, presentations, via Docling) ingested and made searchable, global,
+not scoped to any one contact. Local Ollama embeddings (nomic-embed-text)
+backed by the Qdrant instance Adiyan already runs against.
 
-Replaces the old placeholder-vector write StorageAgent used to do (a constant
-[0.1]*384 vector, into a collection nothing ever read back from) with a real
-LlamaIndex VectorStoreIndex: local Ollama embeddings (nomic-embed-text) backed
-by the Qdrant instance Adiyan already runs against.
-
-Two separate collections, same embedding model and Qdrant instance:
-- adiyan_coaching_memory: per-contact conversation history (existing).
-- adiyan_knowledge_base: documents the coach uploads (PDFs, via Docling) -
-  global, not scoped to any one contact.
-"""
+Per-contact conversation memory used to live in this same file, backed by a
+plain LlamaIndex VectorStoreIndex - it moved to mesh/memory/mem0_backend.py,
+which wraps mem0ai instead: a real extraction+consolidation pipeline
+(atomic facts, ADD/merge against existing memories), not a second hand-rolled
+memory engine duplicating what this file already does for documents."""
 import base64
 import io
 import json
@@ -22,7 +19,6 @@ from typing import Dict, List, Optional
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -138,54 +134,45 @@ def _extract_pptx_markdown(content: bytes, filename: str) -> str:
 
 # New name, not the old 'coaching_history' the placeholder-vector code used to write to
 # (that collection held only fake constant vectors - nothing worth migrating from it).
-COLLECTION_NAME = 'adiyan_coaching_memory'
 KB_COLLECTION_NAME = 'adiyan_knowledge_base'
-DEFAULT_TOP_K = 3
 KB_DEFAULT_TOP_K = 4
 KB_CHUNK_SIZE = 800
 KB_CHUNK_OVERLAP = 100
+
+# find_source_document()'s cutoff below which a top-1 "match" is treated as
+# no match at all, rather than confidently returning the least-bad option in
+# a knowledge base that has nothing genuinely relevant. First-pass value, not
+# empirically tuned across many real queries yet - nomic-embed-text cosine
+# similarity for a genuinely relevant chunk has run well above this in
+# testing so far, and the specific failure this exists for (a Vizag-trip
+# query "matching" an Atomic Habits PDF) scored well below it. Revisit if
+# this starts rejecting real matches or letting weak ones through.
+SOURCE_MATCH_MIN_SCORE = 0.55
 
 _instances: Dict[tuple, 'MemoryIndex'] = {}
 
 
 class MemoryIndex:
-    """Two LlamaIndex VectorStoreIndexes over the same Qdrant instance and embedding
-    model: conversation memory (StorageAgent writes, LLMAgent reads) and the
-    knowledge base (kb_ingestion_poller writes, LLMAgent reads)."""
+    """The knowledge-base side only - a LlamaIndex VectorStoreIndex over Qdrant
+    for coach/owner-uploaded documents. Conversation memory lives in
+    mesh/memory/mem0_backend.py now, not here - see this module's own
+    docstring."""
 
     def __init__(self, qdrant_url: str, ollama_url: str, embed_model_name: str = 'nomic-embed-text'):
         self.embed_model = OllamaEmbedding(model_name=embed_model_name, base_url=ollama_url)
         client = QdrantClient(url=qdrant_url)
         self._qdrant_client = client
 
-        vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION_NAME)
-        self.index = VectorStoreIndex.from_vector_store(vector_store, embed_model=self.embed_model)
-
         kb_vector_store = QdrantVectorStore(client=client, collection_name=KB_COLLECTION_NAME)
         self.kb_index = VectorStoreIndex.from_vector_store(kb_vector_store, embed_model=self.embed_model)
         self._splitter = SentenceSplitter(chunk_size=KB_CHUNK_SIZE, chunk_overlap=KB_CHUNK_OVERLAP)
 
-    def insert(self, text: str, contact_name: str, persona: Optional[str], timestamp: str, message_id: str):
-        """Embed and store one interaction for later semantic recall."""
-        doc = Document(
-            text=text,
-            metadata={
-                'contact_name': contact_name,
-                'persona': persona or '',
-                'timestamp': timestamp,
-                'message_id': message_id,
-            },
-        )
-        self.index.insert(doc)
-
-    def retrieve(self, query: str, contact_name: str, top_k: int = DEFAULT_TOP_K) -> List[str]:
-        """Return up to top_k past interaction texts for this contact, most relevant first."""
-        filters = MetadataFilters(filters=[
-            MetadataFilter(key='contact_name', value=contact_name, operator=FilterOperator.EQ)
-        ])
-        retriever = self.index.as_retriever(similarity_top_k=top_k, filters=filters)
-        nodes = retriever.retrieve(query)
-        return [n.node.get_content() for n in nodes]
+    # Conversation memory (insert/retrieve) used to live here, backed by a
+    # plain LlamaIndex VectorStoreIndex with zero callers of insert() ever
+    # found in this repo - see mesh/memory/mem0_backend.py, which replaces
+    # it with a real extraction+consolidation pipeline (mem0ai) instead of
+    # this file continuing to grow a second, hand-rolled memory engine
+    # alongside the knowledge-base one below.
 
     def ingest_pdf(
         self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
@@ -278,9 +265,27 @@ class MemoryIndex:
         nodes = retriever.retrieve(query)
         return [n.node.get_content() for n in nodes]
 
+    def list_documents(self) -> List[str]:
+        """Every source_filename currently on file in the raw-document index
+        (kb_documents table), most recently ingested first - lets a caller
+        see what's available without guessing or relying on a query
+        happening to match, unlike find_source_document()'s similarity
+        search below."""
+        conn = _documents_db()
+        rows = conn.execute('SELECT source_filename FROM kb_documents ORDER BY ingested_at DESC').fetchall()
+        conn.close()
+        return [row[0] for row in rows]
+
     def find_source_document(self, query: str) -> Optional[str]:
         """The source_filename of the single best-matching knowledge-base
-        chunk for query, or None if the knowledge base has nothing at all.
+        chunk for query, or None if the knowledge base has nothing at all,
+        OR if the best match's own similarity score falls below
+        SOURCE_MATCH_MIN_SCORE - a top-1 retriever always returns *something*
+        as long as the knowledge base isn't empty, even when nothing in it is
+        actually relevant (confirmed live: a Vizag-trip question against a
+        knowledge base containing only an unrelated Atomic Habits PDF still
+        got "matched" to it, and Analysis Agent's ReAct loop went on to
+        answer from that instead of recognizing nothing relevant existed).
         Reuses the same chunk-level semantic search retrieve_knowledge_base()
         does - "which document answers this" is a different question from
         "what does it say," but the same search answers both, just keeping
@@ -289,7 +294,10 @@ class MemoryIndex:
         nodes = retriever.retrieve(query)
         if not nodes:
             return None
-        return nodes[0].node.metadata.get('source_filename')
+        best = nodes[0]
+        if best.score is not None and best.score < SOURCE_MATCH_MIN_SCORE:
+            return None
+        return best.node.metadata.get('source_filename')
 
     def get_document_text(self, source_filename: str) -> Optional[str]:
         """Full text of a document ingested via ingest_pdf(), reconstructed by

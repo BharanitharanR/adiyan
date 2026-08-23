@@ -27,7 +27,16 @@ from mesh.lib.config import load_runtime_config
 from mesh.lib.skill_router import route
 from mesh.memory.constants import AGENT_ID
 from mesh.memory.memory_index import KB_DEFAULT_TOP_K
-from mesh.memory.skills import get_document_text, ingest, recall, resolve_document, search_kb, share_document
+from mesh.memory.skills import (
+    get_document_text,
+    ingest,
+    list_documents,
+    recall,
+    remember,
+    resolve_document,
+    search_kb,
+    share_document,
+)
 from mesh.memory.skills_catalog import SKILLS
 
 AGENT_CODE_DIR = Path(__file__).parent
@@ -54,8 +63,8 @@ EXTRACTION_SCHEMAS = {
     'share_knowledge_document': ShareDocumentParams,
 }
 
-# skill_id -> handler. ingest_document, resolve_document, and
-# get_document_text are all dispatchable here despite not being in
+# skill_id -> handler. ingest_document, resolve_document, get_document_text,
+# and remember_interaction are all dispatchable here despite not being in
 # SKILLS/EXTRACTION_SCHEMAS above - see mesh/memory/skills/ingest.py's own
 # docstring for why a DataPart-only skill stays out of the classify pool.
 SKILL_HANDLERS = {
@@ -65,6 +74,8 @@ SKILL_HANDLERS = {
     'ingest_document': ingest.run,
     'resolve_document': resolve_document.run,
     'get_document_text': get_document_text.run,
+    'remember_interaction': remember.run,
+    'list_documents': list_documents.run,
 }
 
 

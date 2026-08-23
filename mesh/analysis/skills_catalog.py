@@ -2,51 +2,50 @@
 and agent_executor.py's classifier prompt, same reasoning as every other
 agent's skills_catalog.py.
 
-The real classifier boundary against Memory Agent's search_knowledge_base
-is NOT a verb category (analyze/review/critique) - it's whether answering
-needs the document's ENTIRE content or just whichever few chunks best
-match a query. Proofreading, translating, comparing, extracting a list of
-every X, outlining, judging overall tone - all of these need the whole
-document, none of them are single-fact lookups. Examples below span that
-full range deliberately, not just "find what's wrong with this" - an
-earlier, narrower draft of this catalog only had error-finding examples,
-which would have made the classifier blind to anything else in this
-category (translate, compare, list every clause, outline this deck).
-A fuzzy "which one is this really asking" boundary already collided
-unpredictably once before (recall_contact_memory vs search_knowledge_base,
-both plausible for "check my memory and find my aadhar number") - staying
-deliberately broad within "needs the whole document" is meant to avoid a
-narrower version of that same mistake, where a legitimate whole-document
-request gets missed because it didn't happen to resemble the one flavor of
-example on file."""
+Renamed from analyze_document to analyse_this - the id and description used
+to describe a document-only capability (split a document into windows,
+analyze each once, combine). That's no longer what this agent does: it's a
+ReAct loop (mesh/analysis/skills/analyze.py) that can pull from documents,
+recall conversation memory, and consult other registered agents, deciding
+for itself which of those it actually needs for a given request - and it's
+also Orchestrator's fallback for anything nothing else classifies (see
+mesh/orchestrator/skills/handle_message.py), not something reachable only
+via an explicit "analyze X" phrasing. The old narrower description would
+have kept the classifier blind to everything this agent can now actually do.
+
+Deliberately still not a fixed verb list ("analyze," "review," "compare")
+in the examples below - the same reasoning the prior draft of this catalog
+already settled on holds even more now that the scope is broader: staying
+example-diverse is what avoids a legitimate request getting missed because
+it didn't happen to resemble the one flavor of example on file (this
+collided unpredictably once already - recall_contact_memory vs
+search_knowledge_base, both plausible for "check my memory and find my
+aadhar number")."""
 from a2a.types import AgentSkill
 
 SKILLS = [
     AgentSkill(
-        id='analyze_document',
-        name='Analyze Document',
+        id='analyse_this',
+        name='Analyse This',
         description=(
-            "Any request that needs an entire uploaded document's content, not a single "
-            "matching snippet - reviewing, critiquing, summarizing, comparing, "
-            "translating, outlining, extracting every instance of something, or judging "
-            "the document as a whole in any way. Not for a single-fact lookup "
-            "('what is X', 'do I have Y') even against the same document - that's "
-            "search_knowledge_base's job."
+            'General-purpose reasoning: anything that needs real thinking, not a single '
+            'stored fact - analyzing or reviewing an entire document, answering an '
+            'open-ended question using what is known about the person asking, or a '
+            'request nothing more specific fits. Not for a single-fact lookup against a '
+            "document ('what is X', 'do I have Y') - that's search_knowledge_base's job."
         ),
-        tags=['analysis', 'documents', 'synthesis'],
+        tags=['analysis', 'reasoning', 'documents', 'memory'],
         examples=[
             'Find the spelling mistakes in the AI native payment validation presentation',
             'Analyze this presentation and share the mistakes you find',
             'Review the contract for inconsistencies',
             'Summarize the nutrition guide',
-            'Critique the pitch deck - what would you improve?',
-            'Proofread the report and list every error',
             'Translate this document to Tamil',
             'List every action item mentioned in this document',
-            'Compare this contract against our standard terms',
             "What's the overall tone of this document?",
-            'Outline this presentation slide by slide',
-            'Extract every date mentioned in this contract',
+            'What should I look for backpacking in monsoon season?',
+            'Prescribe me a good protein-rich menu for tonight',
+            'Based on what you know about me, what should I focus on this week?',
         ],
         input_modes=['text/plain'],
         output_modes=['application/json'],

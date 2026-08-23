@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from a2a.types import AgentSkill
 
-from mesh.lib import permissions, vision
+from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.config import load_runtime_config
 from mesh.lib.mcp_client import call_tool
@@ -164,10 +164,10 @@ async def _run_analysis(instruction: str, source_filename: str, chat_id: str, ti
     erroring) - the caller falls back to the plain ingest confirmation
     rather than surfacing a raw error, same silent-on-unexpected-failure
     convention as the rest of this module. Calls Analysis Agent's
-    analyze_document directly with source_filename already known - no
+    analyse_this directly with source_filename already known - no
     resolution step needed here, unlike the free-text follow-up case
     (a later message naming the document by topic), which goes through
-    router.py's normal classify pool and lets analyze_document's own
+    router.py's normal classify pool and lets analyse_this's own
     resolve_document call handle that fuzzy match instead."""
     analysis_url = router.get_agent_url('analysis')
     if analysis_url is None:
@@ -176,7 +176,7 @@ async def _run_analysis(instruction: str, source_filename: str, chat_id: str, ti
 
     token = permissions.mint_token(chat_id, tier)
     try:
-        return await call_agent(analysis_url, 'analyze_document', {
+        return await call_agent(analysis_url, 'analyse_this', {
             'instruction': instruction,
             'source_filename': source_filename,
         }, token=token)
@@ -215,7 +215,11 @@ async def run(
     document: Optional[Dict[str, Any]] = None,
     is_self_chat: bool = False,
 ) -> Dict[str, Any]:
-    cfg = load_runtime_config(AGENT_CODE_DIR)
+    # Mongo-backed via mesh/lib/config_sdk.py (pilot agent for the central
+    # config SDK) - local runtime_config.json is now only the fallback/
+    # first-seed default, not the source of truth. See config_sdk.py's own
+    # docstring for the auto-seed/degrade-gracefully behavior.
+    cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
 
     text, kb_pending = await _resolve_image_intent(text, image)
     if document is not None:
@@ -245,6 +249,12 @@ async def run(
     text = rules_engine.strip_adiyan_mention(text)
 
     pending_document = None
+    # True only for a genuine routed conversation exchange (the else branch
+    # below) - not a registration/unregistration command, not a document
+    # upload. Those aren't "what did we talk about" content, and conflating
+    # them would mean Memory Agent's conversation store filling up with
+    # admin bookkeeping instead of things actually worth recalling later.
+    should_remember = False
     if gate_reply is not None:
         # Registration, unregistration, or an unregistered-sender rejection
         # already fully handled it - never reaches routing.
@@ -288,6 +298,7 @@ async def run(
                 else:
                     reply = analysis.get('result') or ingest_reply
     else:
+        should_remember = True
         try:
             # tier is never None here - the only way to reach this branch is
             # gate_reply being None, and rules_engine.check() only returns a
@@ -295,7 +306,36 @@ async def run(
             token = permissions.mint_token(chat_id, tier)
             target_url = await route_to_agent(text, cfg['route_to_agent'])
             if target_url is None:
-                reply = "Sorry, I'm not sure how to help with that yet."
+                # No skill classified this - Analysis Agent is the fallback,
+                # not a canned "I don't know" reply. Called directly via a
+                # structured DataPart (skill_id already known - there's
+                # exactly one skill on this agent), same reasoning
+                # _run_analysis() already documents for the upload+instruct
+                # combined flow, not routed through classify() again.
+                analysis_url = router.get_agent_url('analysis')
+                if analysis_url is None:
+                    reply = "Sorry, I'm not sure how to help with that yet."
+                else:
+                    result = await call_agent(analysis_url, 'analyse_this', {
+                        'instruction': text,
+                        'contact_name': contact_name,
+                    }, token=token)
+                    if result.get('content_b64'):
+                        pending_document = result
+                        caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
+                        reply = await humanize(text, caption_source, cfg['humanize'])
+                    elif result.get('result'):
+                        # Confirmed live: skipping humanize() here (unlike
+                        # every other branch in this function) let Analysis
+                        # Agent's own ReAct-loop answer reach WhatsApp
+                        # verbatim - grammatically fine but report-toned
+                        # ("Based on the provided information, the user is
+                        # a vegetarian...") rather than a natural reply, the
+                        # one branch in this whole function that skipped
+                        # the humanize step everything else already gets.
+                        reply = await humanize(text, result, cfg['humanize'])
+                    else:
+                        reply = "Sorry, I'm not sure how to help with that yet."
             else:
                 result = await call_agent_with_text(target_url, text, token=token)
                 if result.get('content_b64'):
@@ -357,5 +397,31 @@ async def run(
         # fix shape already applied once in the retired whatsapp_connector.
         delivered = False
         reply = f'{reply} (delivery failed: {e})'
+
+    if should_remember:
+        # Short-term: an in-process rolling window (mesh/lib/chat_cache.py),
+        # separate from mem0's long-term semantic store below - never raises,
+        # so no try/except needed around it. Same "regardless of `delivered`"
+        # reasoning as the mem0 write just below applies here too.
+        chat_cache.remember_turn(contact_name or chat_id, text, reply)
+
+        # Long-term: best-effort, after delivery - see
+        # mesh/memory/mem0_backend.py's own docstring for what actually
+        # happens to this on the Memory Agent side. A failed memory write
+        # must never affect a reply that's already been sent (or already
+        # failed to send, for its own separate reasons) - remembered
+        # regardless of `delivered`, since the exchange itself happened
+        # either way.
+        try:
+            memory_url = router.get_agent_url('memory')
+            if memory_url is not None:
+                remember_token = permissions.mint_token('orchestrator', 'service')
+                await call_agent(memory_url, 'remember_interaction', {
+                    'contact_name': contact_name or chat_id,
+                    'user_text': text,
+                    'reply_text': reply,
+                }, token=remember_token)
+        except Exception as e:
+            logger.warning(f'Failed to remember interaction for {chat_id}: {e}')
 
     return {'chat_id': chat_id, 'reply': reply, 'delivered': delivered}

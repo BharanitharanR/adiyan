@@ -88,4 +88,10 @@ def serve(
         target=_register_with_retry, args=(agent_id, f'http://{host}:{port}'), daemon=True,
     ).start()
 
+    # Every agent gets a live-ish view of the registry for free, whether or
+    # not it happens to call registry_client.get_cached_agents() itself -
+    # see registry_client.start_auto_refresh()'s own docstring. Cheap and
+    # idempotent even for agents that never read the cache.
+    threading.Thread(target=registry_client.start_auto_refresh, daemon=True).start()
+
     uvicorn.run(app, host=host, port=port)

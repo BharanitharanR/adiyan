@@ -1,25 +1,27 @@
 """
 recall_contact_memory's real body - a thin, honest wrapper around
-mesh/memory/memory_index.py's MemoryIndex.retrieve(). No judgment here about
-what the snippets mean or what to do with them - that's the caller's job
-(Journal Agent). This just fetches.
+mesh/memory/mem0_backend.py's retrieve(). No judgment here about what the
+snippets mean or what to do with them - that's the caller's job (Journal
+Agent). This just fetches.
 
-The only place under mesh/ that reaches into memory_index.py's Qdrant/Ollama
-stack directly - the whole reason Memory Agent exists as its own agent
-instead of being a dependency baked into Journal Agent.
+The only place under mesh/ that reaches into the conversation-memory stack
+directly - the whole reason Memory Agent exists as its own agent instead of
+being a dependency baked into Journal Agent.
 """
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from mesh.memory.constants import OLLAMA_URL, QDRANT_URL
-from mesh.memory.memory_index import get_memory_index
+from mesh.memory import mem0_backend
 
 
 def run(contact_name: str, query: str, top_k: int = 3) -> Dict[str, Any]:
-    memory_index = get_memory_index(QDRANT_URL, OLLAMA_URL)
-    if memory_index is None:
-        # Qdrant/Ollama unreachable - degrade, don't fail, same platform-wide
-        # rule core/mcp_tools.py already documents for tool availability.
-        return {'snippets': [], 'available': False}
-
-    snippets: List[str] = memory_index.retrieve(query=query, contact_name=contact_name, top_k=top_k)
-    return {'snippets': snippets, 'available': True}
+    # int(...): a structured DataPart call skips Pydantic coercion (see
+    # agent_executor.py's execute() - only the free-text classify/extract
+    # path validates through RecallParams) and travels through A2A's
+    # protobuf Struct, which has no integer type, only double - confirmed
+    # live the same way handle_message.py's 'chunks' field once was: a real
+    # int top_k sent by a caller (Analysis Agent's recall_memory tool)
+    # silently became 5.0 by the time it got here, and mem0's own search()
+    # rejects a non-int top_k outright ("top_k must be a valid integer"),
+    # unlike the chunks case which just printed wrong.
+    snippets = mem0_backend.retrieve(contact_name=contact_name, query=query, top_k=int(top_k))
+    return {'snippets': snippets, 'available': mem0_backend.is_available()}

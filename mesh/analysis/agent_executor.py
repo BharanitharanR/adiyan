@@ -29,14 +29,14 @@ from mesh.lib.skill_router import route
 AGENT_CODE_DIR = Path(__file__).parent
 
 
-class AnalyzeDocumentParams(BaseModel):
+class AnalyseThisParams(BaseModel):
     instruction: str = Field(
         description="The full analysis/review/critique/synthesis instruction, as close to "
         "the caller's own wording as possible - do not paraphrase or shorten it."
     )
 
 
-EXTRACTION_SCHEMAS = {'analyze_document': AnalyzeDocumentParams}
+EXTRACTION_SCHEMAS = {'analyse_this': AnalyseThisParams}
 
 
 class AnalysisAgentExecutor(AgentExecutor):
@@ -77,7 +77,7 @@ class AnalysisAgentExecutor(AgentExecutor):
                 await updater.reject(new_text_message("None of my skills match that request."))
                 return
 
-        if skill_id != 'analyze_document':
+        if skill_id != 'analyse_this':
             await updater.failed(new_text_message(f'Unknown skill_id: {skill_id}'))
             return
 

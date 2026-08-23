@@ -2,8 +2,8 @@
 Analysis Agent - A2A server entrypoint. Same shape as mesh/journal/server.py.
 
 Run from the repo root as `python -m mesh.analysis.server`. Memory Agent
-(port 8423) should already be running - analyze_document calls it directly
-(resolve_document, get_document_text).
+(port 8423) should already be running - analyse_this calls it directly
+(resolve_document, get_document_text, list_documents, recall_contact_memory).
 """
 from mesh.analysis.agent_executor import AnalysisAgentExecutor
 from mesh.analysis.constants import AGENT_ID, HOST, PORT
@@ -19,7 +19,7 @@ if __name__ == '__main__':
 
     agent_card = adiyan_card(
         name='Analysis Agent',
-        description='Reads an entire uploaded document and analyzes, reviews, or synthesizes something from it per an instruction.',
+        description='General-purpose reasoning over documents, conversation memory, and the wider agent mesh - Orchestrator\'s fallback for anything nothing more specific handles.',
         skills=SKILLS,
         host=HOST,
         port=PORT,

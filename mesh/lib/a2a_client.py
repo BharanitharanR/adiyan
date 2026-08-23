@@ -22,6 +22,16 @@ from a2a.client import A2ACardResolver, ClientConfig, create_client
 from a2a.helpers import get_data_parts, get_message_text, new_data_part, new_message, new_text_part
 from a2a.types import Role, SendMessageRequest, Task, TaskState
 
+# Confirmed live: the old 120s default was too short once Analysis Agent's
+# analyse_this became a multi-step ReAct loop (mesh/analysis/skills/
+# analyze.py) - up to MAX_STEPS sequential local-model calls (a decide call
+# plus a compaction call per step) can genuinely take longer than two
+# minutes on local hardware, and Orchestrator's own call to it used this
+# same default. Explicitly generous for initial end-to-end validation, not
+# a claim this is the right steady-state value - worth revisiting once
+# real latency is actually observed rather than guessed at.
+DEFAULT_TIMEOUT_SECONDS = 3 * 60 * 60  # 3 hours
+
 
 async def _send_and_await(agent_url: str, message, timeout: float, token: Optional[str] = None) -> Task:
     async with httpx.AsyncClient(timeout=timeout) as httpx_client:
@@ -70,7 +80,7 @@ async def call_agent(
     agent_url: str,
     skill_id: str,
     params: Dict[str, Any],
-    timeout: float = 120,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
     token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Calls another agent's skill directly via a structured Part.data.
@@ -89,7 +99,7 @@ async def call_agent(
 async def call_agent_with_text(
     agent_url: str,
     text: str,
-    timeout: float = 120,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
     token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Forwards free text to another agent, letting its own classify/extract
