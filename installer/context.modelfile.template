@@ -1,2 +1,0 @@
-FROM {{BASE}}
-PARAMETER num_ctx {{NUM_CTX}}
