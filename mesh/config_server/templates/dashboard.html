@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Adiyan Config Dashboard</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #f4f4f6; margin: 0; padding: 24px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; }
+  a.logout { color: #666; font-size: 13px; text-decoration: none; }
+  .grid { display: grid; grid-template-columns: 200px 1fr; gap: 20px; }
+  .agents-list .agent-btn { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 6px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 14px; }
+  .agents-list .agent-btn.active { border-color: #222; font-weight: 600; }
+  .card { background: white; border-radius: 8px; padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .card h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; color: #666; letter-spacing: 0.03em; }
+  .row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .row label { width: 110px; font-size: 13px; color: #444; flex-shrink: 0; }
+  .row input, .row textarea { flex: 1; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; font-family: inherit; }
+  .row textarea { min-height: 70px; resize: vertical; }
+  .row button { padding: 6px 12px; border: none; background: #222; color: white; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .saved { color: #2a8f4f; font-size: 12px; margin-left: 8px; }
+  .empty { color: #999; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Adiyan Config Dashboard</h1>
+  <a class="logout" href="/logout">Log out</a>
+</header>
+
+<div class="grid">
+  <div class="agents-list" id="agents-list"></div>
+  <div id="detail"><div class="empty">Select an agent</div></div>
+</div>
+
+<script>
+let allConfigs = {};
+let selectedAgent = null;
+
+async function load() {
+  const res = await fetch('/api/agents');
+  const data = await res.json();
+  allConfigs = data.agents || {};
+  renderAgentList();
+  if (selectedAgent && allConfigs[selectedAgent]) renderDetail();
+}
+
+function renderAgentList() {
+  const el = document.getElementById('agents-list');
+  const ids = Object.keys(allConfigs);
+  el.innerHTML = ids.map(id =>
+    `<button class="agent-btn ${id === selectedAgent ? 'active' : ''}" onclick="selectAgent('${id}')">${id}</button>`
+  ).join('') || '<div class="empty">No agents configured yet</div>';
+}
+
+function selectAgent(id) {
+  selectedAgent = id;
+  renderAgentList();
+  renderDetail();
+}
+
+function renderDetail() {
+  const cfg = allConfigs[selectedAgent];
+  const el = document.getElementById('detail');
+  if (!cfg) { el.innerHTML = '<div class="empty">Select an agent</div>'; return; }
+
+  let html = '<div class="card"><h3>Stages</h3>';
+  for (const [stage, val] of Object.entries(cfg.stages || {})) {
+    html += `
+      <div class="row">
+        <label>${stage}</label>
+        <input id="model-${stage}" value="${val.model || ''}" placeholder="model">
+        <input id="temp-${stage}" value="${val.temperature ?? ''}" placeholder="temp" style="max-width:70px">
+        <input id="timeout-${stage}" value="${val.timeout ?? ''}" placeholder="timeout" style="max-width:80px">
+        <button onclick="saveStage('${stage}')">Save</button>
+        <span class="saved" id="saved-stage-${stage}"></span>
+      </div>`;
+  }
+  html += '</div><div class="card"><h3>Constants</h3>';
+  for (const [key, val] of Object.entries(cfg.constants || {})) {
+    const isLong = typeof val === 'string' && val.length > 60;
+    html += `
+      <div class="row">
+        <label>${key}</label>
+        ${isLong
+          ? `<textarea id="const-${key}">${val}</textarea>`
+          : `<input id="const-${key}" value="${val}">`}
+        <button onclick="saveConstant('${key}')">Save</button>
+        <span class="saved" id="saved-const-${key}"></span>
+      </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function saveStage(stage) {
+  const model = document.getElementById(`model-${stage}`).value;
+  const temperature = document.getElementById(`temp-${stage}`).value;
+  const timeout = document.getElementById(`timeout-${stage}`).value;
+  const res = await fetch(`/api/agents/${selectedAgent}/stages/${stage}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, temperature, timeout }),
+  });
+  const data = await res.json();
+  flashSaved(`saved-stage-${stage}`, data.updated);
+  if (data.updated) await load();
+}
+
+async function saveConstant(key) {
+  const value = document.getElementById(`const-${key}`).value;
+  const res = await fetch(`/api/agents/${selectedAgent}/constants/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  const data = await res.json();
+  flashSaved(`saved-const-${key}`, data.updated);
+  if (data.updated) await load();
+}
+
+function flashSaved(elId, ok) {
+  const el = document.getElementById(elId);
+  el.textContent = ok ? 'Saved' : 'Failed';
+  setTimeout(() => { el.textContent = ''; }, 2000);
+}
+
+load();
+</script>
+</body>
+</html>

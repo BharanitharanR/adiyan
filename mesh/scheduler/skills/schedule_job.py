@@ -86,7 +86,13 @@ async def run(
     conn = db.connect(state_db_path(AGENT_ID))
     embedding = await _embed(f'{name} {description}')
 
-    existing = db.find_similar_job(conn, embedding)
+    # Resolved before the dedup check now, not after - see
+    # db.find_similar_job()'s own docstring for why "same schedule" has to
+    # be part of what "duplicate" means, not just description similarity.
+    cron_expression = await _resolve_schedule(description)
+    next_run_at = _next_run_at(cron_expression)
+
+    existing = db.find_similar_job(conn, embedding, cron_expression)
     if existing is not None:
         return {
             'job_id': existing['id'],
@@ -95,9 +101,6 @@ async def run(
             'resolved_schedule': existing['resolved_schedule'],
             'next_run_at': existing['next_run_at'],
         }
-
-    cron_expression = await _resolve_schedule(description)
-    next_run_at = _next_run_at(cron_expression)
 
     job = db.create_job(
         conn, name=name, description=description, target=target,

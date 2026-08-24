@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Adiyan Config - Login</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #f4f4f6; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .card { background: white; padding: 32px; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 320px; }
+  h1 { font-size: 18px; margin: 0 0 20px; }
+  button, input { width: 100%; padding: 10px; margin-top: 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; }
+  button { background: #222; color: white; border: none; cursor: pointer; }
+  button:disabled { background: #999; }
+  .error { color: #c0392b; font-size: 13px; margin-top: 8px; }
+  .hint { color: #666; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Adiyan Config Dashboard</h1>
+  <button id="send-btn" onclick="requestOtp()">Send login code to owner's WhatsApp</button>
+  <div id="hint" class="hint"></div>
+
+  <form method="post" action="/login" id="code-form" style="display:none">
+    <input name="code" placeholder="4-digit code" maxlength="4" inputmode="numeric" autofocus>
+    <button type="submit">Log in</button>
+  </form>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+</div>
+
+<script>
+async function requestOtp() {
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  const res = await fetch('/login/request-otp', { method: 'POST' });
+  const data = await res.json();
+  if (data.ok) {
+    document.getElementById('hint').textContent = 'Code sent - check the owner\'s WhatsApp. Valid for 5 minutes.';
+    document.getElementById('code-form').style.display = 'block';
+    btn.style.display = 'none';
+  } else {
+    document.getElementById('hint').textContent = 'Could not send a code - is WhatsApp connected?';
+    btn.disabled = false;
+    btn.textContent = 'Send login code to owner\'s WhatsApp';
+  }
+}
+</script>
+</body>
+</html>

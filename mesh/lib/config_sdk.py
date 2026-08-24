@@ -18,34 +18,46 @@ Schema is intentionally private to this module - a calling agent passes
 agent_id/key and a default, and gets back whatever value is on file, with no
 knowledge of documents/collections/fields. That's the seam this module is
 built around: when a real config service (its own dashboard, used by support
-teams - the stated later milestone) eventually sits in front of Mongo, only
-this module's internals change to call that service's API instead of Mongo
-directly. No calling agent's code changes at all.
+teams) eventually sits in front of Mongo, only this module's internals
+change to call that service's API instead of Mongo directly. No calling
+agent's code changes at all.
+
+Two-layer resolution: every (agent_id, key) has a PLATFORM_VERTICAL default
+- the seeded config every platform agent (Orchestrator, Analysis, ...) ships
+with - and, optionally, a per-vertical override document keyed by the same
+agent_id under a real vertical_id. A business-vertical agent (Adiyan
+marketplace - to be introduced) can override a platform agent's own prompt
+(e.g. Orchestrator's humanize tone) for its own vertical without touching
+what every other deployment sees. Resolution checks the vertical layer
+first (if one was asked for), then falls back to platform, exactly like a
+normal config-override hierarchy: vertical > platform > caller's own
+hardcoded default (which only ever seeds the *platform* layer - a vertical
+override is always an explicit write, never implied by a read that missed).
 
 Auto-seeding: the first time any agent asks for a stage/constant that
 doesn't exist yet in Mongo, whatever `default` the caller supplied (its own
 current local runtime_config.json value, or a hardcoded prompt string) is
-written back as the new on-file value - migrating existing hardcoded
-config/prompts into Mongo happens automatically, one read at a time, not via
-a separate migration script.
+written back as the new on-file PLATFORM value - migrating existing
+hardcoded config/prompts into Mongo happens automatically, one read at a
+time, not via a separate migration script.
 
 Graceful degradation: exactly like mem0_backend.py and registry_client.py -
 if Mongo is unreachable, every read falls back to the caller's own default
 and every write is silently skipped. A missing/down config store must never
-take an agent down; it only means edits made via the (future) dashboard/
-WhatsApp tool aren't picked up until Mongo is reachable again. Connection is
-attempted once per process - if it fails, every later call fails fast
-without retrying (this mesh's existing "restart to recover" convention
-already covers coming back, same reasoning router.py's old load-once model
-had, just not the part of that model that caused the Orchestrator/Analysis
-Agent staleness bug - there's nothing to go stale here, since a fresh read
+take an agent down; it only means edits made via the dashboard/WhatsApp tool
+aren't picked up until Mongo is reachable again. Connection is attempted
+once per process - if it fails, every later call fails fast without
+retrying (this mesh's existing "restart to recover" convention already
+covers coming back, same reasoning router.py's old load-once model had,
+just not the part of that model that caused the Orchestrator/Analysis Agent
+staleness bug - there's nothing to go stale here, since a fresh read
 happens every _ttl_seconds()).
 """
 import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from beanie import Document, init_beanie
 from pydantic import Field
@@ -56,6 +68,11 @@ logger = logging.getLogger('ConfigSDK')
 MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB', 'adiyan_config')
 
+# The seeded-defaults layer every agent_id always has. A real vertical_id
+# (a marketplace agent's own identity) is anything else - see this module's
+# own docstring on the two-layer resolution order.
+PLATFORM_VERTICAL = 'platform'
+
 # How long a cached agent document is trusted before the next read
 # transparently refreshes it from Mongo - configurable, same reasoning as
 # registry_client.py's AGENT_REGISTRY_REFRESH_SECONDS.
@@ -64,6 +81,7 @@ DEFAULT_CACHE_TTL_SECONDS = 30.0
 
 class AgentConfig(Document):
     agent_id: str
+    vertical_id: str = PLATFORM_VERTICAL
     stages: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     constants: Dict[str, Any] = Field(default_factory=dict)
 
@@ -75,8 +93,10 @@ _init_lock = asyncio.Lock()
 _initialized = False
 _unavailable = False
 
-_cache: Dict[str, AgentConfig] = {}
-_cache_at: Dict[str, float] = {}
+# Cache key is (agent_id, vertical_id) - a platform doc and a vertical
+# override for the same agent_id are cached independently.
+_cache: Dict[Tuple[str, str], AgentConfig] = {}
+_cache_at: Dict[Tuple[str, str], float] = {}
 
 
 def _ttl_seconds() -> float:
@@ -109,26 +129,28 @@ async def _ensure_initialized() -> bool:
             return False
 
 
-async def _get_agent_doc(agent_id: str) -> Optional[AgentConfig]:
+async def _get_agent_doc(agent_id: str, vertical_id: str) -> Optional[AgentConfig]:
+    cache_key = (agent_id, vertical_id)
     now = time.time()
-    cached = _cache.get(agent_id)
-    if cached is not None and (now - _cache_at.get(agent_id, 0)) < _ttl_seconds():
+    cached = _cache.get(cache_key)
+    if cached is not None and (now - _cache_at.get(cache_key, 0)) < _ttl_seconds():
         return cached
     if not await _ensure_initialized():
         return cached  # stale-but-present beats nothing, if Mongo just went down transiently
     try:
-        doc = await AgentConfig.find_one(AgentConfig.agent_id == agent_id)
+        doc = await AgentConfig.find_one(AgentConfig.agent_id == agent_id, AgentConfig.vertical_id == vertical_id)
     except Exception as e:
-        logger.warning(f'Config SDK read failed for {agent_id!r}, using cache/defaults: {e}')
+        logger.warning(f'Config SDK read failed for {cache_key!r}, using cache/defaults: {e}')
         return cached
     if doc is not None:
-        _cache[agent_id] = doc
-        _cache_at[agent_id] = now
+        _cache[cache_key] = doc
+        _cache_at[cache_key] = now
     return doc
 
 
 async def _upsert(
-    agent_id: str, *, stage: Optional[Tuple[str, Dict[str, Any]]] = None, constant: Optional[Tuple[str, Any]] = None,
+    agent_id: str, vertical_id: str, *,
+    stage: Optional[Tuple[str, Dict[str, Any]]] = None, constant: Optional[Tuple[str, Any]] = None,
 ) -> Optional[AgentConfig]:
     """stage=(name, value) or constant=(key, value), exactly one. Returns
     the updated document, or None if Mongo is unavailable or the write
@@ -136,59 +158,134 @@ async def _upsert(
     keep using the in-memory default this call started from)."""
     if not await _ensure_initialized():
         return None
+    cache_key = (agent_id, vertical_id)
     try:
-        doc = await AgentConfig.find_one(AgentConfig.agent_id == agent_id)
+        doc = await AgentConfig.find_one(AgentConfig.agent_id == agent_id, AgentConfig.vertical_id == vertical_id)
         if doc is None:
-            doc = AgentConfig(agent_id=agent_id)
+            doc = AgentConfig(agent_id=agent_id, vertical_id=vertical_id)
         if stage is not None:
             doc.stages[stage[0]] = stage[1]
         if constant is not None:
             doc.constants[constant[0]] = constant[1]
         await (doc.insert() if doc.id is None else doc.save())
-        _cache[agent_id] = doc
-        _cache_at[agent_id] = time.time()
+        _cache[cache_key] = doc
+        _cache_at[cache_key] = time.time()
         return doc
     except Exception as e:
-        logger.warning(f'Config SDK write failed for {agent_id!r}: {e}')
+        logger.warning(f'Config SDK write failed for {cache_key!r}: {e}')
         return None
 
 
-async def get_stage_config(agent_id: str, stage_name: str, default: Dict[str, Any]) -> Dict[str, Any]:
+async def get_stage_config(
+    agent_id: str, stage_name: str, default: Dict[str, Any], vertical_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """{model, temperature, timeout, ...} for one agent's one pipeline
-    stage. Returns and auto-seeds `default` the first time this stage is
-    asked for and Mongo has nothing on file yet."""
-    doc = await _get_agent_doc(agent_id)
-    if doc is not None and stage_name in doc.stages:
-        return doc.stages[stage_name]
-    await _upsert(agent_id, stage=(stage_name, default))
+    stage. vertical_id (if given and not PLATFORM_VERTICAL) is checked
+    first - falls back to the platform layer, then to `default`, which
+    only ever seeds the *platform* layer (see this module's own docstring
+    on why a vertical override is always an explicit write)."""
+    if vertical_id and vertical_id != PLATFORM_VERTICAL:
+        vertical_doc = await _get_agent_doc(agent_id, vertical_id)
+        if vertical_doc is not None and stage_name in vertical_doc.stages:
+            return vertical_doc.stages[stage_name]
+
+    platform_doc = await _get_agent_doc(agent_id, PLATFORM_VERTICAL)
+    if platform_doc is not None and stage_name in platform_doc.stages:
+        return platform_doc.stages[stage_name]
+
+    await _upsert(agent_id, PLATFORM_VERTICAL, stage=(stage_name, default))
     return default
 
 
-async def get_constant(agent_id: str, key: str, default: Any) -> Any:
-    """Any other hardcoded constant or prompt template - same
-    auto-seed-on-first-miss behavior as get_stage_config()."""
-    doc = await _get_agent_doc(agent_id)
-    if doc is not None and key in doc.constants:
-        return doc.constants[key]
-    await _upsert(agent_id, constant=(key, default))
+async def get_constant(agent_id: str, key: str, default: Any, vertical_id: Optional[str] = None) -> Any:
+    """Any other hardcoded constant or prompt template - same layered
+    resolution and auto-seed-on-first-miss behavior as get_stage_config()."""
+    if vertical_id and vertical_id != PLATFORM_VERTICAL:
+        vertical_doc = await _get_agent_doc(agent_id, vertical_id)
+        if vertical_doc is not None and key in vertical_doc.constants:
+            return vertical_doc.constants[key]
+
+    platform_doc = await _get_agent_doc(agent_id, PLATFORM_VERTICAL)
+    if platform_doc is not None and key in platform_doc.constants:
+        return platform_doc.constants[key]
+
+    await _upsert(agent_id, PLATFORM_VERTICAL, constant=(key, default))
     return default
 
 
-async def load_stage_configs(agent_id: str, defaults: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+async def load_stage_configs(
+    agent_id: str, defaults: Dict[str, Dict[str, Any]], vertical_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
     """{stage_name: {model, temperature, timeout}} for every stage in
     `defaults` at once - convenience wrapper for a caller (e.g.
     handle_message.py) that currently does one load_runtime_config() call
     and wants a drop-in async replacement rather than one get_stage_config()
     call per stage."""
-    return {name: await get_stage_config(agent_id, name, value) for name, value in defaults.items()}
+    return {name: await get_stage_config(agent_id, name, value, vertical_id) for name, value in defaults.items()}
 
 
-async def set_stage_config(agent_id: str, stage_name: str, value: Dict[str, Any]) -> bool:
-    """Explicit write, for the (future) WhatsApp/dashboard edit path - True
-    on success. Unlike get_stage_config()'s auto-seed, this always
-    overwrites, since it's a deliberate update, not a first-read default."""
-    return await _upsert(agent_id, stage=(stage_name, value)) is not None
+async def set_stage_config(
+    agent_id: str, stage_name: str, value: Dict[str, Any], vertical_id: str = PLATFORM_VERTICAL,
+) -> bool:
+    """Explicit write, for the dashboard/WhatsApp edit path - True on
+    success. Unlike get_stage_config()'s auto-seed, this always overwrites,
+    since it's a deliberate update, not a first-read default. Pass a real
+    vertical_id to write a vertical-specific override instead of changing
+    the platform default every deployment sees."""
+    return await _upsert(agent_id, vertical_id, stage=(stage_name, value)) is not None
 
 
-async def set_constant(agent_id: str, key: str, value: Any) -> bool:
-    return await _upsert(agent_id, constant=(key, value)) is not None
+async def set_constant(agent_id: str, key: str, value: Any, vertical_id: str = PLATFORM_VERTICAL) -> bool:
+    return await _upsert(agent_id, vertical_id, constant=(key, value)) is not None
+
+
+async def list_agent_ids(vertical_id: str = PLATFORM_VERTICAL) -> List[str]:
+    """Every agent_id with a config document on file for this layer
+    (platform by default) - for the Config Agent (WhatsApp/NLP resolution
+    against real agent_ids, not guessed ones) and the dashboard's agent
+    picker. Empty if Mongo is unreachable."""
+    if not await _ensure_initialized():
+        return []
+    try:
+        docs = await AgentConfig.find(AgentConfig.vertical_id == vertical_id).to_list()
+        return [d.agent_id for d in docs]
+    except Exception as e:
+        logger.warning(f'Config SDK could not list agent ids: {e}')
+        return []
+
+
+async def get_full_config(agent_id: str, vertical_id: str = PLATFORM_VERTICAL) -> Optional[Dict[str, Any]]:
+    """{'stages': {...}, 'constants': {...}} for one agent's one layer
+    (platform by default), or None if it has no config document yet.
+    Bypasses the read cache deliberately - a caller asking for the *entire*
+    config (Config Agent answering a question, the dashboard rendering a
+    page) wants what's actually on file right now, not a value that might
+    be up to _ttl_seconds() stale. Does not merge layers - the dashboard's
+    job is to show each layer distinctly (a support person editing
+    "Orchestrator" should see the platform default, not a value silently
+    blended with some vertical's override), not this module's."""
+    if not await _ensure_initialized():
+        return None
+    try:
+        doc = await AgentConfig.find_one(AgentConfig.agent_id == agent_id, AgentConfig.vertical_id == vertical_id)
+    except Exception as e:
+        logger.warning(f'Config SDK could not read full config for {(agent_id, vertical_id)!r}: {e}')
+        return None
+    if doc is None:
+        return None
+    return {'stages': doc.stages, 'constants': doc.constants}
+
+
+async def list_vertical_ids(agent_id: str) -> List[str]:
+    """Every vertical_id that has its own override document for this
+    agent_id (excluding the platform layer itself) - lets the dashboard
+    show "this agent has N vertical overrides" without needing to know
+    real vertical ids in advance."""
+    if not await _ensure_initialized():
+        return []
+    try:
+        docs = await AgentConfig.find(AgentConfig.agent_id == agent_id).to_list()
+        return [d.vertical_id for d in docs if d.vertical_id != PLATFORM_VERTICAL]
+    except Exception as e:
+        logger.warning(f'Config SDK could not list vertical ids for {agent_id!r}: {e}')
+        return []

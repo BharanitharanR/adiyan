@@ -44,6 +44,8 @@ COMPONENTS=(
     "memory|8423|mesh.memory.server"
     "journal|8422|mesh.journal.server"
     "analysis|8427|mesh.analysis.server"
+    "config_agent|8428|mesh.config_agent.server"
+    "config_server|8500|mesh.config_server.server"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
@@ -97,7 +99,16 @@ do_start() {
 
     echo
     echo "Waiting for everything to come up..."
-    for i in $(seq 1 15); do
+    # 90 x 2s = 3 minutes, not the original 30s - confirmed live that's not
+    # generous enough: Scheduler Agent's own startup does a catch-up pass
+    # over any overdue job (see mesh/scheduler/server.py) before it starts
+    # listening at all, and each one composes its message via an LLM call -
+    # with Ollama's single-request concurrency, a few of those queued up
+    # can easily take longer than 30s. A component that's still down after
+    # this reports DOWN below either way - this only avoids a false alarm
+    # for something that's genuinely still booting, same "generous timeout"
+    # reasoning already applied to the A2A client's own default.
+    for i in $(seq 1 90); do
         sleep 2
         refresh_listening
         still_down=0

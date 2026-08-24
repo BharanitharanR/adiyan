@@ -4,9 +4,11 @@ used for dedup matching stored alongside each row. This is state.db (see
 mesh/lib/paths.py's state_db_path) - fixed relationships, not A2A task
 bookkeeping (that's tasks.db, a separate file/concern entirely).
 
-Dedup approach mirrors the old codebase's services/routine_store.py: cosine
-similarity over embeddings, 0.72 floor - carried over as a floor worth
-re-tuning from real usage here too, not re-derived from scratch.
+Dedup approach: cosine similarity over embeddings (0.72 floor, carried over
+from the old codebase's services/routine_store.py, still worth re-tuning
+from real usage) AND an exact resolved_schedule match - see
+find_similar_job()'s own docstring for why schedule has to be part of the
+check too, not just description similarity.
 """
 import json
 import sqlite3
@@ -48,12 +50,24 @@ def _cosine(a: List[float], b: List[float]) -> float:
     return float(np.dot(a_arr, b_arr) / denom) if denom else 0.0
 
 
-def find_similar_job(conn: sqlite3.Connection, embedding: List[float]) -> Optional[Dict[str, Any]]:
-    """Returns the closest existing job at/above SIMILARITY_FLOOR, or None.
-    Linear scan - fine at the row counts one owner's scheduled jobs will
-    ever reach; revisit if that assumption stops holding."""
+def find_similar_job(conn: sqlite3.Connection, embedding: List[float], resolved_schedule: str) -> Optional[Dict[str, Any]]:
+    """Returns the closest existing job at/above SIMILARITY_FLOOR that also
+    runs on the exact same schedule, or None.
+
+    Confirmed live: name/description similarity alone isn't enough to call
+    two jobs "the same" - "log my journal every day at 8am" scored 0.7455
+    against an existing "Daily Progress Log" job at 6pm (both mention
+    logging something daily), crossed the old bare floor, and got returned
+    as if it were that job - silently not creating the new one, at the
+    wrong time entirely. The embedding never encoded *when* a job runs,
+    only what it's about, so schedule was never actually being checked.
+    Requiring an exact resolved_schedule match alongside the similarity
+    floor is what actually captures "this is a repeat of an existing job,"
+    not just "these two descriptions are topically similar." Only scans
+    rows that already match on schedule - cheap early filter before the
+    embedding comparison, not just a post-hoc check."""
     best_row, best_score = None, 0.0
-    for row in conn.execute('SELECT * FROM jobs'):
+    for row in conn.execute('SELECT * FROM jobs WHERE resolved_schedule = ?', (resolved_schedule,)):
         score = _cosine(embedding, json.loads(row['embedding']))
         if score > best_score:
             best_row, best_score = row, score
@@ -94,6 +108,21 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> Optional[Dict[str, Any]]:
 def update_next_run(conn: sqlite3.Connection, job_id: str, next_run_at: str) -> None:
     conn.execute('UPDATE jobs SET next_run_at = ? WHERE id = ?', (next_run_at, job_id))
     conn.commit()
+
+
+def find_overdue_jobs(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Every job whose next_run_at has already passed - checked once at
+    Scheduler Agent's own startup (see mesh/scheduler/server.py) to catch
+    anything cron_trigger's own misfire handling silently dropped while
+    this mesh was down (see mcp/cron_trigger/server.py's
+    MISFIRE_GRACE_SECONDS docstring for the mechanism). A recurring job's
+    own next-fire computation is always relative to 'now' at the moment it
+    fires, so catching up once here - not once per missed occurrence -
+    is enough to get it current again; this isn't a queue of backlogged
+    reminders to replay."""
+    now = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute('SELECT * FROM jobs WHERE next_run_at < ?', (now,)).fetchall()
+    return [dict(row) for row in rows]
 
 
 def delete_job(conn: sqlite3.Connection, job_id: str) -> None:

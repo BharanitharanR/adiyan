@@ -47,10 +47,16 @@ HOST = '127.0.0.1'
 PORT = 8421
 
 # Late firing (process was down, or busy past the exact minute) is tolerated
-# up to this many seconds - the "+/- 2 minutes" tolerance settled on. This is
-# a lateness allowance, not a symmetric window: waking every 60s already
-# means a job can't be mistaken for due more than ~1 minute early.
-MISFIRE_GRACE_SECONDS = 120
+# up to this many seconds. Confirmed live: 120s (the original "+/- 2
+# minutes" setting) is far too tight for a service that isn't run 24/7 -
+# this mesh gets stopped/restarted constantly during normal use, and
+# APScheduler silently DROPS a one-shot 'date' trigger that missed its grace
+# window (no next occurrence to fall back to, so it just vanishes from the
+# jobstore - no error, no retry, nothing fires). 6 hours covers a realistic
+# "was down overnight/during the day" gap; genuinely longer downtime is
+# covered separately by Scheduler Agent's own startup catch-up (see
+# mesh/scheduler/server.py), not by stretching this further.
+MISFIRE_GRACE_SECONDS = 6 * 60 * 60
 
 logger = logging.getLogger(SERVER_NAME)
 
