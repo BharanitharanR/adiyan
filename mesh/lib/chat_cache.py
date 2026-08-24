@@ -24,11 +24,17 @@ still capped at write time by _HARD_CAP_TURNS regardless of mode, purely so
 a contact that never stops chatting can't grow a single deque unboundedly
 between reads.
 """
+import logging
 import os
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List
+from typing import Any, Deque, Dict, List, Optional
+
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODE = 'count'
 DEFAULT_MAX_TURNS = 10
@@ -37,6 +43,14 @@ DEFAULT_WINDOW_MINUTES = 30.0
 # Written-at-capacity ceiling regardless of mode - see this module's own
 # docstring on why.
 _HARD_CAP_TURNS = 200
+
+# Bounds a single turn's text when building format_recent_turns()'s relevance-
+# classification prompt below - CHAT_CACHE_MAX_TURNS bounds turn *count*, not
+# each turn's own length, and up to 10 turns get concatenated into one prompt.
+# Same "an LLM prompt input needs its own size bound" reasoning as
+# mesh/analysis/skills/analyze.py's OBSERVATION_CHAR_CAP, much smaller here
+# since this caps one turn of chat, not a whole tool observation.
+_TURN_CHAR_CAP = 500
 
 _lock = threading.Lock()
 _turns_by_contact: Dict[str, Deque[Dict[str, Any]]] = {}
@@ -76,6 +90,83 @@ def get_recent_turns(contact_name: str) -> List[Dict[str, Any]]:
         cutoff = time.time() - (_window_minutes() * 60)
         return [t for t in turns if t['timestamp'] >= cutoff]
     return turns[-_max_turns():]
+
+
+class _RelevantTurns(BaseModel):
+    relevant_indices: List[int] = Field(
+        default_factory=list,
+        description=(
+            'Indices (from the numbered list) of turns that are relevant '
+            'context for the new message, oldest first. Empty if none of '
+            'the history is relevant.'
+        ),
+    )
+
+
+async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str, Any]) -> Optional[str]:
+    """Turns get_recent_turns()'s raw window into an LLM-ready context block,
+    filtered down to only the turns actually relevant to new_message - not the
+    whole window verbatim. Confirmed live: "I really enjoy trekking in the
+    Himalayas" -> ack -> "What gear should I pack for it?" got "which
+    activity?" back instead of resolving "it" to trekking, because nothing
+    read get_recent_turns()'s output before this. A flat per-turn relevance
+    classification against new_message, keeping the surviving turns in their
+    original chronological order, is enough for that - no graph between turn
+    pairs is needed (an unrelated turn like "what is 1+1"/"15" sitting between
+    two relevant turns must drop out without disturbing the order of the ones
+    kept).
+
+    Returns None when there is nothing to prepend - no history at all, or the
+    classifier judged nothing in it relevant - so the caller can skip
+    prepending, same "empty means don't bother" convention as
+    mesh/analysis/skills/analyze.py's _merge_document_list/
+    search_within_document.
+
+    cfg (model/temperature) comes from the caller, resolved via config_sdk on
+    its end - this module is a shared library, not tied to one agent_id, same
+    reasoning analyze.py's _decide_next_step/_compact take cfg as a parameter
+    rather than fetching it themselves."""
+    turns = get_recent_turns(contact_name)
+    if not turns:
+        return None
+
+    def _cap(text: str, cap: int) -> str:
+        return text if len(text) <= cap else text[:cap] + '...'
+
+    numbered = '\n\n'.join(
+        f'[{i}] User: {_cap(t["user_text"], _TURN_CHAR_CAP)}\n'
+        f'    Reply: {_cap(t["reply_text"], _TURN_CHAR_CAP)}'
+        for i, t in enumerate(turns)
+    )
+    prompt = (
+        f'Recent conversation history, oldest first:\n{numbered}\n\n'
+        f'New message: {new_message}\n\n'
+        'Which of the numbered turns above are relevant context for '
+        'understanding or answering the new message - e.g. it refers back to '
+        'something in that turn ("it", "that", "the same thing"), continues '
+        "the same topic, or the new message can't be fully understood without "
+        'it? A turn that is just unrelated small talk or a completely '
+        'different topic is not relevant even if it is recent. List the '
+        'indices of the relevant turns, oldest first.'
+    )
+    try:
+        model = ChatOllama(
+            model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'),
+            temperature=cfg['temperature'],
+        ).with_structured_output(_RelevantTurns)
+        result = await model.ainvoke(prompt)
+        keep = sorted({i for i in result.relevant_indices if 0 <= i < len(turns)})
+    except Exception as e:
+        logger.warning(f'format_recent_turns: relevance filter failed, using full window: {e}')
+        keep = list(range(len(turns)))
+
+    if not keep:
+        return None
+
+    return '\n\n'.join(
+        f'User: {turns[i]["user_text"]}\nReply: {turns[i]["reply_text"]}'
+        for i in keep
+    )
 
 
 def clear(contact_name: str) -> None:

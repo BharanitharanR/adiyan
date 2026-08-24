@@ -34,6 +34,7 @@ from mesh.memory.skills import (
     recall,
     remember,
     resolve_document,
+    search_document_chunks,
     search_kb,
     share_document,
 )
@@ -64,9 +65,10 @@ EXTRACTION_SCHEMAS = {
 }
 
 # skill_id -> handler. ingest_document, resolve_document, get_document_text,
-# and remember_interaction are all dispatchable here despite not being in
-# SKILLS/EXTRACTION_SCHEMAS above - see mesh/memory/skills/ingest.py's own
-# docstring for why a DataPart-only skill stays out of the classify pool.
+# search_document_chunks, and remember_interaction are all dispatchable here
+# despite not being in SKILLS/EXTRACTION_SCHEMAS above - see
+# mesh/memory/skills/ingest.py's own docstring for why a DataPart-only skill
+# stays out of the classify pool.
 SKILL_HANDLERS = {
     'recall_contact_memory': recall.run,
     'search_knowledge_base': search_kb.run,
@@ -74,6 +76,7 @@ SKILL_HANDLERS = {
     'ingest_document': ingest.run,
     'resolve_document': resolve_document.run,
     'get_document_text': get_document_text.run,
+    'search_document_chunks': search_document_chunks.run,
     'remember_interaction': remember.run,
     'list_documents': list_documents.run,
 }

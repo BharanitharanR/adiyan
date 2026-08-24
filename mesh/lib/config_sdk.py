@@ -98,9 +98,20 @@ class AgentConfig(Document):
 _init_lock = asyncio.Lock()
 _initialized = False
 _unavailable = False
+# Which running loop the cached AsyncMongoClient was created on - confirmed
+# live this matters: a process that calls into config_sdk from more than
+# one event loop over its lifetime (e.g. server.py's own
+# asyncio.run(_load_startup_config()) before serve() even starts uvicorn's
+# own, separate loop) got 'Cannot use AsyncMongoClient in different event
+# loop' on every call from the second loop onward, since _initialized
+# short-circuited straight past ever creating a new client for it. Compared
+# against asyncio.get_running_loop() on every call now, not just once.
+_initialized_loop: Optional[Any] = None
 
 # Cache key is (agent_id, vertical_id) - a platform doc and a vertical
-# override for the same agent_id are cached independently.
+# override for the same agent_id are cached independently. Cleared on
+# reinit too - a doc cached by one loop's client isn't safe to keep serving
+# once that client is torn down.
 _cache: Dict[Tuple[str, str], AgentConfig] = {}
 _cache_at: Dict[Tuple[str, str], float] = {}
 
@@ -110,15 +121,19 @@ def _ttl_seconds() -> float:
 
 
 async def _ensure_initialized() -> bool:
-    """True if Mongo/Beanie is ready to use - see this module's own
-    docstring on why a failed connection isn't retried per-call."""
-    global _initialized, _unavailable
-    if _initialized:
+    """True if Mongo/Beanie is ready to use on the CURRENT running loop -
+    see this module's own docstring on why a failed connection isn't
+    retried per-call, and the _initialized_loop comment above on why
+    "already initialized" alone isn't sufficient once a process might call
+    in from more than one loop."""
+    global _initialized, _unavailable, _initialized_loop, _cache, _cache_at
+    current_loop = asyncio.get_running_loop()
+    if _initialized and _initialized_loop is current_loop:
         return True
     if _unavailable:
         return False
     async with _init_lock:
-        if _initialized:
+        if _initialized and _initialized_loop is current_loop:
             return True
         if _unavailable:
             return False
@@ -127,6 +142,9 @@ async def _ensure_initialized() -> bool:
             await client.admin.command('ping')
             await init_beanie(database=client[MONGO_DB_NAME], document_models=[AgentConfig])
             _initialized = True
+            _initialized_loop = current_loop
+            _cache = {}
+            _cache_at = {}
             logger.info(f'Config SDK connected to MongoDB at {MONGO_URL!r}, db {MONGO_DB_NAME!r}')
             return True
         except Exception as e:

@@ -15,10 +15,11 @@ import logging
 import re
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -68,7 +69,7 @@ def _extract_pptx_markdown(content: bytes, filename: str) -> str:
     its own real text shapes/tables if any exist; when a slide has none
     (the all-picture case), OCR its picture shapes individually through
     Docling's image pipeline instead - the same path that already works
-    correctly for a standalone photo/screenshot (this same ingest_pdf's
+    correctly for a standalone photo/screenshot (this same ingest_document's
     non-PPTX branch, proven live against an Aadhaar card)."""
     from docling.document_converter import DocumentConverter
     from docling_core.types.io import DocumentStream
@@ -139,6 +140,12 @@ KB_DEFAULT_TOP_K = 4
 KB_CHUNK_SIZE = 800
 KB_CHUNK_OVERLAP = 100
 
+# search_within_document()'s own default - a bit higher than KB_DEFAULT_TOP_K
+# since the search space here is already narrowed to one document, so
+# returning a few more candidate chunks costs little and raises the odds the
+# actually-relevant one is among them.
+DOC_SEARCH_DEFAULT_TOP_K = 5
+
 # find_source_document()'s cutoff below which a top-1 "match" is treated as
 # no match at all, rather than confidently returning the least-bad option in
 # a knowledge base that has nothing genuinely relevant. First-pass value, not
@@ -174,7 +181,7 @@ class MemoryIndex:
     # this file continuing to grow a second, hand-rolled memory engine
     # alongside the knowledge-base one below.
 
-    def ingest_pdf(
+    def ingest_document(
         self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
     ) -> tuple:
         """Returns (chunks_count, source_filename) - source_filename is the composite
@@ -265,6 +272,34 @@ class MemoryIndex:
         nodes = retriever.retrieve(query)
         return [n.node.get_content() for n in nodes]
 
+    def search_within_document(
+        self, source_filename: str, query: str, top_k: int = DOC_SEARCH_DEFAULT_TOP_K,
+    ) -> List[Dict[str, Any]]:
+        """Semantic search scoped to ONE already-known document, not the whole
+        knowledge base - the fix for a confirmed-live gap: Analysis Agent's only
+        way to get a document's content used to be get_document_text(), which
+        concatenates EVERY chunk of a document into one giant string with no
+        ranking at all. For a 167-chunk book that produced 400K+ characters,
+        which the caller then truncates from the front before the ReAct loop
+        ever reasons about it - so a passage deep in the middle was never seen,
+        and the model fabricated a plausible-sounding answer instead.
+
+        Reuses retrieve_knowledge_base()'s own retriever, just narrowed to one
+        document's chunks via a metadata filter on source_filename. Returns
+        each matching chunk's own text plus its score and chunk_index (not just
+        the matched text alone) so a caller can cite exactly which part of the
+        document an answer came from - mirrors what find_source_document()
+        already keeps from a retrieved node rather than discarding it."""
+        filters = MetadataFilters(filters=[
+            MetadataFilter(key='source_filename', value=source_filename, operator=FilterOperator.EQ),
+        ])
+        retriever = self.kb_index.as_retriever(similarity_top_k=top_k, filters=filters)
+        nodes = retriever.retrieve(query)
+        return [
+            {'text': n.node.get_content(), 'score': n.score, 'chunk_index': n.node.metadata.get('chunk_index')}
+            for n in nodes
+        ]
+
     def list_documents(self) -> List[str]:
         """Every source_filename currently on file in the raw-document index
         (kb_documents table), most recently ingested first - lets a caller
@@ -300,7 +335,7 @@ class MemoryIndex:
         return best.node.metadata.get('source_filename')
 
     def get_document_text(self, source_filename: str) -> Optional[str]:
-        """Full text of a document ingested via ingest_pdf(), reconstructed by
+        """Full text of a document ingested via ingest_document(), reconstructed by
         concatenating every stored chunk for source_filename in chunk_index order -
         not a similarity search (kb_index.as_retriever() only supports "most similar
         to a query," never "every chunk belonging to this exact document"), so this
@@ -330,7 +365,7 @@ class MemoryIndex:
 
     def get_document(self, source_filename: str) -> Optional[Dict[str, str]]:
         """Raw bytes (base64) plus mimetype for a document previously ingested via
-        ingest_pdf(), keyed by the same source_filename its chunks carry in Qdrant -
+        ingest_document(), keyed by the same source_filename its chunks carry in Qdrant -
         or None if no such document is on file (never actually ingested, or ingested
         before this raw-storage index existed, or its stored file went missing).
 

@@ -35,6 +35,7 @@ agent in the first place:
     actually makes the registry re-fetch and store the now-current card.
 """
 import asyncio
+import contextlib
 import copy
 import logging
 import threading
@@ -105,18 +106,34 @@ def _rebuild_card_with_fresh_skills(agent_card: AgentCard, skills: List[AgentSki
     return new_card
 
 
-def _poll_vertical_and_reregister(agent_id: str, url: str) -> None:
-    """Runs forever, in its own thread. See this module's own docstring for
-    why this exists: the Agent Registry never re-fetches a live agent-card
-    on its own, so activating a vertical needs *something* to trigger a
-    re-fetch, or Orchestrator's routing decisions keep seeing whatever
-    skill description was true at this agent's last startup."""
+async def _poll_vertical_and_reregister(agent_id: str, url: str) -> None:
+    """Runs forever, as an asyncio task on the SAME event loop uvicorn
+    itself runs on - not a separate thread with its own asyncio.run() loop.
+
+    Confirmed live this distinction actually matters: config_sdk.py caches
+    a single AsyncMongoClient, bound to whichever event loop first used it
+    - unlike registry_client.py's calls (a fresh, stateless MCP session per
+    call, safe from any throwaway asyncio.run() loop), config_sdk has real
+    state tied to one specific loop. A background thread calling
+    asyncio.run(config_sdk...) in a loop creates a brand new event loop
+    every cycle, which broke every OTHER caller's config_sdk reads mesh-wide
+    the moment it touched the client first - 'Cannot use AsyncMongoClient
+    in different event loop' errors on completely unrelated calls, not just
+    this poller's own. Scheduled via Starlette's on_startup (see serve()
+    below), not threading.Thread, so it shares uvicorn's own loop instead
+    of competing with it.
+
+    See this module's own top docstring for why this exists at all: the
+    Agent Registry never re-fetches a live agent-card on its own, so
+    activating a vertical needs *something* to trigger a re-fetch, or
+    Orchestrator's routing decisions keep seeing whatever skill description
+    was true at this agent's last startup."""
     last_known_vertical = _UNCHECKED
     while True:
         try:
-            current = asyncio.run(config_sdk.get_active_vertical_id())
+            current = await config_sdk.get_active_vertical_id()
             if current != last_known_vertical:
-                if asyncio.run(registry_client.register(agent_id, url)):
+                if await registry_client.register(agent_id, url):
                     logger.info(f"Re-registered {agent_id!r} after active vertical changed to {current!r}")
                     last_known_vertical = current
                 # Left unchanged (not re-marked _UNCHECKED) on a failed
@@ -124,10 +141,10 @@ def _poll_vertical_and_reregister(agent_id: str, url: str) -> None:
                 # transition rather than silently giving up on it.
         except Exception as e:
             logger.warning(f'Vertical-change poll failed for {agent_id!r}: {e}')
-        time.sleep(_VERTICAL_POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(_VERTICAL_POLL_INTERVAL_SECONDS)
 
 
-def serve(
+def build_app(
     agent_card: AgentCard,
     executor: AgentExecutor,
     host: str,
@@ -135,12 +152,25 @@ def serve(
     tasks_db_path: Path,
     agent_id: str,
     skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
-) -> None:
-    """Blocks, running the agent's A2A server. tasks_db_path should come from
-    mesh.lib.paths.tasks_db_path(agent_id) - A2A's own task bookkeeping, kept
-    separate from the agent's domain data. agent_id is this agent's own
-    registry identity (e.g. 'scheduler') - used only for self-registration,
-    see this module's docstring.
+) -> Starlette:
+    """Everything serve() needs before starting the two background threads
+    and calling uvicorn.run() - split into its own function so
+    mesh/tools/smoke_test.py can build a real app object for every agent
+    and drive it through Starlette's own TestClient (which triggers a real
+    ASGI lifespan startup/shutdown) without binding a real port, making a
+    real network call, or blocking forever.
+
+    This split exists because of a real incident: 'import the module'
+    checks never once touched this code (it only ever ran inside
+    `if __name__ == '__main__':`), so a broken Starlette() call here took
+    down every agent simultaneously before anyone found out. See
+    mesh/tools/smoke_test.py's own docstring.
+
+    tasks_db_path should come from mesh.lib.paths.tasks_db_path(agent_id) -
+    A2A's own task bookkeeping, kept separate from the agent's domain data.
+    agent_id is this agent's own registry identity (e.g. 'scheduler') -
+    used for self-registration and the vertical poller, see this module's
+    docstring.
 
     skills_refresher: optional, e.g. a skills_catalog.py's get_skills() -
     if given, this agent's own /.well-known/agent-card.json is rebuilt from
@@ -163,11 +193,44 @@ def serve(
         async def card_modifier(card: AgentCard) -> AgentCard:
             return _rebuild_card_with_fresh_skills(card, await skills_refresher())
 
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: Starlette):
+        # The installed Starlette (1.6.0) dropped on_startup/on_shutdown
+        # entirely in favor of this ASGI lifespan protocol - confirmed live
+        # (TypeError: unexpected keyword argument 'on_startup') before
+        # switching to it. asyncio.create_task here, not threading.Thread -
+        # see _poll_vertical_and_reregister()'s own docstring for why this
+        # one specifically has to share uvicorn's own event loop rather
+        # than get a thread of its own like the two started in serve()
+        # below. Runs regardless of skills_refresher - re-registering is
+        # harmless (and cheap - a single MCP call) even for an agent whose
+        # card never changes.
+        task = asyncio.create_task(_poll_vertical_and_reregister(agent_id, f'http://{host}:{port}'))
+        yield
+        task.cancel()
+
     routes = []
     routes.extend(create_agent_card_routes(agent_card, card_modifier=card_modifier))
     routes.extend(create_jsonrpc_routes(request_handler, '/'))
 
-    app = Starlette(routes=routes)
+    return Starlette(routes=routes, lifespan=_lifespan)
+
+
+def serve(
+    agent_card: AgentCard,
+    executor: AgentExecutor,
+    host: str,
+    port: int,
+    tasks_db_path: Path,
+    agent_id: str,
+    skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
+) -> None:
+    """Blocks, running the agent's A2A server. See build_app()'s own
+    docstring for what it builds and why that part is split out; this
+    function is just that plus the two background threads (real side
+    effects - a registry registration, a periodic MCP poll - deliberately
+    not run by the smoke test) and the actual uvicorn.run() call."""
+    app = build_app(agent_card, executor, host, port, tasks_db_path, agent_id, skills_refresher)
 
     threading.Thread(
         target=_register_with_retry, args=(agent_id, f'http://{host}:{port}'), daemon=True,
@@ -176,14 +239,10 @@ def serve(
     # Every agent gets a live-ish view of the registry for free, whether or
     # not it happens to call registry_client.get_cached_agents() itself -
     # see registry_client.start_auto_refresh()'s own docstring. Cheap and
-    # idempotent even for agents that never read the cache.
+    # idempotent even for agents that never read the cache. Safe as its own
+    # thread (unlike the vertical poller above) - list_agents()/register()
+    # are stateless per-call MCP sessions, no cached client tied to a
+    # specific event loop.
     threading.Thread(target=registry_client.start_auto_refresh, daemon=True).start()
-
-    # Runs regardless of skills_refresher - re-registering is harmless
-    # (and cheap - registry_client.register() is a single MCP call) even
-    # for an agent whose card never actually changes.
-    threading.Thread(
-        target=_poll_vertical_and_reregister, args=(agent_id, f'http://{host}:{port}'), daemon=True,
-    ).start()
 
     uvicorn.run(app, host=host, port=port)

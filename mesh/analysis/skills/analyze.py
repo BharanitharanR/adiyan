@@ -73,10 +73,27 @@ FILE_DELIVERY_THRESHOLD_CHARS = 1500
 
 # A single observation folded into the scratchpad is capped before even
 # reaching the compaction step - not the final answer's length, just how
-# much of one raw tool result gets read at once. Generous enough for a
-# realistic document/memory chunk; a document too big to fit is a known,
-# separate limit (see mesh/ANALYSIS_AGENT_PLAN.md), not solved here.
+# much of one raw tool result gets read at once. This is the fallback/seed
+# default only - config_sdk.get_constant(AGENT_ID, 'observation_char_cap', ...)
+# is the live value run() actually uses (see run()'s own top). Confirmed
+# live this default was too small for anything book-length: read_document()
+# on a 167-chunk book got capped down to just its cover page and table of
+# contents before the ReAct loop ever reasoned about it - the actual
+# passage asked about, deep in the middle, was never seen, and the loop
+# answered anyway rather than admitting it hadn't reached that part. Not
+# bumped past ~50000 by default even so - the model's own context window
+# (qwen3:8b-16k = 16384 tokens, confirmed live) is the real ceiling
+# regardless of this value; see analyse_this's own docstring on the
+# document-too-big-to-fit limit this doesn't fully solve.
 OBSERVATION_CHAR_CAP = 6000
+
+# search_within_document()'s own fallback/seed default - config_sdk.get_constant
+# (AGENT_ID, 'doc_search_top_k', ...) is the live value run() actually uses, same
+# pattern as observation_char_cap above. Deliberately analysis's own config key,
+# not a shared read of memory_index.py's DOC_SEARCH_DEFAULT_TOP_K - what Analysis
+# Agent asks for and what Memory Agent defaults to when asked for nothing in
+# particular are two separate tunables that happen to start at the same value.
+DEFAULT_DOC_SEARCH_TOP_K = 5
 
 
 class Finding(BaseModel):
@@ -100,10 +117,10 @@ class _FinalAnswer(BaseModel):
     answer: str
 
 
-def _cap(text: str) -> str:
-    if len(text) <= OBSERVATION_CHAR_CAP:
+def _cap(text: str, cap: int) -> str:
+    if len(text) <= cap:
         return text
-    return text[:OBSERVATION_CHAR_CAP] + f'\n\n[...truncated, {len(text) - OBSERVATION_CHAR_CAP} more characters not shown]'
+    return text[:cap] + f'\n\n[...truncated, {len(text) - cap} more characters not shown]'
 
 
 async def _get_message(key: str, default: str, **kwargs: str) -> str:
@@ -124,11 +141,14 @@ async def _get_message(key: str, default: str, **kwargs: str) -> str:
         return default.format(**kwargs)
 
 
-def _make_tools(contact_name: Optional[str]):
+def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_search_top_k: int):
     """Tool functions as closures, not module-level - contact_name varies
     per call, and multiple analyse_this calls can run concurrently with
     different callers; module-level shared state would let them corrupt
-    each other."""
+    each other. observation_char_cap/doc_search_top_k are likewise per-call
+    (fetched once in run() from config_sdk) rather than the module-level
+    defaults, so a live config change takes effect on the next call without
+    a restart."""
 
     @tool
     async def search_documents(query: str) -> str:
@@ -147,7 +167,13 @@ def _make_tools(contact_name: Optional[str]):
     @tool
     async def read_document(source_filename: str) -> str:
         """Read a specific document's full text, by its exact filename - get
-        this from search_documents or list_documents first, don't guess one."""
+        this from search_documents or list_documents first, don't guess one.
+        Best for a short document, or when you genuinely need the whole
+        thing (e.g. summarizing it) rather than searching for something
+        specific in it - for a long document, its full text gets truncated
+        before you'd ever see anything past its early pages. If you have a
+        specific question to answer within a document that might be long,
+        use search_within_document instead."""
         token = permissions.mint_token('analysis', 'service')
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'get_document_text', {'source_filename': source_filename}, token=token)
@@ -158,7 +184,42 @@ def _make_tools(contact_name: Optional[str]):
                 'msg_document_not_found', "No document found with filename '{source_filename}'.",
                 source_filename=source_filename,
             )
-        return _cap(result['text'])
+        return _cap(result['text'], observation_char_cap)
+
+    @tool
+    async def search_within_document(source_filename: str, query: str) -> str:
+        """Find and return the most relevant passages within one already-
+        known document for a specific question - not the whole document.
+        Prefer this over read_document whenever you have a specific thing
+        to find within a document that might be long (a book, a lengthy
+        report) - read_document dumps the ENTIRE document as one block of
+        text, and for a long document that gets truncated from the front
+        before you ever reach the relevant part. Confirmed live: a
+        167-chunk book's read_document result never got past its own cover
+        page and table of contents. Get source_filename from search_documents
+        or list_documents first, don't guess one. Only use read_document
+        instead when you need the document's whole content or a general
+        overview rather than something specific in it.
+
+        Returns each matching passage's own real text together with its
+        position in the document (chunk_index) and a relevance score, for
+        citing exactly where an answer came from - not a summary or
+        paraphrase."""
+        token = permissions.mint_token('analysis', 'service')
+        try:
+            result = await call_agent(MEMORY_AGENT_URL, 'search_document_chunks', {
+                'source_filename': source_filename, 'query': query, 'top_k': doc_search_top_k,
+            }, token=token)
+        except Exception as e:
+            return f'search_within_document failed: {e}'
+        if not result.get('found'):
+            return await _get_message(
+                'msg_no_relevant_chunks', "No relevant passages found in '{source_filename}' for that question.",
+                source_filename=source_filename,
+            )
+        chunks = result['chunks']
+        parts = [f"[chunk {c['chunk_index']}, relevance {c['score']:.2f}]\n{c['text']}" for c in chunks]
+        return '\n\n---\n\n'.join(parts)
 
     @tool
     async def list_documents() -> str:
@@ -235,7 +296,7 @@ def _make_tools(contact_name: Optional[str]):
             result = await call_agent_with_text(match['url'], request, token=token)
         except Exception as e:
             return f'consult_agent failed: {e}'
-        return _cap(str(result))
+        return _cap(str(result), observation_char_cap)
 
     @tool
     def finish(answer: str) -> str:
@@ -261,7 +322,10 @@ def _make_tools(contact_name: Optional[str]):
         plainly instead of reporting on what you found anyway."""
         return answer  # never actually executed - the loop intercepts this call
 
-    tools = [search_documents, read_document, list_documents, recall_memory, discover_agents, consult_agent, finish]
+    tools = [
+        search_documents, read_document, search_within_document, list_documents,
+        recall_memory, discover_agents, consult_agent, finish,
+    ]
     return tools, {t.name: t for t in tools}
 
 
@@ -300,6 +364,18 @@ async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg
         'later asked to "explain the rules of the game", got asked "which '
         'game?" instead of getting tennis rules - recall_memory would have '
         'resolved that on its own, it was just never called. '
+        'search_documents only ever returns a filename, never document '
+        'content - if the scratchpad shows a document under documents_known '
+        'that has not yet been read, investigate it (read_document or '
+        'search_within_document) before treating anything about that '
+        'document as a finding or citing it in your answer. '
+        'If a document is already known to be relevant (in documents_known) '
+        'and you have a specific thing to find within it, call '
+        'search_within_document with that specific question as the query - '
+        'not read_document, which dumps the whole document and, for a long '
+        'one, gets truncated before reaching the relevant part. Only use '
+        "read_document when you need the document's full content or a "
+        'general overview rather than something specific in it. '
         'Never state a specific real-world detail (an event, an exact date, '
         'a price, current availability) as fact unless a tool actually gave '
         'it to you - if you are unsure, say so or leave it out, do not assume. '
@@ -396,6 +472,38 @@ def _merge_document_list(scratchpad: Scratchpad, observation: str) -> Scratchpad
     return scratchpad
 
 
+def _merge_search_result(scratchpad: Scratchpad, observation: str) -> Scratchpad:
+    """search_documents() observations that matched something never go
+    through _compact()'s LLM call either - confirmed live (via a real
+    WhatsApp message and its Phoenix trace) that the same failure as
+    _merge_document_list() documents happens here too: the tool's own
+    docstring says it returns nothing but a filename ("Best match:
+    <filename>"), yet handing that bare string to _compact() as an
+    "observation" produced a confident, specific "finding" - a fabricated
+    quote and fabricated facts (a wrong port number, a wrong justification)
+    attributed to that file - with read_document never actually called to
+    verify any of it, because finish() looked satisfied and the loop never
+    took another step. Same fix as _merge_document_list(): code-enforced,
+    not LLM-judged - a "Best match: <filename>" string has nothing in it an
+    LLM could correctly call a finding, so extract the filename in plain
+    Python and nudge the loop to read it, exactly like the
+    source_filename-seeding at the top of run() already does. The "nothing
+    matched" case is a safe, already-canned message with no fabrication
+    risk - see run()'s dispatch, which only routes here when the "Best
+    match:" prefix is present, and lets the canned message go through the
+    normal _compact() path unchanged."""
+    filename = observation[len('Best match: '):].strip()
+    if filename and filename not in scratchpad.documents_known:
+        scratchpad.documents_known.append(filename)
+    nudge = (
+        f'The document {filename!r} is already known to be relevant - investigate it '
+        '(read_document or search_within_document) before treating anything about it as a finding.'
+    )
+    if filename and filename not in scratchpad.documents_checked and nudge not in scratchpad.open_questions:
+        scratchpad.open_questions.append(nudge)
+    return scratchpad
+
+
 def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]:
     if len(text) <= FILE_DELIVERY_THRESHOLD_CHARS:
         return {'found': True, 'result': text}
@@ -412,7 +520,9 @@ def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]
 async def run(instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None) -> Dict[str, Any]:
     cfg = await config_sdk.get_stage_config(AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'])
     strict = await config_sdk.get_constant(AGENT_ID, 'strict_grounding', DEFAULT_STRICT_GROUNDING)
-    tools, tools_by_name = _make_tools(contact_name)
+    observation_char_cap = await config_sdk.get_constant(AGENT_ID, 'observation_char_cap', OBSERVATION_CHAR_CAP)
+    doc_search_top_k = await config_sdk.get_constant(AGENT_ID, 'doc_search_top_k', DEFAULT_DOC_SEARCH_TOP_K)
+    tools, tools_by_name = _make_tools(contact_name, observation_char_cap, doc_search_top_k)
 
     scratchpad = Scratchpad()
     if source_filename:
@@ -421,7 +531,10 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
         # instead of re-discovering something it was already handed, while
         # still being free to check elsewhere if that turns out not to be enough.
         scratchpad.documents_known.append(source_filename)
-        scratchpad.open_questions.append(f'The document {source_filename!r} is already known to be relevant - read it first.')
+        scratchpad.open_questions.append(
+            f'The document {source_filename!r} is already known to be relevant - investigate it '
+            '(read_document or search_within_document) before treating anything about it as a finding.'
+        )
 
     for _ in range(MAX_STEPS):
         response = await _decide_next_step(instruction, scratchpad, tools, cfg, strict)
@@ -450,8 +563,13 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
             # own docstring for why this tool's output specifically must
             # never reach the 'extract findings' compaction step.
             scratchpad = _merge_document_list(scratchpad, str(observation))
+        elif call['name'] == 'search_documents' and str(observation).startswith('Best match: '):
+            # Same reasoning, same fix - see _merge_search_result()'s own
+            # docstring. Only the "matched" case is bypassed; the "nothing
+            # matched" case is a canned message and falls through below.
+            scratchpad = _merge_search_result(scratchpad, str(observation))
         else:
-            scratchpad = await _compact(instruction, scratchpad, call['name'], _cap(str(observation)), cfg)
+            scratchpad = await _compact(instruction, scratchpad, call['name'], _cap(str(observation), observation_char_cap), cfg)
 
     # Hit MAX_STEPS without finish() - never error out, answer from
     # whatever was gathered.

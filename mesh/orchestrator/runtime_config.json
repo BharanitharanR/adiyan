@@ -29,6 +29,11 @@
       "model": "qwen3:8b-16k",
       "temperature": 0.7,
       "timeout": 60
+    },
+    "filter_chat_history": {
+      "model": "qwen3:8b-16k",
+      "temperature": 0.7,
+      "timeout": 60
     }
   }
 }

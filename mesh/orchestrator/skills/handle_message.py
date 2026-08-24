@@ -101,7 +101,7 @@ async def _ingest_into_knowledge_base(
     still has an extension to format-sniff against.
 
     username (passed to Memory Agent as who's storing this - see
-    memory_index.py's ingest_pdf docstring on why it folds into storage,
+    memory_index.py's ingest_document docstring on why it folds into storage,
     not just an access-control label) is contact_name when WhatsApp gave
     one, falling back to the raw chat_id - the same 'Unknown' fallback
     openwa_receiver.py already applies means contact_name is effectively
@@ -306,6 +306,23 @@ async def run(
             # gate_reply being None, and rules_engine.check() only returns a
             # None tier alongside a set reply (the not-registered rejection).
             token = permissions.mint_token(chat_id, tier)
+
+            # Short-term chat history, prepended only for the two forward
+            # calls below - NOT for route_to_agent()'s own classify() call
+            # just below, which compares text against short skill
+            # description/example phrases and would only get confused by a
+            # history block glued onto it. Confirmed live: "I really enjoy
+            # trekking in the Himalayas" -> ack -> "What gear should I pack
+            # for it?" got "which activity?" back instead of resolving "it" -
+            # chat_cache.get_recent_turns() had a real answer sitting right
+            # there the whole time, nothing ever read it. See
+            # chat_cache.format_recent_turns()'s own docstring for the
+            # relevance-filtering (not full-window) behavior.
+            history = await chat_cache.format_recent_turns(
+                contact_name or chat_id, text, cfg['filter_chat_history'],
+            )
+            augmented_text = f'{history}\n\nNew message: {text}' if history else text
+
             target_url = await route_to_agent(text, cfg['route_to_agent'])
             if target_url is None:
                 # No skill classified this - Analysis Agent is the fallback,
@@ -319,7 +336,7 @@ async def run(
                     reply = "Sorry, I'm not sure how to help with that yet."
                 else:
                     result = await call_agent(analysis_url, 'analyse_this', {
-                        'instruction': text,
+                        'instruction': augmented_text,
                         'contact_name': contact_name,
                     }, token=token)
                     if result.get('content_b64'):
@@ -339,7 +356,7 @@ async def run(
                     else:
                         reply = "Sorry, I'm not sure how to help with that yet."
             else:
-                result = await call_agent_with_text(target_url, text, token=token)
+                result = await call_agent_with_text(target_url, augmented_text, token=token)
                 if result.get('content_b64'):
                     # See this module's own docstring on the content_b64
                     # delivery convention. Humanize a caption from
@@ -397,6 +414,14 @@ async def run(
         # though routing/forwarding/humanizing had already genuinely
         # succeeded. Delivery failing is a separate, distinct outcome, same
         # fix shape already applied once in the retired whatsapp_connector.
+        #
+        # Logged (unlike the "stay silent" reply=None path above) because
+        # silence here is a UX choice, not a debugging one - confirmed live
+        # this failure mode left zero trace anywhere (no error in this log,
+        # no send_message call in whatsapp_mcp's own log) when it actually
+        # happened, indistinguishable from routing having silently decided
+        # not to reply at all.
+        logger.error(f'Failed to deliver reply for {chat_id}: {e}')
         delivered = False
         reply = f'{reply} (delivery failed: {e})'
 

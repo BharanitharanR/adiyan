@@ -67,7 +67,13 @@ COMPONENTS=(
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"
-    "openwa|2785|npm --prefix penwa start"
+    # NODE_EXTRA_CA_CERTS set via `env` here, not penwa/.env - Node reads that
+    # var once at its own process bootstrap (before dotenv-style application
+    # code runs), so setting it only in .env is silently too late. Trusts
+    # whatsapp_mcp's self-signed webhook-receiver cert (see
+    # mesh/mcp/whatsapp/server.py's ensure_self_signed_cert) so OpenWA's
+    # outbound webhook fetch doesn't reject it with "TypeError: fetch failed".
+    "openwa|2785|env NODE_EXTRA_CA_CERTS=$HOME/.Adiyan/mcp/whatsapp/tls/cert.pem npm --prefix penwa start"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
