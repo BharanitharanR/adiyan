@@ -20,7 +20,15 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
 from mesh.config_agent.constants import AGENT_ID
-from mesh.config_agent.skills import get_all_configs, query_config, update_config, update_stage_config
+from mesh.config_agent.skills import (
+    activate_vertical,
+    deactivate_vertical,
+    get_active_vertical,
+    get_all_configs,
+    query_config,
+    update_config,
+    update_stage_config,
+)
 from mesh.config_agent.skills_catalog import SKILLS
 from mesh.lib import permissions
 from mesh.lib.config import load_runtime_config
@@ -40,7 +48,23 @@ class UpdateConfigParams(BaseModel):
     new_value: str = Field(description='The new value, as stated by the caller.')
 
 
-EXTRACTION_SCHEMAS = {'query_config': QueryConfigParams, 'update_config': UpdateConfigParams}
+class ActivateVerticalParams(BaseModel):
+    vertical_id: str = Field(description='The vertical to switch this deployment onto.')
+
+
+class NoParams(BaseModel):
+    """deactivate_vertical/get_active_vertical take no arguments - still
+    need a schema so extract() has something to run against, even though
+    it'll extract nothing."""
+
+
+EXTRACTION_SCHEMAS = {
+    'query_config': QueryConfigParams,
+    'update_config': UpdateConfigParams,
+    'activate_vertical': ActivateVerticalParams,
+    'deactivate_vertical': NoParams,
+    'get_active_vertical': NoParams,
+}
 
 # get_all_configs/update_stage_config: DataPart-only, deliberately not in
 # SKILLS/EXTRACTION_SCHEMAS above - the config dashboard's own structured
@@ -52,6 +76,9 @@ SKILL_HANDLERS = {
     'update_config': update_config.run,
     'get_all_configs': get_all_configs.run,
     'update_stage_config': update_stage_config.run,
+    'activate_vertical': activate_vertical.run,
+    'deactivate_vertical': deactivate_vertical.run,
+    'get_active_vertical': get_active_vertical.run,
 }
 
 

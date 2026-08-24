@@ -78,6 +78,12 @@ PLATFORM_VERTICAL = 'platform'
 # registry_client.py's AGENT_REGISTRY_REFRESH_SECONDS.
 DEFAULT_CACHE_TTL_SECONDS = 30.0
 
+# Not a real agent_id - a reserved one this module uses to store deployment-
+# wide control state (currently just active_vertical_id) in the same
+# collection/document shape everything else already uses, rather than a
+# second Document class. See get_active_vertical_id()/set_active_vertical_id().
+CONTROL_AGENT_ID = '_mesh_control'
+
 
 class AgentConfig(Document):
     agent_id: str
@@ -176,16 +182,33 @@ async def _upsert(
         return None
 
 
+async def _resolve_vertical(agent_id: str, vertical_id: Optional[str]) -> Optional[str]:
+    """A caller-supplied vertical_id always wins. Otherwise, whatever's
+    currently activated deployment-wide (see set_active_vertical_id())
+    applies automatically - this is what makes activating a vertical
+    change every agent's behavior at once without touching a single
+    call site in handle_message.py/analyze.py/etc. Guarded against
+    CONTROL_AGENT_ID itself, or get_active_vertical_id()'s own
+    get_constant() call would recurse into this forever."""
+    if vertical_id:
+        return vertical_id
+    if agent_id == CONTROL_AGENT_ID:
+        return None
+    return await get_active_vertical_id()
+
+
 async def get_stage_config(
     agent_id: str, stage_name: str, default: Dict[str, Any], vertical_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """{model, temperature, timeout, ...} for one agent's one pipeline
-    stage. vertical_id (if given and not PLATFORM_VERTICAL) is checked
-    first - falls back to the platform layer, then to `default`, which
-    only ever seeds the *platform* layer (see this module's own docstring
-    on why a vertical override is always an explicit write)."""
-    if vertical_id and vertical_id != PLATFORM_VERTICAL:
-        vertical_doc = await _get_agent_doc(agent_id, vertical_id)
+    stage. The effective vertical (explicit vertical_id, or whatever's
+    currently activated deployment-wide - see _resolve_vertical()) is
+    checked first - falls back to the platform layer, then to `default`,
+    which only ever seeds the *platform* layer (see this module's own
+    docstring on why a vertical override is always an explicit write)."""
+    effective_vertical = await _resolve_vertical(agent_id, vertical_id)
+    if effective_vertical and effective_vertical != PLATFORM_VERTICAL:
+        vertical_doc = await _get_agent_doc(agent_id, effective_vertical)
         if vertical_doc is not None and stage_name in vertical_doc.stages:
             return vertical_doc.stages[stage_name]
 
@@ -199,9 +222,11 @@ async def get_stage_config(
 
 async def get_constant(agent_id: str, key: str, default: Any, vertical_id: Optional[str] = None) -> Any:
     """Any other hardcoded constant or prompt template - same layered
-    resolution and auto-seed-on-first-miss behavior as get_stage_config()."""
-    if vertical_id and vertical_id != PLATFORM_VERTICAL:
-        vertical_doc = await _get_agent_doc(agent_id, vertical_id)
+    resolution (effective vertical, explicit or currently activated, then
+    platform) and auto-seed-on-first-miss behavior as get_stage_config()."""
+    effective_vertical = await _resolve_vertical(agent_id, vertical_id)
+    if effective_vertical and effective_vertical != PLATFORM_VERTICAL:
+        vertical_doc = await _get_agent_doc(agent_id, effective_vertical)
         if vertical_doc is not None and key in vertical_doc.constants:
             return vertical_doc.constants[key]
 
@@ -211,6 +236,25 @@ async def get_constant(agent_id: str, key: str, default: Any, vertical_id: Optio
 
     await _upsert(agent_id, PLATFORM_VERTICAL, constant=(key, default))
     return default
+
+
+async def get_active_vertical_id() -> Optional[str]:
+    """The deployment-wide active vertical, or None if the deployment is
+    running plain platform defaults (the default state). Same caching as
+    every other read here - a fresh check happens at most every
+    _ttl_seconds()."""
+    return await get_constant(CONTROL_AGENT_ID, 'active_vertical_id', None)
+
+
+async def set_active_vertical_id(vertical_id: Optional[str]) -> bool:
+    """Activates a vertical deployment-wide (every later get_stage_config/
+    get_constant call that doesn't pass its own vertical_id now resolves
+    against it automatically) - or pass None to deactivate, reverting to
+    plain platform defaults. True on success. This is the one write every
+    'confirmed by owner or support' activation flow (Config Agent's
+    activate_vertical skill, the dashboard's activation control) actually
+    calls - see mesh/CONFIG_ARCHITECTURE.md."""
+    return await set_constant(CONTROL_AGENT_ID, 'active_vertical_id', vertical_id)
 
 
 async def load_stage_configs(
@@ -240,15 +284,17 @@ async def set_constant(agent_id: str, key: str, value: Any, vertical_id: str = P
 
 
 async def list_agent_ids(vertical_id: str = PLATFORM_VERTICAL) -> List[str]:
-    """Every agent_id with a config document on file for this layer
+    """Every real agent_id with a config document on file for this layer
     (platform by default) - for the Config Agent (WhatsApp/NLP resolution
     against real agent_ids, not guessed ones) and the dashboard's agent
-    picker. Empty if Mongo is unreachable."""
+    picker. Excludes CONTROL_AGENT_ID - it holds deployment-wide control
+    state, not a real agent's config, and has no business showing up next
+    to 'orchestrator'/'analysis' in a picker. Empty if Mongo is unreachable."""
     if not await _ensure_initialized():
         return []
     try:
         docs = await AgentConfig.find(AgentConfig.vertical_id == vertical_id).to_list()
-        return [d.agent_id for d in docs]
+        return [d.agent_id for d in docs if d.agent_id != CONTROL_AGENT_ID]
     except Exception as e:
         logger.warning(f'Config SDK could not list agent ids: {e}')
         return []

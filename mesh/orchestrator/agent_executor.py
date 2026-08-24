@@ -24,7 +24,7 @@ from a2a.server.tasks import TaskUpdater
 from mesh.lib.config import load_runtime_config
 from mesh.lib.skill_router import route
 from mesh.orchestrator.skills import handle_message
-from mesh.orchestrator.skills_catalog import SKILLS
+from mesh.orchestrator.skills_catalog import get_skills
 
 AGENT_CODE_DIR = Path(__file__).parent
 
@@ -62,9 +62,10 @@ class OrchestratorAgentExecutor(AgentExecutor):
         else:
             text = get_message_text(context.message)
             cfg = load_runtime_config(AGENT_CODE_DIR)
+            skills = await get_skills()
             try:
                 skill_id, ambiguous, params = await route(
-                    text, SKILLS, EXTRACTION_SCHEMAS,
+                    text, skills, EXTRACTION_SCHEMAS,
                     classify_cfg=cfg['classify_skill'],
                     extract_cfg=cfg['extract_parameters'],
                 )

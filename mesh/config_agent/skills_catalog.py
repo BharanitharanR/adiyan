@@ -43,4 +43,48 @@ SKILLS = [
         input_modes=['text/plain'],
         output_modes=['application/json'],
     ),
+    AgentSkill(
+        id='activate_vertical',
+        name='Activate Vertical',
+        description=(
+            'Switch the whole deployment onto a business-vertical agent\'s own config '
+            'overrides - every agent that has one starts using it immediately. The '
+            'vertical must already have at least one setting configured somewhere; '
+            'refuses to activate an unknown one rather than switching to nothing.'
+        ),
+        tags=['config', 'admin', 'vertical'],
+        examples=[
+            'Activate the gym_trainer vertical',
+            'Switch this deployment to nutrition_coach',
+            'Turn on the gym_trainer persona',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+    AgentSkill(
+        id='deactivate_vertical',
+        name='Deactivate Vertical',
+        description='Revert the whole deployment back to plain platform defaults - undoes activate_vertical.',
+        tags=['config', 'admin', 'vertical'],
+        examples=[
+            'Deactivate the vertical',
+            'Go back to platform defaults',
+            'Turn off gym_trainer',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+    AgentSkill(
+        id='get_active_vertical',
+        name='Get Active Vertical',
+        description='Which vertical (if any) this deployment is currently running under.',
+        tags=['config', 'admin', 'vertical'],
+        examples=[
+            'Which vertical is active right now?',
+            'What persona is this deployment running?',
+            'Are we on platform defaults or a vertical?',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
 ]

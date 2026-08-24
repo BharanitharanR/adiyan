@@ -80,11 +80,17 @@ channel Adiyan runs on.
 (send/receive tools) for Orchestrator to use - Adiyan itself has no direct
 WhatsApp integration, it's entirely mediated through this.
 **Why it's separate:** `penwa/` is a vendored copy of the open-source
-OpenWA project (Node.js), not Adiyan-authored code - explicitly called out
-in `mesh/start_all.sh`'s own header comment as external infra this script
-does not start or stop.
-**Install/run:** managed separately from the Python mesh - see `penwa/`'s
-own docs.
+OpenWA project (Node.js), not Adiyan-authored code.
+**Confirmed live:** does not survive a machine restart on its own, and
+unlike Mongo/Qdrant nothing degrades gracefully without it - every
+incoming WhatsApp message just silently never arrives anywhere (no error
+anywhere, since `whatsapp_mcp`'s webhook is never even called). Went
+unnoticed for ~10 hours before this was caught. This is why it's now a
+third exception `start_all.sh` manages directly (`npm --prefix penwa
+start`, the API only - not `npm run dev`'s dashboard+API pair, the mesh
+only needs the API on port 2785), same reasoning as Mongo/Qdrant.
+**Install:** `npm install` inside `penwa/` (already done on this machine -
+`node_modules/` present) - see `penwa/`'s own docs for a fresh setup.
 
 ## ngrok
 

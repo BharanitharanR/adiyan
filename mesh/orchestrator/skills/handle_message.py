@@ -216,10 +216,12 @@ async def run(
     is_self_chat: bool = False,
 ) -> Dict[str, Any]:
     # Mongo-backed via mesh/lib/config_sdk.py (pilot agent for the central
-    # config SDK) - local runtime_config.json is now only the fallback/
-    # first-seed default, not the source of truth. See config_sdk.py's own
-    # docstring for the auto-seed/degrade-gracefully behavior.
+    # config SDK) - local runtime_config.json/constants.py are now only the
+    # fallback/first-seed defaults, not the source of truth. See
+    # config_sdk.py's own docstring for the auto-seed/degrade-gracefully
+    # behavior.
     cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
+    whatsapp_mcp_url = await config_sdk.get_constant(AGENT_ID, 'whatsapp_mcp_url', WHATSAPP_MCP_URL)
 
     text, kb_pending = await _resolve_image_intent(text, image)
     if document is not None:
@@ -377,7 +379,7 @@ async def run(
         # triggered this run.
         delivery_token = permissions.mint_token('orchestrator', 'service')
         if pending_document is not None:
-            await call_tool(WHATSAPP_MCP_URL, 'send_document', {
+            await call_tool(whatsapp_mcp_url, 'send_document', {
                 'chat_id': chat_id,
                 'filename': pending_document['filename'],
                 'content_b64': pending_document['content_b64'],
@@ -386,7 +388,7 @@ async def run(
             }, token=delivery_token)
         else:
             await call_tool(
-                WHATSAPP_MCP_URL, 'send_message', {'chat_id': chat_id, 'text': reply}, token=delivery_token,
+                whatsapp_mcp_url, 'send_message', {'chat_id': chat_id, 'text': reply}, token=delivery_token,
             )
         delivered = True
     except Exception as e:

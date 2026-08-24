@@ -19,6 +19,8 @@ being run standalone from its own directory.
 """
 import asyncio
 import logging
+import threading
+import time
 
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
@@ -32,13 +34,22 @@ from mesh.scheduler.skills_catalog import SKILLS
 
 logger = logging.getLogger('SchedulerServer')
 
+# Confirmed live: a startup-only catch-up attempt that fails once (e.g.
+# WhatsApp's session hadn't reconnected yet at that exact moment) leaves the
+# job stuck permanently, with no error visible anywhere the user would
+# check - find_overdue_jobs() only ever runs again on the next full process
+# restart. Retrying periodically in the background is what actually
+# recovers once whatever was down comes back, without needing a restart.
+CATCH_UP_RETRY_SECONDS = 5 * 60
+
 
 async def _catch_up_overdue_jobs() -> None:
     """See db.find_overdue_jobs()'s own docstring - catches anything
     cron_trigger's misfire handling silently dropped while this mesh was
     down. Best-effort per job: one failing job (e.g. WhatsApp not
-    connected yet at this exact moment of startup) must not block the
-    others or stop the server from starting."""
+    connected yet at this exact moment) must not block the others, stop
+    the server from starting, or stop later jobs from being retried on
+    the next pass - see CATCH_UP_RETRY_SECONDS above."""
     conn = db.connect(state_db_path(AGENT_ID))
     overdue = db.find_overdue_jobs(conn)
     for job in overdue:
@@ -46,7 +57,16 @@ async def _catch_up_overdue_jobs() -> None:
             await run_routine.run(job_id=job['id'])
             logger.info(f"Caught up overdue job {job['id']} ({job['name']!r})")
         except Exception as e:
-            logger.warning(f"Could not catch up overdue job {job['id']} ({job['name']!r}): {e}")
+            logger.warning(f"Could not catch up overdue job {job['id']} ({job['name']!r}), will retry: {e}")
+
+
+def _catch_up_retry_loop() -> None:
+    while True:
+        time.sleep(CATCH_UP_RETRY_SECONDS)
+        try:
+            asyncio.run(_catch_up_overdue_jobs())
+        except Exception as e:
+            logger.warning(f'Catch-up retry pass failed: {e}')
 
 
 if __name__ == '__main__':
@@ -55,6 +75,7 @@ if __name__ == '__main__':
     setup_tracing(AGENT_ID)
 
     asyncio.run(_catch_up_overdue_jobs())
+    threading.Thread(target=_catch_up_retry_loop, daemon=True).start()
 
     agent_card = adiyan_card(
         name='Scheduler Agent',

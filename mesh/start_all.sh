@@ -6,10 +6,11 @@
 #   mesh/start_all.sh stop
 #
 # Start is idempotent - a component already running is left alone, not
-# restarted. Does NOT start/stop OpenWA (penwa/), ngrok, or nginx itself -
-# those are external infra this script assumes are managed separately (see
-# mesh/EXTERNAL_DEPENDENCIES.md). MongoDB and Qdrant ARE started/stopped
-# here despite also being third-party infra - explicit exceptions:
+# restarted. Does NOT start/stop ngrok or nginx itself - those are external
+# infra this script assumes are managed separately (see
+# mesh/EXTERNAL_DEPENDENCIES.md). MongoDB, Qdrant, and OpenWA ARE
+# started/stopped here despite also being third-party infra - explicit
+# exceptions:
 #   - MongoDB: mesh/lib/config_sdk.py's whole point is degrading gracefully
 #     without it, so having start_all.sh guarantee it's up removes the most
 #     common reason that fallback would silently kick in. Started via
@@ -24,10 +25,21 @@
 #     own docstring) against mesh/qdrant/config.yaml, which points at the
 #     real on-disk data directory (~/.Adiyan/qdrant_storage), not a fresh
 #     empty one.
-# Both use this script's own idempotency/pkill model (identical for every
-# other component here), not `brew services` - `stop` shuts them down the
-# same clean way (pkill sends SIGTERM, a graceful shutdown request for
-# both, not a kill -9).
+#   - OpenWA: confirmed live the worst version of this failure - it doesn't
+#     survive a restart either, but unlike Mongo/Qdrant nothing degrades
+#     gracefully without it: every incoming WhatsApp message just silently
+#     never arrives anywhere (no error in any log, since whatsapp_mcp's
+#     webhook is never even called). Went unnoticed for ~10 hours before
+#     this exception was added. Runs `npm --prefix penwa start` (the NestJS
+#     API only, not `npm run dev`'s dashboard+API pair - the mesh only
+#     needs the API, port 2785).
+# All three use this script's own idempotency/pkill model (identical for
+# every other component here), not `brew services` - `stop` shuts them
+# down the same clean way (pkill sends SIGTERM, a graceful shutdown
+# request, not a kill -9). OpenWA is the one exception worth a second look
+# if `stop` ever leaves a stray node process behind - npm's own process
+# tree (npm -> nest's CLI -> the actual server) doesn't always forward
+# signals as cleanly as a single Python process does.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,6 +67,7 @@ COMPONENTS=(
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"
+    "openwa|2785|npm --prefix penwa start"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
@@ -95,10 +108,10 @@ do_start() {
         fi
         if [ "$name" = "phoenix" ]; then
             nohup phoenix serve > "$LOG_DIR/$name.log" 2>&1 &
-        elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ]; then
-            # A raw binary invocation, not a `python3 -m` module - mongod
+        elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ]; then
+            # A raw binary/npm invocation, not a `python3 -m` module - mongod
             # logs to its own configured path (systemLog.path in
-            # mongod.conf) rather than this one; qdrant does log here.
+            # mongod.conf) rather than this one; qdrant and openwa do log here.
             nohup $cmd > "$LOG_DIR/$name.log" 2>&1 &
         else
             nohup python3 -m "$cmd" > "$LOG_DIR/$name.log" 2>&1 &

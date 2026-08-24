@@ -106,6 +106,24 @@ def _cap(text: str) -> str:
     return text[:OBSERVATION_CHAR_CAP] + f'\n\n[...truncated, {len(text) - OBSERVATION_CHAR_CAP} more characters not shown]'
 
 
+async def _get_message(key: str, default: str, **kwargs: str) -> str:
+    """Mongo-backed user-facing/tool-observation copy - a fallback or
+    "nothing found" message, not the ReAct loop's own reasoning prompts
+    (those stay hardcoded for now, a separate, not-yet-agreed piece of
+    scope). Falls back to `default` (formatted) if the on-file template is
+    malformed - confirmed live once already this session
+    (orchestrator/humanize.py's own prompt) that a template missing an
+    expected placeholder must not break the caller, especially here: these
+    strings often feed straight back into the ReAct loop's own reasoning
+    as a tool observation, not just a WhatsApp reply."""
+    template = await config_sdk.get_constant(AGENT_ID, key, default)
+    try:
+        return template.format(**kwargs)
+    except Exception as e:
+        logger.warning(f'Message template {key!r} on file is malformed, using default: {e}')
+        return default.format(**kwargs)
+
+
 def _make_tools(contact_name: Optional[str]):
     """Tool functions as closures, not module-level - contact_name varies
     per call, and multiple analyse_this calls can run concurrently with
@@ -123,7 +141,7 @@ def _make_tools(contact_name: Optional[str]):
         except Exception as e:
             return f'search_documents failed: {e}'
         if not result.get('found'):
-            return 'No matching document found in the knowledge base.'
+            return await _get_message('msg_no_matching_document', 'No matching document found in the knowledge base.')
         return f"Best match: {result['source_filename']}"
 
     @tool
@@ -136,7 +154,10 @@ def _make_tools(contact_name: Optional[str]):
         except Exception as e:
             return f'read_document failed: {e}'
         if not result.get('found'):
-            return f"No document found with filename '{source_filename}'."
+            return await _get_message(
+                'msg_document_not_found', "No document found with filename '{source_filename}'.",
+                source_filename=source_filename,
+            )
         return _cap(result['text'])
 
     @tool
@@ -154,7 +175,7 @@ def _make_tools(contact_name: Optional[str]):
             return f'list_documents failed: {e}'
         docs = result.get('documents', [])
         if not docs:
-            return 'The knowledge base is empty - no documents have been uploaded.'
+            return await _get_message('msg_kb_empty', 'The knowledge base is empty - no documents have been uploaded.')
         return '\n'.join(docs)
 
     @tool
@@ -163,7 +184,9 @@ def _make_tools(contact_name: Optional[str]):
         conversations - moods, goals, things they've mentioned before. Not
         for document content, that's search_documents' job."""
         if not contact_name:
-            return 'No specific person is associated with this request - nothing to recall.'
+            return await _get_message(
+                'msg_no_contact', 'No specific person is associated with this request - nothing to recall.',
+            )
         token = permissions.mint_token('analysis', 'service')
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'recall_contact_memory', {
@@ -173,7 +196,7 @@ def _make_tools(contact_name: Optional[str]):
             return f'recall_memory failed: {e}'
         snippets = result.get('snippets', [])
         if not snippets:
-            return 'Nothing relevant found in conversation memory.'
+            return await _get_message('msg_nothing_in_memory', 'Nothing relevant found in conversation memory.')
         return '\n'.join(f'- {s}' for s in snippets)
 
     @tool
@@ -183,15 +206,16 @@ def _make_tools(contact_name: Optional[str]):
         with something outside your own tools, e.g. a business-specific
         agent installed for this deployment."""
         agents = await list_agents()
+        no_agents_msg = await _get_message('msg_no_agents_discoverable', 'No other agents are currently discoverable.')
         if not agents:
-            return 'No other agents are currently discoverable.'
+            return no_agents_msg
         lines = []
         for entry in agents:
             if entry.get('agent_id') == 'analysis':
                 continue
             skill_names = ', '.join(s.get('name', s.get('id', '?')) for s in entry.get('skills', []))
             lines.append(f"{entry['agent_id']}: {skill_names or '(no skills advertised)'}")
-        return '\n'.join(lines) if lines else 'No other agents are currently discoverable.'
+        return '\n'.join(lines) if lines else no_agents_msg
 
     @tool
     async def consult_agent(agent_id: str, request: str) -> str:
@@ -202,7 +226,10 @@ def _make_tools(contact_name: Optional[str]):
         agents = await list_agents()
         match = next((a for a in agents if a.get('agent_id') == agent_id), None)
         if match is None:
-            return f"No agent registered with id '{agent_id}' - call discover_agents first."
+            return await _get_message(
+                'msg_agent_not_registered', "No agent registered with id '{agent_id}' - call discover_agents first.",
+                agent_id=agent_id,
+            )
         token = permissions.mint_token('analysis', 'service')
         try:
             result = await call_agent_with_text(match['url'], request, token=token)
@@ -383,7 +410,7 @@ def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]
 
 
 async def run(instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None) -> Dict[str, Any]:
-    cfg = load_runtime_config(AGENT_CODE_DIR)['react']
+    cfg = await config_sdk.get_stage_config(AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'])
     strict = await config_sdk.get_constant(AGENT_ID, 'strict_grounding', DEFAULT_STRICT_GROUNDING)
     tools, tools_by_name = _make_tools(contact_name)
 
@@ -402,7 +429,8 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
         if not response.tool_calls:
             # Answered directly without calling finish - treat its own text
             # as the answer, a graceful outcome, not an error.
-            return _package_result(response.content or "I wasn't able to find a clear answer.", source_filename)
+            fallback = await _get_message('msg_no_clear_answer', "I wasn't able to find a clear answer.")
+            return _package_result(response.content or fallback, source_filename)
 
         call = response.tool_calls[0]
         if call['name'] == 'finish':
@@ -410,7 +438,7 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
 
         tool_obj = tools_by_name.get(call['name'])
         if tool_obj is None:
-            observation = f"Unknown tool: {call['name']}"
+            observation = await _get_message('msg_unknown_tool', 'Unknown tool: {tool_name}', tool_name=call['name'])
         else:
             try:
                 observation = await tool_obj.ainvoke(call['args'])
