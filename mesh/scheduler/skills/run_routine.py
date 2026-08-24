@@ -23,7 +23,7 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from mesh.journal.constants import AGENT_URL as JOURNAL_AGENT_URL
-from mesh.journal.skills_catalog import SKILLS as JOURNAL_SKILLS
+from mesh.journal.skills_catalog import get_skills as get_journal_skills
 from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent
 from mesh.lib.config import load_runtime_config
@@ -45,7 +45,8 @@ class GenericMessage(BaseModel):
 
 
 async def _wants_journal(description: str, cfg: Dict[str, Any]) -> bool:
-    choice = await classify(description, JOURNAL_SKILLS, cfg)
+    journal_skills = await get_journal_skills()
+    choice = await classify(description, journal_skills, cfg)
     return choice.skill_id == 'craft_reflection_prompt'
 
 
