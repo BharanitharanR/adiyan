@@ -28,8 +28,20 @@ generation and embedding.
 instance.
 **Default endpoint:** `http://localhost:6339` (non-standard port -
 deliberately not Qdrant's usual 6333, see `mesh/memory/constants.py`).
-**Install:** https://qdrant.tech - typically run via Docker
-(`docker run -p 6339:6333 qdrant/qdrant`, mapping the non-standard port).
+**Install:** no Homebrew formula exists (confirmed via `brew search
+qdrant`) - `mesh/start_all.sh` manages a vendored binary instead, same
+exception it makes for MongoDB (both silently degrade rather than error
+when missing, which makes "just restart and it'll be fine" a trap without
+this). Get the binary with `bash mesh/qdrant/fetch_binary.sh` (downloads
+the official release, not committed to git) - after that, `start_all.sh`
+starts/stops it like every other component, against
+`mesh/qdrant/config.yaml` (points at the real on-disk data directory,
+`~/.Adiyan/qdrant_storage`).
+**Confirmed live:** does not survive a machine restart on its own - it was
+previously started by hand once and simply didn't come back after a
+reboot, silently degrading Memory Agent instead of erroring loudly. This
+is exactly why it's now one of the two exceptions `start_all.sh` manages
+directly instead of leaving external.
 
 ## MongoDB
 

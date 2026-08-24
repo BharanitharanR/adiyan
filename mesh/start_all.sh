@@ -8,18 +8,26 @@
 # Start is idempotent - a component already running is left alone, not
 # restarted. Does NOT start/stop OpenWA (penwa/), ngrok, or nginx itself -
 # those are external infra this script assumes are managed separately (see
-# mesh/EXTERNAL_DEPENDENCIES.md). MongoDB IS started/stopped here despite
-# also being third-party infra - explicit exception, per instruction, since
-# mesh/lib/config_sdk.py's whole point is degrading gracefully without it,
-# so having start_all.sh guarantee it's up removes the most common reason
-# that fallback would silently kick in. Started directly via `mongod
-# --config`, the same invocation Homebrew's own launchd plist uses
-# (confirmed from /opt/homebrew/Cellar/mongodb-community/*/
-# homebrew.mxcl.mongodb-community.plist) - not `brew services`, so this
-# script's own idempotency/pkill model (identical for every other
-# component here) applies to it too, and `stop` shuts it down the same
-# clean way (pkill sends SIGTERM, which mongod treats as a graceful
-# shutdown request, not a kill -9).
+# mesh/EXTERNAL_DEPENDENCIES.md). MongoDB and Qdrant ARE started/stopped
+# here despite also being third-party infra - explicit exceptions:
+#   - MongoDB: mesh/lib/config_sdk.py's whole point is degrading gracefully
+#     without it, so having start_all.sh guarantee it's up removes the most
+#     common reason that fallback would silently kick in. Started via
+#     `mongod --config`, the same invocation Homebrew's own launchd plist
+#     uses.
+#   - Qdrant: confirmed live that it doesn't survive a machine restart on
+#     its own (no launchd/brew service - no Homebrew formula exists for it
+#     at all) - Memory Agent's knowledge base and conversation memory both
+#     silently degrade to "unavailable" without it, the same class of
+#     surprise MongoDB's exception already exists to prevent. Runs the
+#     vendored binary (mesh/qdrant/, fetched via fetch_binary.sh - see its
+#     own docstring) against mesh/qdrant/config.yaml, which points at the
+#     real on-disk data directory (~/.Adiyan/qdrant_storage), not a fresh
+#     empty one.
+# Both use this script's own idempotency/pkill model (identical for every
+# other component here), not `brew services` - `stop` shuts them down the
+# same clean way (pkill sends SIGTERM, a graceful shutdown request for
+# both, not a kill -9).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,6 +46,7 @@ ACTION="${1:-start}"
 COMPONENTS=(
     "phoenix|6006|phoenix serve"
     "mongodb|27017|mongod --config /opt/homebrew/etc/mongod.conf"
+    "qdrant|6339|mesh/qdrant/qdrant-bin --config-path mesh/qdrant/config.yaml"
     "agent_registry|8424|mesh.mcp.agent_registry.server"
     "cron_trigger|8421|mesh.mcp.cron_trigger.server"
     "scheduler|8420|mesh.scheduler.server"
@@ -86,10 +95,10 @@ do_start() {
         fi
         if [ "$name" = "phoenix" ]; then
             nohup phoenix serve > "$LOG_DIR/$name.log" 2>&1 &
-        elif [ "$name" = "mongodb" ]; then
-            # mongod logs to its own configured path (systemLog.path in
-            # mongod.conf), not this file - $LOG_DIR/mongodb.log just
-            # catches anything printed before that takes over.
+        elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ]; then
+            # A raw binary invocation, not a `python3 -m` module - mongod
+            # logs to its own configured path (systemLog.path in
+            # mongod.conf) rather than this one; qdrant does log here.
             nohup $cmd > "$LOG_DIR/$name.log" 2>&1 &
         else
             nohup python3 -m "$cmd" > "$LOG_DIR/$name.log" 2>&1 &

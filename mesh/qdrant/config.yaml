@@ -1,0 +1,10 @@
+storage:
+  # Absolute path, not ~ - Rust's config loader doesn't do shell-style tilde
+  # expansion, confirmed before relying on it (a relative/unexpanded path
+  # here would silently create a fresh, empty store instead of reattaching
+  # to the real data).
+  storage_path: /Users/bharani/.Adiyan/qdrant_storage
+
+service:
+  http_port: 6339
+  grpc_port: 6340

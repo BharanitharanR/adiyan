@@ -24,16 +24,8 @@ logs/
 .env
 .env.*
 
-# Installer build artifacts (rebuilt by installer/build_*.sh)
-installer/build_venv/
-installer/build/
-installer/dist/
-installer/*.spec
-installer/dist_openwa/
-installer/node-runtime/
-installer/qdrant-runtime/
-installer/release_stage/
-installer/*.zip
+# Qdrant binary - not committed, rebuilt by mesh/qdrant/fetch_binary.sh
+mesh/qdrant/qdrant-bin
 
 # Qdrant drops this marker in the process's cwd on start
 .qdrant-initialized
