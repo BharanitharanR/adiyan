@@ -11,7 +11,11 @@ langgraph>=1.0.0
 langchain-core>=1.0.0
 langchain-ollama>=1.0.0
 langchain-mcp-adapters>=0.3.0
-mcp>=1.20.0
+# <2.0.0: mesh/lib/mcp_client.py imports 1.x-only names (streamablehttp_client,
+# the private mcp.shared._httpx_utils module) - mcp 2.0.0 renamed/dropped
+# them, so an unpinned install here breaks every agent's MCP client at
+# import time.
+mcp>=1.20.0,<2.0.0
 duckduckgo-mcp-server>=0.5.0
 llama-index-core>=0.14.0
 llama-index-vector-stores-qdrant>=0.10.0
@@ -28,6 +32,28 @@ fpdf2>=2.7.0
 crawl4ai>=0.9.0
 keyring>=25.0.0
 workspace-mcp>=1.24.0
+
+# A2A server plumbing (mesh/lib/bootstrap.py) - every agent imports these at
+# startup, so a missing entry here means every single agent crashes on
+# launch with ModuleNotFoundError before it can even bind its port. The
+# http-server/sqlite extras pull in starlette, sse-starlette, sqlalchemy,
+# and aiosqlite already version-matched to this a2a-sdk release - listing
+# those separately risks a pip-resolved combo a2a-sdk itself never tested.
+a2a-sdk[http-server,sqlite]>=1.1.0
+uvicorn>=0.30.0
+
+# mesh/lib/permissions.py - signs/verifies the per-message A2A/MCP auth token.
+PyJWT>=2.8.0
+
+# mesh/mcp/cron_trigger/server.py - backs its persistent job store.
+APScheduler>=3.10.0
+
+# mesh/observability/tracing.py - every agent calls setup_tracing() at
+# startup; arize-phoenix itself runs the standalone `phoenix serve`
+# collector process that mesh/start_all.sh launches.
+arize-phoenix>=8.0.0
+arize-phoenix-otel>=0.7.0
+openinference-instrumentation-langchain>=0.1.30
 
 # Dev/test only - needed to run Tests/http/, not by the running app itself.
 pytest>=8.0.0
