@@ -13,8 +13,8 @@ from typing import Any, Dict, Optional
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from mesh.journal.constants import MEMORY_AGENT_URL
-from mesh.lib import permissions
+from mesh.journal.constants import AGENT_ID, MEMORY_AGENT_URL
+from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent
 from mesh.lib.config import load_runtime_config
 
@@ -55,13 +55,16 @@ async def _craft_generic(theme: Optional[str], cfg: Dict[str, Any]) -> str:
 
 
 async def run(contact_name: str, theme: Optional[str] = None) -> Dict[str, Any]:
-    cfg = load_runtime_config(AGENT_CODE_DIR)['craft_prompt']
+    cfg = await config_sdk.get_stage_config(
+        AGENT_ID, 'craft_prompt', load_runtime_config(AGENT_CODE_DIR)['craft_prompt'],
+    )
 
     try:
         # Service token - the caller's own right to craft_reflection_prompt
         # was already checked at the agent_executor boundary.
         token = permissions.mint_token('journal', 'service')
-        memory_result = await call_agent(MEMORY_AGENT_URL, 'recall_contact_memory', {
+        memory_agent_url = await config_sdk.get_constant(AGENT_ID, 'memory_agent_url', MEMORY_AGENT_URL)
+        memory_result = await call_agent(memory_agent_url, 'recall_contact_memory', {
             'contact_name': contact_name,
             'query': theme or 'recent thoughts, mood, and challenges',
             'top_k': 3,

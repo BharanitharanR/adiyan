@@ -21,8 +21,8 @@ from a2a.server.tasks import TaskUpdater
 
 from mesh.journal.constants import AGENT_ID
 from mesh.journal.skills import craft_reflection_prompt
-from mesh.journal.skills_catalog import SKILLS
-from mesh.lib import permissions
+from mesh.journal.skills_catalog import get_skills
+from mesh.lib import config_sdk, permissions
 from mesh.lib.config import load_runtime_config
 from mesh.lib.skill_router import route
 
@@ -55,10 +55,11 @@ class JournalAgentExecutor(AgentExecutor):
             params: Dict[str, Any] = payload
         else:
             text = get_message_text(context.message)
-            cfg = load_runtime_config(AGENT_CODE_DIR)
+            cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
+            skills = await get_skills()
             try:
                 skill_id, ambiguous, params = await route(
-                    text, SKILLS, EXTRACTION_SCHEMAS,
+                    text, skills, EXTRACTION_SCHEMAS,
                     classify_cfg=cfg['classify_skill'],
                     extract_cfg=cfg['extract_parameters'],
                 )

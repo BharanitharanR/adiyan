@@ -51,6 +51,16 @@ def kb_documents_dir(agent_id: str) -> Path:
     return path
 
 
+def eval_reports_dir(agent_id: str) -> Path:
+    """Where an eval runner's per-run reports land, e.g.
+    ~/.Adiyan/agents/eval_engine/reports/. Runtime-generated output, same
+    never-in-git category as state.db/tasks.db - a report is regenerated
+    every run, not authored."""
+    path = agent_home(agent_id) / 'reports'
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def mcp_home(server_name: str) -> Path:
     """Root runtime-data directory for one MCP server, e.g.
     ~/.Adiyan/mcp/cron_trigger/. Separate top-level bucket from agents/ -

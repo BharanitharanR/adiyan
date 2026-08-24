@@ -29,8 +29,17 @@ sidesteps auto-resolution rather than relying on it.
 
 Single run per case, no majority voting, no CI wiring - see
 EVAL_DESIGN.md's own "what this deliberately does not do" section.
+
+Every run writes a report - one timestamped Markdown + JSON pair, plus an
+overwritten latest.md/latest.json - under eval_reports_dir(EVAL_ENGINE_AGENT_ID)
+(~/.Adiyan/agents/eval_engine/reports/). The JSON shape is deliberately what a
+future marketplace list/reject gate would read (a vertical's submitted cases
+run through this same file, and the report is the gate's input) - building
+that gate itself is still out of scope here.
 """
 import asyncio
+import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 import httpx
@@ -41,6 +50,7 @@ from mesh.analysis.constants import AGENT_URL as ANALYSIS_AGENT_URL
 from mesh.analysis.constants import MEMORY_AGENT_URL
 from mesh.lib import config_sdk
 from mesh.lib.a2a_client import call_agent
+from mesh.lib.paths import eval_reports_dir
 from mesh.lib.permissions import mint_token
 
 GRAPHQL_URL = 'http://localhost:6006/graphql'
@@ -306,26 +316,89 @@ async def evaluate_case(case: EvalCase, client: httpx.AsyncClient, project_id: s
     return passed, reasons
 
 
+def _validation_type(case: EvalCase) -> str:
+    """How this case was checked - shown as its own report column so a
+    reader can tell an LLM-judged case (nuanced, needs a human's own
+    read of the reason) from a structurally-checked one (exact, no
+    ambiguity) at a glance, per EVAL_DESIGN.md's judge-vs-structural split."""
+    parts = []
+    if 'judge_criteria' in case:
+        parts.append('LLM judge')
+    if 'structural_check' in case:
+        parts.append(f"structural ({case['structural_check']})")
+    return ' + '.join(parts) if parts else 'none'
+
+
+def build_report(
+    results: List[Tuple[str, str, bool, List[str]]], active_vertical: Optional[str], run_started_at: str,
+) -> Tuple[str, Dict[str, Any]]:
+    """Same result data, two shapes: a Markdown table for a person to read,
+    and a JSON dict for a future program (e.g. a marketplace list/reject
+    gate) to read without parsing a table. Returns (markdown, json_data)."""
+    n_pass = sum(1 for _, _, p, _ in results if p)
+    n_total = len(results)
+
+    lines = [
+        '# Analysis Agent Eval Report',
+        '',
+        f'- Run: {run_started_at}',
+        f'- Vertical: {active_vertical or "platform"}',
+        f'- Result: {n_pass} of {n_total} passed',
+        '',
+        '| Case | Checked by | Result | Why |',
+        '|---|---|---|---|',
+    ]
+    cases_data = []
+    for label, validation_type, passed, reasons in results:
+        why = '; '.join(reasons).replace('|', '\\|')
+        lines.append(f"| {label} | {validation_type} | {'PASS' if passed else 'FAIL'} | {why} |")
+        cases_data.append({
+            'name': label, 'validation_type': validation_type, 'passed': passed, 'reasons': reasons,
+        })
+
+    markdown = '\n'.join(lines) + '\n'
+    json_data = {
+        'run': run_started_at,
+        'vertical': active_vertical or 'platform',
+        'passed': n_pass,
+        'total': n_total,
+        'cases': cases_data,
+    }
+    return markdown, json_data
+
+
 async def main() -> int:
     cases = await load_cases()
     active_vertical = await config_sdk.get_active_vertical_id()
     platform_names = {c['name'] for c in PLATFORM_CASES_DEFAULT}
+    run_started_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     async with httpx.AsyncClient() as client:
         project_id = await _get_analysis_project_id(client)
 
-        results: List[Tuple[str, bool, List[str]]] = []
+        results: List[Tuple[str, str, bool, List[str]]] = []
         for case in cases:
             label = case['name'] if case['name'] in platform_names else f"[{active_vertical}] {case['name']}"
+            validation_type = _validation_type(case)
             try:
                 passed, reasons = await evaluate_case(case, client, project_id)
             except Exception as e:
                 passed, reasons = False, [f'case errored: {e}']
-            results.append((label, passed, reasons))
+            results.append((label, validation_type, passed, reasons))
             print(f"{'PASS' if passed else 'FAIL'}  {label}  -  {'; '.join(reasons)}")
 
-    n_pass = sum(1 for _, p, _ in results if p)
+    n_pass = sum(1 for _, _, p, _ in results if p)
     print(f'\n{n_pass}/{len(results)} passed')
+
+    report_md, report_data = build_report(results, active_vertical, run_started_at)
+    report_dir = eval_reports_dir(EVAL_ENGINE_AGENT_ID)
+    stamp = run_started_at.replace(':', '').replace('-', '')  # e.g. 20260824T225500Z
+    (report_dir / f'eval_report_{stamp}.md').write_text(report_md)
+    (report_dir / f'eval_report_{stamp}.json').write_text(json.dumps(report_data, indent=2))
+    (report_dir / 'latest.md').write_text(report_md)
+    (report_dir / 'latest.json').write_text(json.dumps(report_data, indent=2))
+    print(f'Report written to {report_dir / f"eval_report_{stamp}.md"}')
+
     return 0 if n_pass == len(results) else 1
 
 

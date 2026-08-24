@@ -74,8 +74,12 @@ flowchart TD
 - No CI wiring, no scheduled runs — a person decides when to run it.
 - No majority-vote aggregation across repeated runs — one run, one verdict, flakiness is itself information.
 - No Orchestrator or Scheduler coverage yet (cases #6, #7) — parked until scope widens.
-- No persisted history or dashboard — output is read once, not tracked over time.
+- No dashboard — a report file is written per run (see below), but nothing renders it over time yet.
+
+## Reports
+
+Every run writes a report showing each case, how it was checked (LLM judge, structural rule, or both), and the result — both a Markdown table for a person to read and a JSON file with the same data for a future program to read. Files land under `~/.Adiyan/agents/eval_engine/reports/`: one timestamped `eval_report_<stamp>.md`/`.json` pair per run, plus `latest.md`/`latest.json` always pointing at the most recent run.
 
 ## Status
 
-Design agreed; **not yet implemented**. Once built, the runner lives at `mesh/evals/eval_analysis.py`.
+Implemented. The runner lives at `mesh/evals/eval_analysis.py`.
