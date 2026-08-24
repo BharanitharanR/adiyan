@@ -22,7 +22,7 @@ from langchain_ollama import ChatOllama
 from llama_index.embeddings.ollama import OllamaEmbedding
 from pydantic import BaseModel
 
-from mesh.lib import permissions
+from mesh.lib import config_sdk, permissions
 from mesh.lib.config import load_runtime_config
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
@@ -54,7 +54,9 @@ async def _resolve_schedule(description: str) -> str:
     the old codebase's services/schedule_parser.py rather than folding this
     into extract_parameters - a wrong classification and a wrong schedule
     parse are different failure modes worth being able to isolate."""
-    cfg = load_runtime_config(AGENT_CODE_DIR)['resolve_schedule']
+    cfg = await config_sdk.get_stage_config(
+        AGENT_ID, 'resolve_schedule', load_runtime_config(AGENT_CODE_DIR)['resolve_schedule'],
+    )
     model = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
     structured = model.with_structured_output(ResolvedSchedule)
     result = structured.invoke(
@@ -112,7 +114,8 @@ async def run(
     # Service token - see delete_job.py's identical comment: the caller's
     # own right to schedule_job was already checked upstream.
     token = permissions.mint_token('scheduler', 'service')
-    await call_tool(CRON_TRIGGER_URL, 'register_trigger', {
+    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    await call_tool(cron_trigger_url, 'register_trigger', {
         'job_id': job['id'],
         'invoke_at': next_run_at,
         'target_agent_url': AGENT_URL,

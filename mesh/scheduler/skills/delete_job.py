@@ -7,7 +7,7 @@ earlier in this build, before this skill existed).
 """
 from typing import Any, Dict, Optional
 
-from mesh.lib import permissions
+from mesh.lib import config_sdk, permissions
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.scheduler import db
@@ -28,7 +28,8 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     # to cron_trigger is Scheduler acting on that already-authorized
     # request, not a second thing the original caller needs rights to.
     token = permissions.mint_token('scheduler', 'service')
-    await call_tool(CRON_TRIGGER_URL, 'remove_trigger', {'job_id': job['id']}, token=token)
+    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    await call_tool(cron_trigger_url, 'remove_trigger', {'job_id': job['id']}, token=token)
 
     return {
         'job_id': job['id'],

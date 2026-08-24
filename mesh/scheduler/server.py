@@ -22,6 +22,7 @@ import logging
 import threading
 import time
 
+from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
 from mesh.lib.paths import state_db_path, tasks_db_path
@@ -30,7 +31,7 @@ from mesh.scheduler import db
 from mesh.scheduler.agent_executor import SchedulerAgentExecutor
 from mesh.scheduler.constants import AGENT_ID, HOST, PORT
 from mesh.scheduler.skills import run_routine
-from mesh.scheduler.skills_catalog import SKILLS
+from mesh.scheduler.skills_catalog import get_skills
 
 logger = logging.getLogger('SchedulerServer')
 
@@ -69,6 +70,17 @@ def _catch_up_retry_loop() -> None:
             logger.warning(f'Catch-up retry pass failed: {e}')
 
 
+async def _load_startup_config() -> dict:
+    host = await config_sdk.get_constant(AGENT_ID, 'host', HOST)
+    port = await config_sdk.get_constant(AGENT_ID, 'port', PORT)
+    description = await config_sdk.get_constant(
+        AGENT_ID, 'card_description',
+        'Owns scheduled jobs, durable routines, and trigger phrases for Adiyan.',
+    )
+    skills = await get_skills()
+    return {'host': host, 'port': port, 'description': description, 'skills': skills}
+
+
 if __name__ == '__main__':
     # Must run before any LangChain call happens (auto_instrument patches
     # LangChain at call time) - so before serve(), not inside agent_executor.
@@ -77,18 +89,21 @@ if __name__ == '__main__':
     asyncio.run(_catch_up_overdue_jobs())
     threading.Thread(target=_catch_up_retry_loop, daemon=True).start()
 
+    startup = asyncio.run(_load_startup_config())
+
     agent_card = adiyan_card(
         name='Scheduler Agent',
-        description='Owns scheduled jobs, durable routines, and trigger phrases for Adiyan.',
-        skills=SKILLS,
-        host=HOST,
-        port=PORT,
+        description=startup['description'],
+        skills=startup['skills'],
+        host=startup['host'],
+        port=startup['port'],
     )
     serve(
         agent_card=agent_card,
         executor=SchedulerAgentExecutor(),
-        host=HOST,
-        port=PORT,
+        host=startup['host'],
+        port=startup['port'],
         tasks_db_path=tasks_db_path(AGENT_ID),
         agent_id=AGENT_ID,
+        skills_refresher=get_skills,
     )

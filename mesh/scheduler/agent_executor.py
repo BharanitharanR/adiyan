@@ -27,13 +27,13 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
-from mesh.lib import permissions
+from mesh.lib import config_sdk, permissions
 from mesh.lib.config import load_runtime_config
 from mesh.lib.skill_router import route
 from mesh.scheduler.constants import AGENT_ID
 from mesh.scheduler.job_lookup import JobNotFoundError
 from mesh.scheduler.skills import delete_job, list_jobs, run_routine, schedule_job
-from mesh.scheduler.skills_catalog import SKILLS
+from mesh.scheduler.skills_catalog import get_skills
 
 # mesh/scheduler/ - where runtime_config.json lives. Defined locally, same
 # pattern as schedule_job.py's own AGENT_CODE_DIR, rather than reaching into
@@ -144,10 +144,11 @@ class SchedulerAgentExecutor(AgentExecutor):
             params: Dict[str, Any] = payload
         else:
             text = get_message_text(context.message)
-            cfg = load_runtime_config(AGENT_CODE_DIR)
+            cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
+            skills = await get_skills()
             try:
                 skill_id, ambiguous, params = await route(
-                    text, SKILLS, EXTRACTION_SCHEMAS,
+                    text, skills, EXTRACTION_SCHEMAS,
                     classify_cfg=cfg['classify_skill'],
                     extract_cfg=cfg['extract_parameters'],
                 )

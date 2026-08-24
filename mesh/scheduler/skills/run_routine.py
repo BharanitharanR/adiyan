@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from mesh.journal.constants import AGENT_URL as JOURNAL_AGENT_URL
 from mesh.journal.skills_catalog import SKILLS as JOURNAL_SKILLS
-from mesh.lib import permissions
+from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent
 from mesh.lib.config import load_runtime_config
 from mesh.lib.mcp_client import call_tool
@@ -97,7 +97,7 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
         # who else to send to.
         raise NotImplementedError(f"Cannot resolve target '{job['target']}' - only 'self' is currently supported.")
 
-    cfg = load_runtime_config(AGENT_CODE_DIR)
+    cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
     message_text = await _compose_message(job, cfg)
 
     openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
@@ -112,7 +112,8 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     next_run_at = croniter(job['resolved_schedule'], datetime.now(timezone.utc)).get_next(datetime).isoformat()
     db.update_next_run(conn, job['id'], next_run_at)
     token = permissions.mint_token('scheduler', 'service')
-    await call_tool(CRON_TRIGGER_URL, 'register_trigger', {
+    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    await call_tool(cron_trigger_url, 'register_trigger', {
         'job_id': job['id'],
         'invoke_at': next_run_at,
         'target_agent_url': AGENT_URL,
