@@ -11,17 +11,32 @@ from typing import Any, Dict, Optional
 from mesh.lib import config_sdk
 
 
+def _normalize(text: str) -> str:
+    """Stored keys are snake_case ('strict_grounding'); a WhatsApp message
+    naturally phrases the same thing with spaces ('strict grounding'). Both
+    the exact-match and substring checks below need spaces and underscores
+    treated as the same separator, or a perfectly natural phrasing of a
+    real, existing key never matches - confirmed live: "turn on strict
+    grounding for Analysis Agent" failed with "not an existing constant"
+    even though analysis.strict_grounding was already on file, because
+    'strict grounding' is neither equal to nor a substring of
+    'strict_grounding' without this normalization."""
+    return text.lower().replace('_', ' ').replace('-', ' ')
+
+
 def fuzzy_match(guess: Optional[str], candidates: list) -> Optional[str]:
-    """Case-insensitive substring match, either direction - None if no
-    candidate matches, the guess itself if unset (caller wants everything)."""
+    """Case-insensitive substring match, either direction, with spaces and
+    underscores treated as equivalent - None if no candidate matches, the
+    guess itself if unset (caller wants everything)."""
     if not guess:
         return None
-    guess_lower = guess.lower()
+    guess_norm = _normalize(guess)
     for candidate in candidates:
-        if guess_lower == candidate.lower():
+        if guess_norm == _normalize(candidate):
             return candidate
     for candidate in candidates:
-        if guess_lower in candidate.lower() or candidate.lower() in guess_lower:
+        candidate_norm = _normalize(candidate)
+        if guess_norm in candidate_norm or candidate_norm in guess_norm:
             return candidate
     return None
 

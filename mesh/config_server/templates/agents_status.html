@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Adiyan Config - Agents Online</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+<style>
+  .agent-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  .agent-row:last-child { border-bottom: none; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.online { background: var(--success); box-shadow: 0 0 0 3px var(--success-bg); }
+  .status-dot.offline { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
+  .agent-name { font-weight: 600; font-size: 14px; }
+  .agent-url { color: var(--text-faint); font-size: 12px; font-family: var(--font-mono); margin-left: auto; }
+  .refresh-hint { color: var(--text-faint); font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="dot"></span> Adiyan</div>
+  <nav>
+    <a href="/configs">Configs</a>
+    <a class="current" href="/agents-status">Agents online</a>
+    <a class="logout" href="/logout">Log out</a>
+  </nav>
+</div>
+
+<div class="page">
+  <div class="page-header">
+    <h1>Agents online</h1>
+    <p>Live check against each agent's own <code>/.well-known/agent-card.json</code> - only agents that have been wired into config_sdk appear here.</p>
+  </div>
+
+  <div class="card" id="agents-list"><div class="empty">Checking...</div></div>
+  <div class="refresh-hint" id="refresh-hint"></div>
+</div>
+
+<script>
+async function load() {
+  const el = document.getElementById('agents-list');
+  const res = await fetch('/api/agents/status');
+  const data = await res.json();
+  const agents = data.agents || [];
+  if (!agents.length) {
+    el.innerHTML = '<div class="empty">No agents found in config_sdk yet</div>';
+    return;
+  }
+  el.innerHTML = agents.map(a => `
+    <div class="agent-row">
+      <span class="status-dot ${a.online ? 'online' : 'offline'}"></span>
+      <span class="agent-name">${a.name}</span>
+      <span class="agent-url">${a.url || 'no host/port on file'}</span>
+    </div>
+  `).join('');
+  document.getElementById('refresh-hint').textContent =
+    `Checked ${new Date().toLocaleTimeString()} - refreshes every 15s`;
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

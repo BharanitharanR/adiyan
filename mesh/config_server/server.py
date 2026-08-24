@@ -21,11 +21,12 @@ import asyncio
 import os
 from functools import wraps
 
+import httpx
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from mesh.config_agent.constants import AGENT_URL as CONFIG_AGENT_URL
 from mesh.config_server import otp
-from mesh.config_server.constants import HOST, PORT
+from mesh.config_server.constants import AGENT_STATUS_TIMEOUT_SECONDS, HOST, OPENWA_DASHBOARD_URL, PORT
 from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
 
@@ -76,7 +77,7 @@ def login_submit():
     code = request.form.get('code', '')
     if otp.verify(code):
         session['authenticated'] = True
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('landing'))
     return render_template('login.html', error='Incorrect or expired code.')
 
 
@@ -88,8 +89,20 @@ def logout():
 
 @app.route('/')
 @login_required
-def dashboard():
-    return render_template('dashboard.html')
+def landing():
+    return render_template('landing.html', openwa_dashboard_url=OPENWA_DASHBOARD_URL)
+
+
+@app.route('/configs')
+@login_required
+def configs():
+    return render_template('configs.html')
+
+
+@app.route('/agents-status')
+@login_required
+def agents_status():
+    return render_template('agents_status.html')
 
 
 @app.route('/api/agents')
@@ -98,11 +111,66 @@ def api_agents():
     return jsonify(_call_config_agent('get_all_configs', {}))
 
 
+def _probe_agent(client: httpx.Client, agent_id: str, host: str, port) -> dict:
+    """One agent's live status - name comes off its own agent card (falls
+    back to the agent_id if the card can't be reached), same source of
+    truth the real A2A callers in this mesh already trust.
+
+    port arrives here having crossed the A2A/protobuf boundary (Config
+    Agent's get_all_configs response) - protobuf Struct has no integer
+    type, only double, so an int port comes back as e.g. 8427.0 the same
+    way mesh/memory/skills/recall.py's top_k did before that fix. int()
+    here is the same explicit cast, at the same kind of boundary."""
+    url = f'http://{host}:{int(port)}'
+    try:
+        resp = client.get(f'{url}/.well-known/agent-card.json', timeout=AGENT_STATUS_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        name = resp.json().get('name', agent_id)
+        return {'agent_id': agent_id, 'name': name, 'url': url, 'online': True}
+    except Exception:
+        return {'agent_id': agent_id, 'name': agent_id, 'url': url, 'online': False}
+
+
+# Pseudo-agent_ids that use config_sdk as a config namespace but have no
+# actual running server behind them - same category as config_sdk.py's own
+# CONTROL_AGENT_ID precedent. Excluded here so they don't show as a
+# permanently-red "offline" row for something that was never meant to be
+# a live process.
+_NON_SERVER_AGENT_IDS = {'eval_engine'}
+
+
+@app.route('/api/agents/status')
+@login_required
+def api_agents_status():
+    """Only agents that have called config_sdk at least once (auto-seeding
+    host/port) appear here - same dynamism as /api/agents, and the reason
+    an unmigrated agent won't show up until it's wired in, not a bug."""
+    all_configs = _call_config_agent('get_all_configs', {}).get('agents', {})
+    results = []
+    with httpx.Client() as client:
+        for agent_id, full in sorted(all_configs.items()):
+            if agent_id in _NON_SERVER_AGENT_IDS:
+                continue
+            constants = full.get('constants', {})
+            host, port = constants.get('host'), constants.get('port')
+            if host and port:
+                results.append(_probe_agent(client, agent_id, host, port))
+            else:
+                results.append({'agent_id': agent_id, 'name': agent_id, 'url': None, 'online': False})
+    return jsonify({'agents': results})
+
+
 @app.route('/api/agents/<agent_id>/constants/<key>', methods=['PUT'])
 @login_required
 def api_update_constant(agent_id, key):
+    # Pass the value through as-is (bool/int/float/list/str, whatever the
+    # dashboard's JSON body actually sent) rather than forcing str() here -
+    # Config Agent's update_config skill does the real type coercion,
+    # matched against the CURRENT stored type. Blindly stringifying here
+    # broke every non-string constant before this fix (a Python list would
+    # serialize as "['a', 'b']", not valid JSON).
     value = (request.get_json(silent=True) or {}).get('value', '')
-    return jsonify(_call_config_agent('update_config', {'agent_id': agent_id, 'key': key, 'new_value': str(value)}))
+    return jsonify(_call_config_agent('update_config', {'agent_id': agent_id, 'key': key, 'new_value': value}))
 
 
 @app.route('/api/agents/<agent_id>/stages/<stage_name>', methods=['PUT'])
