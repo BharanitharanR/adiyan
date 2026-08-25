@@ -30,6 +30,7 @@
     word-break: break-word;
   }
   .field-type { display: block; color: var(--text-faint); font-size: 10.5px; text-transform: uppercase; margin-top: 2px; }
+  .field-desc { display: block; color: var(--text-muted); font-size: 11.5px; font-family: var(--font); font-weight: 400; text-transform: none; margin-top: 5px; line-height: 1.4; }
   .field-control { flex: 1; min-width: 0; }
   .field-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding-top: 3px; }
 
@@ -105,6 +106,11 @@ function selectAgent(id) {
   renderDetail();
 }
 
+function fieldDesc(text) {
+  if (!text) return '';
+  return `<span class="field-desc">${escapeHtml(text)}</span>`;
+}
+
 function fieldType(val) {
   if (typeof val === 'boolean') return 'bool';
   if (Array.isArray(val)) return 'array';
@@ -118,6 +124,7 @@ function renderDetail() {
   const el = document.getElementById('detail');
   if (!cfg) { el.innerHTML = '<div class="empty">Select an agent</div>'; return; }
 
+  const descriptions = cfg.descriptions || {};
   let html = '';
 
   const stages = Object.entries(cfg.stages || {});
@@ -126,7 +133,7 @@ function renderDetail() {
     for (const [stage, val] of stages) {
       html += `
         <div class="field-row">
-          <div class="field-label">${stage}<span class="field-type">model / temperature / timeout</span></div>
+          <div class="field-label">${stage}<span class="field-type">model / temperature / timeout</span>${fieldDesc(descriptions[stage])}</div>
           <div class="field-control">
             <div class="stage-row">
               <input class="model-input" id="model-${stage}" value="${escapeAttr(val.model || '')}" placeholder="model">
@@ -150,7 +157,7 @@ function renderDetail() {
       const type = fieldType(val);
       html += `
         <div class="field-row">
-          <div class="field-label">${key}<span class="field-type">${type}</span></div>
+          <div class="field-label">${key}<span class="field-type">${type}</span>${fieldDesc(descriptions[key])}</div>
           <div class="field-control">${renderControl(key, val, type)}</div>
           <div class="field-actions">
             <button class="btn btn-sm" onclick="saveConstant('${key}')">Save</button>
