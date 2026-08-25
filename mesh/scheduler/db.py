@@ -32,9 +32,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     expects_response INTEGER NOT NULL DEFAULT 0,
     response_window_minutes INTEGER,
     embedding TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    source_filename TEXT,
-    current_page INTEGER NOT NULL DEFAULT 0
+    created_at TEXT NOT NULL
 )
 """
 
@@ -43,22 +41,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute(SCHEMA)
-    _migrate_page_columns(conn)
     return conn
-
-
-def _migrate_page_columns(conn: sqlite3.Connection) -> None:
-    """CREATE TABLE IF NOT EXISTS is a no-op against a jobs table that
-    already existed before source_filename/current_page were added to
-    SCHEMA - real jobs were already on file from before this change, so an
-    explicit ALTER TABLE is needed here, guarded by checking what columns
-    actually exist first (SQLite has no ADD COLUMN IF NOT EXISTS)."""
-    existing = {row[1] for row in conn.execute('PRAGMA table_info(jobs)')}
-    if 'source_filename' not in existing:
-        conn.execute('ALTER TABLE jobs ADD COLUMN source_filename TEXT')
-    if 'current_page' not in existing:
-        conn.execute('ALTER TABLE jobs ADD COLUMN current_page INTEGER NOT NULL DEFAULT 0')
-    conn.commit()
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
@@ -103,16 +86,15 @@ def create_job(
     embedding: List[float],
     expects_response: bool = False,
     response_window_minutes: Optional[int] = None,
-    source_filename: Optional[str] = None,
 ) -> Dict[str, Any]:
     job_id = str(uuid.uuid4())
     conn.execute(
         'INSERT INTO jobs (id, name, description, target, resolved_schedule, next_run_at, '
-        'expects_response, response_window_minutes, embedding, created_at, source_filename) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'expects_response, response_window_minutes, embedding, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (job_id, name, description, target, resolved_schedule, next_run_at,
          int(expects_response), response_window_minutes, json.dumps(embedding),
-         datetime.now(timezone.utc).isoformat(), source_filename),
+         datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
     return get_job(conn, job_id)
@@ -121,14 +103,6 @@ def create_job(
 def get_job(conn: sqlite3.Connection, job_id: str) -> Optional[Dict[str, Any]]:
     row = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
     return dict(row) if row else None
-
-
-def advance_page(conn: sqlite3.Connection, job_id: str, new_page: int) -> None:
-    """Records which page was just sent, so the next fire of this job
-    (see run_routine.py's _compose_message) knows to send new_page + 1
-    instead of resending the same one."""
-    conn.execute('UPDATE jobs SET current_page = ? WHERE id = ?', (new_page, job_id))
-    conn.commit()
 
 
 def update_next_run(conn: sqlite3.Connection, job_id: str, next_run_at: str) -> None:

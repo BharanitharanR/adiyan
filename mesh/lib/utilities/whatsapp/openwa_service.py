@@ -186,6 +186,39 @@ class OpenWAService:
         logger.info(f"Sent document '{filename}' to {chat_id}: {result.get('messageId')}")
         return result
 
+    async def send_voice(self, chat_id: str, data: bytes, mimetype: str = 'audio/ogg; codecs=opus') -> Dict[str, Any]:
+        """Send audio as a real WhatsApp voice note (PTT - mic bubble +
+        waveform, not a plain audio-file attachment) - ptt=True is what
+        selects that rendering on OpenWA's send-audio endpoint. Callers
+        should hand this Opus-encoded OGG bytes (AdiyanReader's own
+        tts.py transcodes Orpheus's raw WAV output before calling this) -
+        OpenWA's own docs note plain WAV/PCM is not reliable for the PTT
+        waveform UI to render correctly, only audio/ogg;codecs=opus is.
+
+        No watermark applied, same as send_document() - there is no text
+        to append a text signature to, and OpenWA's send-audio endpoint
+        has no caption field to carry one in either."""
+        import base64
+        session_id = await self._session_id_or_refresh()
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={'X-API-Key': self.api_key, 'Content-Type': 'application/json'},
+            timeout=60.0,
+        ) as client:
+            response = await client.post(
+                f'/api/sessions/{session_id}/messages/send-audio',
+                json={
+                    'chatId': chat_id,
+                    'base64': base64.b64encode(data).decode('ascii'),
+                    'mimetype': mimetype,
+                    'ptt': True,
+                },
+            )
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Sent voice note to {chat_id}: {result.get('messageId')}")
+        return result
+
     async def get_session_status(self) -> Dict[str, Any]:
         """Return the raw session record (status, phone, pushName, etc.)."""
         session_id = await self._session_id_or_refresh()

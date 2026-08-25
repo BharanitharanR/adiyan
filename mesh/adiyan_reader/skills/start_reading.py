@@ -1,0 +1,61 @@
+"""
+start_reading's real body - registers a new reading_job and its first
+nightly trigger. DataPart-only, not classify-able from free text - same
+"no guessing a real key from prose" rule mesh/scheduler/skills/schedule_job.py's
+own source_filename param already follows (see that file's own history):
+source_filename has to already be a real, resolved <username>/<filename>
+key (from Memory Agent's ingest_book), and phone_number has to be a real
+number, not something an extraction LLM should ever be trusted to invent.
+
+Recurrence follows mesh/scheduler/skills/run_routine.py's own established
+pattern exactly: this agent re-registers itself with cron_trigger after
+every fire (see read_next_page.py) rather than cron_trigger holding a
+recurring schedule itself - cron_trigger's register_trigger is a one-shot
+mechanism, the same way Scheduler Agent already treats it.
+"""
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+from croniter import croniter
+
+from mesh.adiyan_reader import db
+from mesh.adiyan_reader.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
+from mesh.adiyan_reader.tts import DEFAULT_VOICE, VOICES
+from mesh.lib import config_sdk, permissions
+from mesh.lib.mcp_client import call_tool
+from mesh.lib.paths import state_db_path
+
+
+async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOICE) -> Dict[str, Any]:
+    if voice not in VOICES:
+        voice = DEFAULT_VOICE
+
+    conn = db.connect(state_db_path(AGENT_ID))
+    job = db.create_reading_job(conn, phone_number, source_filename, voice)
+
+    reading_hour = await config_sdk.get_constant(
+        AGENT_ID, 'reading_hour', 0,
+        description='Hour of day (0-23, local server time) the nightly page reading fires. 0 = midnight.',
+    )
+    cron_expression = f'0 {int(reading_hour)} * * *'
+    next_run_at = croniter(cron_expression, datetime.now(timezone.utc)).get_next(datetime).isoformat()
+
+    token = permissions.mint_token(AGENT_ID, 'service')
+    cron_trigger_url = await config_sdk.get_constant(
+        AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
+        description='URL of the cron_trigger MCP server that fires this agent\'s nightly reading and next-day quiz.',
+    )
+    await call_tool(cron_trigger_url, 'register_trigger', {
+        'job_id': job['id'],
+        'invoke_at': next_run_at,
+        'target_agent_url': AGENT_URL,
+        'skill_id': 'read_next_page',
+        'params': {'reading_job_id': job['id']},
+    }, token=token)
+
+    return {
+        'reading_job_id': job['id'],
+        'source_filename': source_filename,
+        'voice': voice,
+        'first_reading_at': next_run_at,
+    }

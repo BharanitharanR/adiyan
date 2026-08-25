@@ -65,15 +65,6 @@ class ScheduleJobParams(BaseModel):
     )
     expects_response: bool = False
     response_window_minutes: Optional[int] = None
-    # Deliberately NOT documented as something to fill from free text - the
-    # extraction LLM has no way to turn "the book I uploaded" into a real
-    # <username>/<filename> key without actually looking it up, and a
-    # confident-sounding guess here would silently create a page-delivery
-    # job against a document that doesn't exist. Left unset by the classify/
-    # extract path; a caller that already resolved the real source_filename
-    # (e.g. Orchestrator's own kb_pending upload flow, or Analysis Agent
-    # after a real resolve_document call) passes it directly via DataPart.
-    source_filename: Optional[str] = None
 
 
 class RunRoutineParams(BaseModel):

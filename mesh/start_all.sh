@@ -64,6 +64,7 @@ COMPONENTS=(
     "scheduler|8420|mesh.scheduler.server"
     "memory|8423|mesh.memory.server"
     "journal|8422|mesh.journal.server"
+    "adiyan_reader|8429|mesh.adiyan_reader.server"
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"

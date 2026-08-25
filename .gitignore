@@ -1,6 +1,11 @@
 # Third-party clone (has its own git history, ~1.5GB with node_modules)
 penwa/
 
+# Third-party clone (has its own git history) - AdiyanReader's TTS
+# (mesh/adiyan_reader/tts.py) reimplements what it needs as a proper async
+# module; this folder is the reference/manual-testing copy, not vendored.
+mesh/voice/
+
 # Node dependencies
 node_modules/
 package-lock.json
