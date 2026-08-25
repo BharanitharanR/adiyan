@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, VectorStoreIndex
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -173,6 +173,7 @@ class MemoryIndex:
         kb_vector_store = QdrantVectorStore(client=client, collection_name=KB_COLLECTION_NAME)
         self.kb_index = VectorStoreIndex.from_vector_store(kb_vector_store, embed_model=self.embed_model)
         self._splitter = SentenceSplitter(chunk_size=KB_CHUNK_SIZE, chunk_overlap=KB_CHUNK_OVERLAP)
+        self._markdown_splitter = MarkdownNodeParser()
 
     # Conversation memory (insert/retrieve) used to live here, backed by a
     # plain LlamaIndex VectorStoreIndex with zero callers of insert() ever
@@ -180,6 +181,41 @@ class MemoryIndex:
     # it with a real extraction+consolidation pipeline (mem0ai) instead of
     # this file continuing to grow a second, hand-rolled memory engine
     # alongside the knowledge-base one below.
+
+    def _split_text(self, markdown: str, safe_name: str) -> List[str]:
+        """Confirmed live: EXTERNAL_DEPENDENCIES.md's real "what port does
+        Qdrant run on" eval case scored only 0.496 similarity (below
+        SOURCE_MATCH_MIN_SCORE) despite the fact being right there in the
+        text - traced to the heading-blind SentenceSplitter concatenating
+        five unrelated ## sections (Ollama, Qdrant, MongoDB, Phoenix, the
+        doc intro) into one 3000-char chunk, diluting the embedding for any
+        single one of them. Isolating just the Qdrant section and
+        re-embedding it alone measured 0.665 for the same query - this is
+        the fix, not a threshold tweak.
+
+        Native markdown source documents (.md/.markdown) get MarkdownNodeParser
+        instead - splits on real ## heading boundaries, so each topic gets
+        its own chunk. Docling-converted content (PDF/PPTX/OCR'd images)
+        keeps the plain SentenceSplitter - its markdown headings come from
+        OCR/extraction heuristics, not an author's real document structure,
+        and are a less reliable place to split on.
+
+        MarkdownNodeParser has no max chunk size of its own - a section
+        under one heading that runs unusually long still needs
+        KB_CHUNK_SIZE's own cap applied, or one oversized node could
+        reintroduce the exact dilution problem this exists to fix. Each
+        node is re-run through split_text() unconditionally rather than
+        checked first - a node already under chunk_size comes back as a
+        single unchanged chunk, so this is a safety net, not redundant
+        work."""
+        if not safe_name.lower().endswith(('.md', '.markdown')):
+            return self._splitter.split_text(markdown)
+
+        nodes = self._markdown_splitter.get_nodes_from_documents([Document(text=markdown)])
+        chunks: List[str] = []
+        for node in nodes:
+            chunks.extend(self._splitter.split_text(node.get_content()))
+        return chunks
 
     def ingest_document(
         self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
@@ -239,7 +275,7 @@ class MemoryIndex:
             points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
         )
 
-        chunks = self._splitter.split_text(markdown)
+        chunks = self._split_text(markdown, safe_name)
         for i, chunk in enumerate(chunks):
             self.kb_index.insert(Document(
                 text=chunk,
