@@ -19,3 +19,8 @@ OPENWA_DASHBOARD_URL = 'http://localhost:2785'
 # it offline - short enough that a genuinely dead agent doesn't stall the
 # whole page, long enough not to false-negative a slow-but-alive one.
 AGENT_STATUS_TIMEOUT_SECONDS = 1.5
+
+# For the Stages editor's model dropdown - same default every agent's own
+# ChatOllama construction already points at, not imported from any one
+# agent's constants.py to avoid a dependency on a specific agent.
+OLLAMA_URL = 'http://localhost:11434'

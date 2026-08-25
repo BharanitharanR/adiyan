@@ -154,6 +154,10 @@ async def load_cases() -> List[EvalCase]:
     platform_cases = await config_sdk.get_constant(
         EVAL_ENGINE_AGENT_ID, CASES_KEY, PLATFORM_CASES_DEFAULT,
         vertical_id=config_sdk.PLATFORM_VERTICAL,
+        description='Test cases eval_analysis.py runs against Analysis Agent. Each item: '
+                    '{name, prompt, contact_name, setup?, judge_criteria?, structural_check?} - '
+                    'needs at least one of judge_criteria/structural_check. A vertical\'s own cases '
+                    '(set with vertical_id=<your vertical>) run alongside these, not instead of them.',
     )
     active_vertical = await config_sdk.get_active_vertical_id()
     vertical_cases: List[EvalCase] = []
@@ -285,7 +289,7 @@ STRUCTURAL_CHECKS = {
 }
 
 
-async def evaluate_case(case: EvalCase, client: httpx.AsyncClient, project_id: str) -> Tuple[bool, List[str]]:
+async def evaluate_case_once(case: EvalCase, client: httpx.AsyncClient, project_id: str) -> Tuple[bool, List[str]]:
     result = await run_case_prompt(case)
     await asyncio.sleep(TRACE_EXPORT_DELAY_SECONDS)
     trace_id = await _latest_trace_id(client, project_id)
@@ -316,6 +320,45 @@ async def evaluate_case(case: EvalCase, client: httpx.AsyncClient, project_id: s
     return passed, reasons
 
 
+class TrialResult(TypedDict):
+    pass_at_k: bool
+    pass_hat_k: bool
+    n_passed: int
+    k: int
+    trials: List[Dict[str, Any]]  # [{'passed': bool, 'reasons': [...]}]
+
+
+async def evaluate_case(case: EvalCase, client: httpx.AsyncClient, project_id: str, k: int) -> TrialResult:
+    """Runs the case k times, sequentially - not concurrently, same
+    single-Ollama-slot reasoning as everywhere else in this mesh (parallel
+    trials would just queue behind each other anyway, and a genuinely
+    concurrent run risks the exact runaway-generation contention already
+    hit once in production this session).
+
+    pass@k: did AT LEAST ONE of the k trials pass - the standard "would a
+    lucky sample succeed" read on a non-deterministic model.
+    pass^k: did ALL k trials pass - a consistency read; a case that's
+    flaky (sometimes right, sometimes not) fails this even though it
+    might pass@k, and that distinction is exactly the point of running
+    more than once instead of trusting a single lucky/unlucky run."""
+    trials = []
+    for _ in range(k):
+        try:
+            passed, reasons = await evaluate_case_once(case, client, project_id)
+        except Exception as e:
+            passed, reasons = False, [f'case errored: {e}']
+        trials.append({'passed': passed, 'reasons': reasons})
+
+    n_passed = sum(1 for t in trials if t['passed'])
+    return {
+        'pass_at_k': n_passed >= 1,
+        'pass_hat_k': n_passed == k,
+        'n_passed': n_passed,
+        'k': k,
+        'trials': trials,
+    }
+
+
 def _validation_type(case: EvalCase) -> str:
     """How this case was checked - shown as its own report column so a
     reader can tell an LLM-judged case (nuanced, needs a human's own
@@ -330,12 +373,17 @@ def _validation_type(case: EvalCase) -> str:
 
 
 def build_report(
-    results: List[Tuple[str, str, bool, List[str]]], active_vertical: Optional[str], run_started_at: str,
+    results: List[Tuple[str, str, TrialResult]], active_vertical: Optional[str], run_started_at: str, k: int,
 ) -> Tuple[str, Dict[str, Any]]:
     """Same result data, two shapes: a Markdown table for a person to read,
     and a JSON dict for a future program (e.g. a marketplace list/reject
-    gate) to read without parsing a table. Returns (markdown, json_data)."""
-    n_pass = sum(1 for _, _, p, _ in results if p)
+    gate) to read without parsing a table. Headline pass count uses
+    pass@k (did the case succeed at all, in any trial) - pass^k is its
+    own column, not folded into the same number, since "passed at least
+    once" and "passed every time" answer different questions and
+    collapsing them would hide exactly the flakiness k>1 exists to
+    surface. Returns (markdown, json_data)."""
+    n_pass_at_k = sum(1 for _, _, t in results if t['pass_at_k'])
     n_total = len(results)
 
     lines = [
@@ -343,24 +391,34 @@ def build_report(
         '',
         f'- Run: {run_started_at}',
         f'- Vertical: {active_vertical or "platform"}',
-        f'- Result: {n_pass} of {n_total} passed',
+        f'- Trials per case (k): {k}',
+        f'- Result: {n_pass_at_k} of {n_total} passed (pass@k)',
         '',
-        '| Case | Checked by | Result | Why |',
-        '|---|---|---|---|',
+        '| Case | Checked by | Pass@k | Pass^k | Trials passed | Why |',
+        '|---|---|---|---|---|---|',
     ]
     cases_data = []
-    for label, validation_type, passed, reasons in results:
-        why = '; '.join(reasons).replace('|', '\\|')
-        lines.append(f"| {label} | {validation_type} | {'PASS' if passed else 'FAIL'} | {why} |")
+    for label, validation_type, trial in results:
+        # Last trial's reasons are what a reader wants at a glance - the
+        # full per-trial breakdown is still in the JSON for anyone who
+        # needs to see exactly which of the k runs failed and why.
+        why = '; '.join(trial['trials'][-1]['reasons']).replace('|', '\\|') if trial['trials'] else ''
+        lines.append(
+            f"| {label} | {validation_type} | {'PASS' if trial['pass_at_k'] else 'FAIL'} | "
+            f"{'PASS' if trial['pass_hat_k'] else 'FAIL'} | {trial['n_passed']}/{trial['k']} | {why} |"
+        )
         cases_data.append({
-            'name': label, 'validation_type': validation_type, 'passed': passed, 'reasons': reasons,
+            'name': label, 'validation_type': validation_type,
+            'pass_at_k': trial['pass_at_k'], 'pass_hat_k': trial['pass_hat_k'],
+            'n_passed': trial['n_passed'], 'k': trial['k'], 'trials': trial['trials'],
         })
 
     markdown = '\n'.join(lines) + '\n'
     json_data = {
         'run': run_started_at,
         'vertical': active_vertical or 'platform',
-        'passed': n_pass,
+        'k': k,
+        'passed': n_pass_at_k,
         'total': n_total,
         'cases': cases_data,
     }
@@ -372,25 +430,32 @@ async def main() -> int:
     active_vertical = await config_sdk.get_active_vertical_id()
     platform_names = {c['name'] for c in PLATFORM_CASES_DEFAULT}
     run_started_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    k = await config_sdk.get_constant(
+        EVAL_ENGINE_AGENT_ID, 'trials_per_case', 1,
+        description='How many times each eval case runs per report - pass@k (passed at least once) and '
+                    'pass^k (passed every time) are both computed from these k trials. 1 means a single '
+                    'run, same as before this existed; raise it to catch flaky/non-deterministic cases.',
+    )
 
     async with httpx.AsyncClient() as client:
         project_id = await _get_analysis_project_id(client)
 
-        results: List[Tuple[str, str, bool, List[str]]] = []
+        results: List[Tuple[str, str, TrialResult]] = []
         for case in cases:
             label = case['name'] if case['name'] in platform_names else f"[{active_vertical}] {case['name']}"
             validation_type = _validation_type(case)
-            try:
-                passed, reasons = await evaluate_case(case, client, project_id)
-            except Exception as e:
-                passed, reasons = False, [f'case errored: {e}']
-            results.append((label, validation_type, passed, reasons))
-            print(f"{'PASS' if passed else 'FAIL'}  {label}  -  {'; '.join(reasons)}")
+            trial = await evaluate_case(case, client, project_id, k)
+            results.append((label, validation_type, trial))
+            print(
+                f"{'PASS' if trial['pass_at_k'] else 'FAIL'}  {label}  -  "
+                f"{trial['n_passed']}/{trial['k']} trials passed"
+                + (f"  -  {trial['trials'][-1]['reasons']}" if trial['trials'] else '')
+            )
 
-    n_pass = sum(1 for _, _, p, _ in results if p)
-    print(f'\n{n_pass}/{len(results)} passed')
+    n_pass = sum(1 for _, _, t in results if t['pass_at_k'])
+    print(f'\n{n_pass}/{len(results)} passed (pass@k, k={k})')
 
-    report_md, report_data = build_report(results, active_vertical, run_started_at)
+    report_md, report_data = build_report(results, active_vertical, run_started_at, k)
     report_dir = eval_reports_dir(EVAL_ENGINE_AGENT_ID)
     stamp = run_started_at.replace(':', '').replace('-', '')  # e.g. 20260824T225500Z
     (report_dir / f'eval_report_{stamp}.md').write_text(report_md)

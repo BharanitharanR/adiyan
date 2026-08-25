@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Adiyan Config - Evals</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+<style>
+  .run-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+  .run-bar .status { font-size: 13px; color: var(--text-muted); }
+  .run-bar .status.running { color: var(--accent); font-weight: 600; }
+  .spinner {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--accent-bg); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  table.report { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.report th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-faint); padding: 10px 12px; border-bottom: 1px solid var(--border);
+  }
+  table.report td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.report tr:last-child td { border-bottom: none; }
+  table.report .case-name { font-family: var(--font-mono); font-size: 12.5px; }
+  table.report .why { color: var(--text-muted); max-width: 420px; }
+
+  .report-meta { display: flex; gap: 20px; margin-bottom: 16px; font-size: 13px; color: var(--text-muted); }
+  .report-meta b { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="dot"></span> Adiyan</div>
+  <nav>
+    <a href="/configs">Configs</a>
+    <a href="/agents-status">Agents online</a>
+    <a class="current" href="/evals">Evals</a>
+    <a class="logout" href="/logout">Log out</a>
+  </nav>
+</div>
+
+<div class="page">
+  <div class="page-header">
+    <h1>Evals</h1>
+    <p>Add cases from the Configs page (eval_engine tab, "cases" field) - run and review results here.</p>
+  </div>
+
+  <div class="run-bar">
+    <button class="btn" id="run-btn" onclick="runEval()">Run eval</button>
+    <span class="status" id="run-status"></span>
+  </div>
+
+  <div id="report-area"><div class="empty">Loading last report...</div></div>
+</div>
+
+<script>
+let polling = null;
+
+function badge(ok) {
+  return `<span class="badge ${ok ? 'badge-ok' : 'badge-err'}">${ok ? 'PASS' : 'FAIL'}</span>`;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function renderReport(report) {
+  const el = document.getElementById('report-area');
+  if (!report) { el.innerHTML = '<div class="empty">No eval run yet - click "Run eval" above.</div>'; return; }
+
+  const rows = report.cases.map(c => `
+    <tr>
+      <td class="case-name">${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(c.validation_type)}</td>
+      <td>${badge(c.pass_at_k)}</td>
+      <td>${badge(c.pass_hat_k)}</td>
+      <td>${c.n_passed}/${c.k}</td>
+      <td class="why">${escapeHtml((c.trials[c.trials.length - 1] || {}).reasons?.join('; ') || '')}</td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="report-meta">
+      <span>Run: <b>${escapeHtml(report.run)}</b></span>
+      <span>Vertical: <b>${escapeHtml(report.vertical)}</b></span>
+      <span>Trials per case (k): <b>${report.k}</b></span>
+      <span>Result: <b>${report.passed} of ${report.total} passed (pass@k)</b></span>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table class="report">
+        <thead><tr><th>Case</th><th>Checked by</th><th>Pass@k</th><th>Pass^k</th><th>Trials passed</th><th>Why</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function loadReport() {
+  const res = await fetch('/api/evals/report');
+  const data = await res.json();
+  renderReport(data.report);
+}
+
+async function runEval() {
+  const btn = document.getElementById('run-btn');
+  const res = await fetch('/api/evals/run', { method: 'POST' });
+  const data = await res.json();
+  if (!data.started) {
+    document.getElementById('run-status').textContent = data.message || 'Could not start.';
+    return;
+  }
+  btn.disabled = true;
+  pollStatus();
+}
+
+function pollStatus() {
+  if (polling) clearInterval(polling);
+  polling = setInterval(async () => {
+    const res = await fetch('/api/evals/status');
+    const data = await res.json();
+    const statusEl = document.getElementById('run-status');
+    const btn = document.getElementById('run-btn');
+    if (data.running) {
+      statusEl.innerHTML = '<span class="spinner"></span>Running - this can take a while, each case is a full ReAct loop.';
+      statusEl.className = 'status running';
+      btn.disabled = true;
+    } else {
+      clearInterval(polling);
+      polling = null;
+      statusEl.textContent = '';
+      statusEl.className = 'status';
+      btn.disabled = false;
+      loadReport();
+    }
+  }, 4000);
+}
+
+// Pick up an already-in-progress run if the page was reloaded mid-run.
+(async () => {
+  const res = await fetch('/api/evals/status');
+  const data = await res.json();
+  if (data.running) {
+    document.getElementById('run-btn').disabled = true;
+    pollStatus();
+  }
+})();
+
+loadReport();
+</script>
+</body>
+</html>

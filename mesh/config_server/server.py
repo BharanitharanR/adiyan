@@ -18,23 +18,42 @@ Agent (port 8428) and WhatsApp MCP (port 8425, for OTP delivery) should
 already be running.
 """
 import asyncio
+import json
 import os
+import subprocess
+import sys
 from functools import wraps
+from pathlib import Path
 
 import httpx
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from mesh.config_agent.constants import AGENT_URL as CONFIG_AGENT_URL
 from mesh.config_server import otp
-from mesh.config_server.constants import AGENT_STATUS_TIMEOUT_SECONDS, HOST, OPENWA_DASHBOARD_URL, PORT
+from mesh.config_server.constants import AGENT_STATUS_TIMEOUT_SECONDS, HOST, OLLAMA_URL, OPENWA_DASHBOARD_URL, PORT
 from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
+from mesh.lib.paths import eval_reports_dir
 
 app = Flask(__name__)
 # Regenerated every process start, not persisted - a login session not
 # surviving a restart is the right failure mode for something this
 # short-lived (the OTP itself only lives 5 minutes anyway).
 app.secret_key = os.urandom(24)
+
+# repo root - mesh/config_server/server.py -> mesh/config_server -> mesh -> root.
+# The eval runner is launched as `python -m mesh.evals.eval_analysis`, which
+# needs to run from here for that module path to resolve.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+EVAL_ENGINE_AGENT_ID = 'eval_engine'
+
+# Tracks the one eval subprocess this dashboard process knows about - in-
+# memory only, same short-lived reasoning as the OTP state, and a single
+# global (not per-session) is deliberate: only one eval run should ever be
+# in flight at a time, competing with itself (and real WhatsApp traffic)
+# for the same single-slot Ollama otherwise - confirmed the hard way this
+# same session, twice.
+_eval_process: 'subprocess.Popen | None' = None
 
 
 def _call_config_agent(skill_id: str, params: dict) -> dict:
@@ -199,6 +218,64 @@ def api_update_stage(agent_id, stage_name):
         'temperature': float(body.get('temperature', 0.7)),
         'timeout': int(body.get('timeout', 60)),
     }))
+
+
+@app.route('/api/ollama/models')
+@login_required
+def api_ollama_models():
+    """Real, currently-pulled model names, for the Stages editor's model
+    dropdown - hitting Ollama's own /api/tags rather than shelling out to
+    `ollama list`, since this process already talks HTTP to everything
+    else. Empty list (not an error) if Ollama isn't reachable - the
+    dashboard falls back to a plain text input in that case, same
+    graceful-degradation rule config_sdk itself follows when Mongo is down."""
+    try:
+        resp = httpx.get(f'{OLLAMA_URL}/api/tags', timeout=3.0)
+        resp.raise_for_status()
+        models = [m['name'] for m in resp.json().get('models', [])]
+    except Exception:
+        models = []
+    return jsonify({'models': models})
+
+
+@app.route('/evals')
+@login_required
+def evals():
+    return render_template('evals.html')
+
+
+@app.route('/api/evals/run', methods=['POST'])
+@login_required
+def api_evals_run():
+    global _eval_process
+    if _eval_process is not None and _eval_process.poll() is None:
+        return jsonify({'started': False, 'message': 'A run is already in progress.'})
+
+    log_path = Path.home() / '.Adiyan' / 'logs' / 'eval_run.log'
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, 'w')
+    _eval_process = subprocess.Popen(
+        [sys.executable, '-m', 'mesh.evals.eval_analysis'],
+        cwd=_REPO_ROOT, stdout=log_file, stderr=subprocess.STDOUT,
+    )
+    return jsonify({'started': True})
+
+
+@app.route('/api/evals/status')
+@login_required
+def api_evals_status():
+    running = _eval_process is not None and _eval_process.poll() is None
+    exit_code = None if running or _eval_process is None else _eval_process.returncode
+    return jsonify({'running': running, 'exit_code': exit_code})
+
+
+@app.route('/api/evals/report')
+@login_required
+def api_evals_report():
+    report_path = eval_reports_dir(EVAL_ENGINE_AGENT_ID) / 'latest.json'
+    if not report_path.exists():
+        return jsonify({'report': None})
+    return jsonify({'report': json.loads(report_path.read_text())})
 
 
 if __name__ == '__main__':

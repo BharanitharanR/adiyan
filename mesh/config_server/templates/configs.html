@@ -62,6 +62,7 @@
   <nav>
     <a class="current" href="/configs">Configs</a>
     <a href="/agents-status">Agents online</a>
+    <a href="/evals">Evals</a>
     <a class="logout" href="/logout">Log out</a>
   </nav>
 </div>
@@ -82,6 +83,10 @@ let selectedAgent = null;
 // Client-side working copy of array-typed constants, keyed by "agent::key" -
 // mutated by add/remove before a Save PUT, independent of allConfigs until saved.
 let arrayDrafts = {};
+// Real, currently-pulled Ollama models, for the Stages model dropdown - empty
+// until loadOllamaModels() resolves, in which case the dropdown falls back
+// to a plain text input rather than blocking the whole page on it.
+let ollamaModels = [];
 
 async function load() {
   const res = await fetch('/api/agents');
@@ -91,6 +96,17 @@ async function load() {
   if (!selectedAgent && ids.length) selectedAgent = ids[0];
   renderTabs(ids);
   renderDetail();
+}
+
+async function loadOllamaModels() {
+  try {
+    const res = await fetch('/api/ollama/models');
+    const data = await res.json();
+    ollamaModels = data.models || [];
+  } catch (e) {
+    ollamaModels = [];
+  }
+  renderDetail();  // re-render once models are in, in case the first render beat this fetch
 }
 
 function renderTabs(ids) {
@@ -106,6 +122,21 @@ function selectAgent(id) {
   renderDetail();
 }
 
+function renderModelPicker(stage, currentModel) {
+  const id = `model-${stage}`;
+  if (!ollamaModels.length) {
+    // Ollama unreachable, or still loading - plain text input, never blocks editing.
+    return `<input class="model-input" id="${id}" value="${escapeAttr(currentModel || '')}" placeholder="model">`;
+  }
+  // The stored model might not be in the currently-pulled list (already
+  // deleted locally, or set by hand before this dropdown existed) - keep
+  // it selectable anyway rather than silently dropping the field's real value.
+  const options = ollamaModels.includes(currentModel) ? ollamaModels : [currentModel, ...ollamaModels].filter(Boolean);
+  return `<select class="model-input" id="${id}">${options.map(m =>
+    `<option value="${escapeAttr(m)}" ${m === currentModel ? 'selected' : ''}>${escapeHtml(m)}</option>`
+  ).join('')}</select>`;
+}
+
 function fieldDesc(text) {
   if (!text) return '';
   return `<span class="field-desc">${escapeHtml(text)}</span>`;
@@ -113,7 +144,15 @@ function fieldDesc(text) {
 
 function fieldType(val) {
   if (typeof val === 'boolean') return 'bool';
-  if (Array.isArray(val)) return 'array';
+  if (Array.isArray(val)) {
+    // A flat list of strings (skill examples, mcp_servers) gets the
+    // chip editor. Anything with a non-string item - eval_engine's own
+    // "cases" being the real example, each one a {name, prompt,
+    // judge_criteria, ...} object - is too structured for chips to
+    // represent honestly, so it's edited as raw JSON instead.
+    const isFlatStringList = val.every(item => typeof item === 'string');
+    return isFlatStringList ? 'array' : 'array-json';
+  }
   if (typeof val === 'number') return Number.isInteger(val) ? 'int' : 'float';
   if (typeof val === 'string' && (val.length > 60 || val.includes('\n'))) return 'text-big';
   return 'text';
@@ -136,7 +175,7 @@ function renderDetail() {
           <div class="field-label">${stage}<span class="field-type">model / temperature / timeout</span>${fieldDesc(descriptions[stage])}</div>
           <div class="field-control">
             <div class="stage-row">
-              <input class="model-input" id="model-${stage}" value="${escapeAttr(val.model || '')}" placeholder="model">
+              ${renderModelPicker(stage, val.model)}
               <input type="number" step="0.1" min="0" max="2" id="temp-${stage}" value="${val.temperature ?? ''}" placeholder="temp">
               <input type="number" step="1" min="1" id="timeout-${stage}" value="${val.timeout ?? ''}" placeholder="timeout (s)">
             </div>
@@ -190,7 +229,21 @@ function renderControl(key, val, type) {
     if (!(draftKey in arrayDrafts)) arrayDrafts[draftKey] = [...val];
     return renderArrayEditor(draftKey);
   }
+  if (type === 'array-json') {
+    return `
+      <textarea class="big" id="${id}" oninput="validateJsonArray(this)">${escapeHtml(JSON.stringify(val, null, 2))}</textarea>
+      <div class="hint">Raw JSON array - each item is one object (e.g. one eval case: {"name", "prompt", "judge_criteria", ...}). Edit directly, or paste a whole replacement array.</div>`;
+  }
   return `<input type="text" id="${id}" value="${escapeAttr(val)}">`;
+}
+
+function validateJsonArray(textarea) {
+  try {
+    const parsed = JSON.parse(textarea.value);
+    textarea.classList.toggle('invalid', !Array.isArray(parsed));
+  } catch (e) {
+    textarea.classList.add('invalid');
+  }
 }
 
 function renderArrayEditor(draftKey) {
@@ -277,6 +330,18 @@ async function saveConstant(key) {
     value = parseFloat(raw.value);
   } else if (type === 'array') {
     value = arrayDrafts[`${selectedAgent}::${key}`] || [];
+  } else if (type === 'array-json') {
+    const raw = document.getElementById(`const-${key}`);
+    try {
+      value = JSON.parse(raw.value);
+    } catch (e) {
+      flashSaved(`saved-const-${key}`, false, 'invalid JSON');
+      return;
+    }
+    if (!Array.isArray(value)) {
+      flashSaved(`saved-const-${key}`, false, 'must be a JSON array');
+      return;
+    }
   } else {
     value = document.getElementById(`const-${key}`).value;
   }
@@ -303,6 +368,7 @@ function flashSaved(elId, ok, message) {
 }
 
 load();
+loadOllamaModels();
 </script>
 </body>
 </html>
