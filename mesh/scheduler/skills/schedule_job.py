@@ -81,6 +81,7 @@ async def run(
     target: str,
     expects_response: bool = False,
     response_window_minutes: Optional[int] = None,
+    source_filename: Optional[str] = None,
 ) -> Dict[str, Any]:
     if target != 'self':
         raise TargetNotResolvableError(target)
@@ -109,6 +110,7 @@ async def run(
         resolved_schedule=cron_expression, next_run_at=next_run_at,
         embedding=embedding, expects_response=expects_response,
         response_window_minutes=response_window_minutes,
+        source_filename=source_filename,
     )
 
     # Service token - see delete_job.py's identical comment: the caller's

@@ -31,6 +31,7 @@ from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.skill_router import classify
 from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
+from mesh.memory.constants import AGENT_URL as MEMORY_AGENT_URL
 from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
@@ -65,7 +66,28 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> str:
     return result.text
 
 
-async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any]) -> str:
+async def _compose_page(job: Dict[str, Any], conn) -> str:
+    """Page-delivery job (schedule_job's own source_filename param) - pulls
+    the next unsent page from Memory Agent's get_book_page skill and
+    advances the job's own current_page counter, so the following fire
+    asks for page N+1 instead of resending page N. Grounded only in the
+    document's real text, same "never invent" rule _compose_generic()
+    already follows for its own fallback - if the book has run out of
+    pages, that's said plainly, not papered over with a made-up ending."""
+    next_page = job['current_page'] + 1
+    token = permissions.mint_token('scheduler', 'service')
+    result = await call_agent(MEMORY_AGENT_URL, 'get_book_page', {
+        'source_filename': job['source_filename'], 'page_number': next_page,
+    }, token=token)
+    if not result.get('found'):
+        return f"Finished sending {job['source_filename']} - every page has already gone out."
+    db.advance_page(conn, job['id'], next_page)
+    return result['text']
+
+
+async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any], conn) -> str:
+    if job.get('source_filename'):
+        return await _compose_page(job, conn)
     if await _wants_journal(job['description'], cfg['select_composer']):
         try:
             # Service token - run_routine fires on a schedule (no WhatsApp
@@ -99,7 +121,7 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
         raise NotImplementedError(f"Cannot resolve target '{job['target']}' - only 'self' is currently supported.")
 
     cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
-    message_text = await _compose_message(job, cfg)
+    message_text = await _compose_message(job, cfg, conn)
 
     openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
     chat_id = await openwa.get_own_chat_id()

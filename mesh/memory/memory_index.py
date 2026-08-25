@@ -140,6 +140,15 @@ KB_DEFAULT_TOP_K = 4
 KB_CHUNK_SIZE = 800
 KB_CHUNK_OVERLAP = 100
 
+# Separate collection from KB_COLLECTION_NAME on purpose - a page is
+# addressed by exact page_number (Scheduler's "send tonight's page"), never
+# semantically searched the way knowledge-base chunks are, so it has no
+# business sharing a collection (or a chunking strategy) with content that
+# genuinely is searched. Each point still carries a real embedding (nothing
+# about VectorStoreIndex.insert() supports skipping that), it's just never
+# queried by similarity.
+KB_PAGES_COLLECTION_NAME = 'adiyan_book_pages'
+
 # search_within_document()'s own default - a bit higher than KB_DEFAULT_TOP_K
 # since the search space here is already narrowed to one document, so
 # returning a few more candidate chunks costs little and raises the odds the
@@ -174,6 +183,9 @@ class MemoryIndex:
         self.kb_index = VectorStoreIndex.from_vector_store(kb_vector_store, embed_model=self.embed_model)
         self._splitter = SentenceSplitter(chunk_size=KB_CHUNK_SIZE, chunk_overlap=KB_CHUNK_OVERLAP)
         self._markdown_splitter = MarkdownNodeParser()
+
+        pages_vector_store = QdrantVectorStore(client=client, collection_name=KB_PAGES_COLLECTION_NAME)
+        self.pages_index = VectorStoreIndex.from_vector_store(pages_vector_store, embed_model=self.embed_model)
 
     # Conversation memory (insert/retrieve) used to live here, backed by a
     # plain LlamaIndex VectorStoreIndex with zero callers of insert() ever
@@ -300,6 +312,84 @@ class MemoryIndex:
         conn.close()
 
         return len(chunks), source_key
+
+    def ingest_document_by_page(self, content: bytes, filename: str, username: str) -> tuple:
+        """Same Docling parse ingest_document() uses, but keeps page
+        boundaries instead of collapsing the whole document into one
+        markdown string first - export_to_markdown(page_no=N) pulls just
+        that page's own text, one point per page in KB_PAGES_COLLECTION_NAME
+        (not KB_COLLECTION_NAME - see that constant's own docstring for why
+        pages and searchable chunks don't share a collection).
+
+        For Scheduler's "send tonight's page" use case, not the knowledge-
+        base search path - a document ingested here is NOT also searchable
+        via retrieve_knowledge_base()/search_within_document(); call
+        ingest_document() too if both are wanted. Doesn't shell out to
+        _extract_pptx_markdown() - a slide deck has no meaningful "page N of
+        a book" reading order, this is for genuinely paginated documents
+        (PDFs, mainly).
+
+        Returns (num_pages, source_filename), same shape as
+        ingest_document()'s own return, for the same reason (a caller often
+        wants to act on the just-ingested document right away)."""
+        from docling.document_converter import DocumentConverter
+        from docling_core.types.io import DocumentStream
+
+        safe_user = _safe_filename(username)
+        safe_name = _safe_filename(filename)
+        source_key = f'{safe_user}/{safe_name}'
+
+        converter = DocumentConverter()
+        result = converter.convert(DocumentStream(name=safe_name, stream=io.BytesIO(content)))
+        doc = result.document
+        num_pages = doc.num_pages()
+        if num_pages == 0:
+            raise ValueError(f"Docling found no pages in '{filename}'")
+
+        # Same delete-before-insert pattern ingest_document() uses - a
+        # re-ingest must not leave stale pages from a previous version
+        # sitting alongside the new ones. Guarded on collection_exists()
+        # unlike ingest_document()'s own delete call - KB_COLLECTION_NAME
+        # already has data from earlier sessions so that call never hit
+        # this, but KB_PAGES_COLLECTION_NAME doesn't exist until the first
+        # real insert below creates it, and delete() against a genuinely
+        # missing collection 404s instead of being a harmless no-op.
+        if self._qdrant_client.collection_exists(KB_PAGES_COLLECTION_NAME):
+            self._qdrant_client.delete(
+                collection_name=KB_PAGES_COLLECTION_NAME,
+                points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
+            )
+
+        for page_no in range(1, num_pages + 1):
+            page_text = doc.export_to_markdown(page_no=page_no)
+            self.pages_index.insert(Document(
+                text=page_text or ' ',  # a blank page still needs a non-empty embed input
+                metadata={'source_filename': source_key, 'page_number': page_no},
+            ))
+
+        return num_pages, source_key
+
+    def get_page(self, source_filename: str, page_number: int) -> Optional[str]:
+        """One exact page's text, or None if that page (or the document
+        itself) isn't on file - a metadata-filtered scroll(), not a
+        similarity search, same reasoning as get_document_text()'s own
+        docstring on why an exact lookup goes straight through the
+        underlying Qdrant client instead of kb_index.as_retriever() (which
+        only ever answers "most similar to a query," never "give me
+        exactly this one thing")."""
+        points, _ = self._qdrant_client.scroll(
+            collection_name=KB_PAGES_COLLECTION_NAME,
+            scroll_filter=Filter(must=[
+                FieldCondition(key='source_filename', match=MatchValue(value=source_filename)),
+                FieldCondition(key='page_number', match=MatchValue(value=page_number)),
+            ]),
+            limit=1,
+            with_payload=True,
+        )
+        if not points:
+            return None
+        node_content = points[0].payload.get('_node_content')
+        return json.loads(node_content).get('text', '') if node_content else None
 
     def retrieve_knowledge_base(self, query: str, top_k: int = KB_DEFAULT_TOP_K) -> List[str]:
         """Return up to top_k relevant knowledge-base chunks, most relevant first.

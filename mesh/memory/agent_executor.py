@@ -28,8 +28,10 @@ from mesh.lib.skill_router import route
 from mesh.memory.constants import AGENT_ID
 from mesh.memory.memory_index import KB_DEFAULT_TOP_K
 from mesh.memory.skills import (
+    get_book_page,
     get_document_text,
     ingest,
+    ingest_book,
     list_documents,
     recall,
     remember,
@@ -79,6 +81,8 @@ SKILL_HANDLERS = {
     'search_document_chunks': search_document_chunks.run,
     'remember_interaction': remember.run,
     'list_documents': list_documents.run,
+    'ingest_book': ingest_book.run,
+    'get_book_page': get_book_page.run,
 }
 
 
