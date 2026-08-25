@@ -87,10 +87,25 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/register')
+def register():
+    """Deliberately not @login_required - login itself needs an already-
+    registered, already-linked WhatsApp number to send an OTP to, which a
+    first-time setup or an owner switching to a different number doesn't
+    have yet. This route exists specifically to break that chicken-and-egg
+    bind: straight to OpenWA's own dashboard (QR code / session status),
+    nothing about this app's own config exposed. Safe to leave open the
+    same way the rest of this deployment is - every service here (Config
+    Server included) is bound to 127.0.0.1, so reaching this route already
+    means local machine access, the same trust boundary the OTP-gated
+    routes rely on too."""
+    return redirect(OPENWA_DASHBOARD_URL)
+
+
 @app.route('/')
 @login_required
 def landing():
-    return render_template('landing.html', openwa_dashboard_url=OPENWA_DASHBOARD_URL)
+    return render_template('landing.html')
 
 
 @app.route('/configs')
