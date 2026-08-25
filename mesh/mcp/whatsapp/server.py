@@ -66,7 +66,6 @@ async def send_message(chat_id: str, text: str, ctx: Context) -> Dict[str, Any]:
     own domain, same as every other tool call in this system."""
     permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.send_message')
     result = await _openwa.send_message(chat_id, text)
-    logger.info(f"INCORRECTLY SENT::::: send_message called with chat_id={chat_id}, text={text}")
     return {'sent': True, 'result': result}
 
 
