@@ -32,16 +32,26 @@ AGENT_CODE_DIR = Path(__file__).parent
 
 
 async def _load_startup_config() -> dict:
-    host = await config_sdk.get_constant(AGENT_ID, 'host', HOST)
-    port = await config_sdk.get_constant(AGENT_ID, 'port', PORT)
+    host = await config_sdk.get_constant(
+        AGENT_ID, 'host', HOST,
+        description='Which network interface this agent binds to. Changing this needs a restart to take effect.',
+    )
+    port = await config_sdk.get_constant(
+        AGENT_ID, 'port', PORT,
+        description='Which port this agent listens on. Changing this needs a restart to take effect.',
+    )
     description = await config_sdk.get_constant(
         AGENT_ID, 'card_description', 'Routes an incoming message to the right agent and replies back.',
+        description='What this agent does, shown in its A2A agent card.',
     )
     # Not consumed by any orchestrator code today (confirmed - grep turns
     # up nothing) - seeded anyway so it's on file for whatever eventually
     # reads it, same "migrate what's hardcoded, not just what's already
     # wired up" reasoning as everything else moved into config_sdk here.
-    mcp_servers = await config_sdk.get_constant(AGENT_ID, 'mcp_servers', load_mcp_config(AGENT_CODE_DIR))
+    mcp_servers = await config_sdk.get_constant(
+        AGENT_ID, 'mcp_servers', load_mcp_config(AGENT_CODE_DIR),
+        description='Which MCP servers this agent connects to at startup - editing this needs a restart to take effect.',
+    )
     skills = await get_skills()
 
     return {'host': host, 'port': port, 'description': description, 'mcp_servers': mcp_servers, 'skills': skills}

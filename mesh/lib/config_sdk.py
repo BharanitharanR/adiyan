@@ -90,6 +90,13 @@ class AgentConfig(Document):
     vertical_id: str = PLATFORM_VERTICAL
     stages: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     constants: Dict[str, Any] = Field(default_factory=dict)
+    # Human-readable "what does this setting do" text, keyed the same as
+    # constants - a separate map, not folded into constants itself, so the
+    # dashboard's list of editable values never has to filter out its own
+    # documentation. Platform-only by design, same as a constant's seeded
+    # default - what a field MEANS doesn't vary per vertical the way its
+    # VALUE does, so this is never looked up through _resolve_vertical().
+    descriptions: Dict[str, str] = Field(default_factory=dict)
 
     class Settings:
         name = 'agent_config'
@@ -175,11 +182,15 @@ async def _get_agent_doc(agent_id: str, vertical_id: str) -> Optional[AgentConfi
 async def _upsert(
     agent_id: str, vertical_id: str, *,
     stage: Optional[Tuple[str, Dict[str, Any]]] = None, constant: Optional[Tuple[str, Any]] = None,
+    description: Optional[Tuple[str, str]] = None,
 ) -> Optional[AgentConfig]:
-    """stage=(name, value) or constant=(key, value), exactly one. Returns
-    the updated document, or None if Mongo is unavailable or the write
-    itself failed - callers treat either the same way (write didn't stick,
-    keep using the in-memory default this call started from)."""
+    """stage=(name, value) or constant=(key, value), exactly one of those
+    two - description=(key, text) may accompany either, seeded once (never
+    overwrites an existing entry for that key, same "a read that missed
+    only ever seeds, doesn't overwrite" rule the value itself follows).
+    Returns the updated document, or None if Mongo is unavailable or the
+    write itself failed - callers treat either the same way (write didn't
+    stick, keep using the in-memory default this call started from)."""
     if not await _ensure_initialized():
         return None
     cache_key = (agent_id, vertical_id)
@@ -191,6 +202,8 @@ async def _upsert(
             doc.stages[stage[0]] = stage[1]
         if constant is not None:
             doc.constants[constant[0]] = constant[1]
+        if description is not None and description[0] not in doc.descriptions:
+            doc.descriptions[description[0]] = description[1]
         await (doc.insert() if doc.id is None else doc.save())
         _cache[cache_key] = doc
         _cache_at[cache_key] = time.time()
@@ -217,13 +230,20 @@ async def _resolve_vertical(agent_id: str, vertical_id: Optional[str]) -> Option
 
 async def get_stage_config(
     agent_id: str, stage_name: str, default: Dict[str, Any], vertical_id: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Dict[str, Any]:
     """{model, temperature, timeout, ...} for one agent's one pipeline
     stage. The effective vertical (explicit vertical_id, or whatever's
     currently activated deployment-wide - see _resolve_vertical()) is
     checked first - falls back to the platform layer, then to `default`,
     which only ever seeds the *platform* layer (see this module's own
-    docstring on why a vertical override is always an explicit write)."""
+    docstring on why a vertical override is always an explicit write).
+
+    description, if given, is backfilled onto an already-seeded stage that
+    predates this parameter existing, not just written alongside a
+    brand-new one - a call site that starts passing description= a version
+    later than its first deploy still gets it stored, on the very next
+    call, not only on a fresh install."""
     effective_vertical = await _resolve_vertical(agent_id, vertical_id)
     if effective_vertical and effective_vertical != PLATFORM_VERTICAL:
         vertical_doc = await _get_agent_doc(agent_id, effective_vertical)
@@ -232,16 +252,24 @@ async def get_stage_config(
 
     platform_doc = await _get_agent_doc(agent_id, PLATFORM_VERTICAL)
     if platform_doc is not None and stage_name in platform_doc.stages:
+        if description is not None and stage_name not in platform_doc.descriptions:
+            await _upsert(agent_id, PLATFORM_VERTICAL, description=(stage_name, description))
         return platform_doc.stages[stage_name]
 
-    await _upsert(agent_id, PLATFORM_VERTICAL, stage=(stage_name, default))
+    await _upsert(
+        agent_id, PLATFORM_VERTICAL, stage=(stage_name, default),
+        description=(stage_name, description) if description is not None else None,
+    )
     return default
 
 
-async def get_constant(agent_id: str, key: str, default: Any, vertical_id: Optional[str] = None) -> Any:
+async def get_constant(
+    agent_id: str, key: str, default: Any, vertical_id: Optional[str] = None, description: Optional[str] = None,
+) -> Any:
     """Any other hardcoded constant or prompt template - same layered
     resolution (effective vertical, explicit or currently activated, then
-    platform) and auto-seed-on-first-miss behavior as get_stage_config()."""
+    platform), auto-seed-on-first-miss behavior, and description-backfill
+    as get_stage_config()."""
     effective_vertical = await _resolve_vertical(agent_id, vertical_id)
     if effective_vertical and effective_vertical != PLATFORM_VERTICAL:
         vertical_doc = await _get_agent_doc(agent_id, effective_vertical)
@@ -250,9 +278,14 @@ async def get_constant(agent_id: str, key: str, default: Any, vertical_id: Optio
 
     platform_doc = await _get_agent_doc(agent_id, PLATFORM_VERTICAL)
     if platform_doc is not None and key in platform_doc.constants:
+        if description is not None and key not in platform_doc.descriptions:
+            await _upsert(agent_id, PLATFORM_VERTICAL, description=(key, description))
         return platform_doc.constants[key]
 
-    await _upsert(agent_id, PLATFORM_VERTICAL, constant=(key, default))
+    await _upsert(
+        agent_id, PLATFORM_VERTICAL, constant=(key, default),
+        description=(key, description) if description is not None else None,
+    )
     return default
 
 
@@ -261,7 +294,10 @@ async def get_active_vertical_id() -> Optional[str]:
     running plain platform defaults (the default state). Same caching as
     every other read here - a fresh check happens at most every
     _ttl_seconds()."""
-    return await get_constant(CONTROL_AGENT_ID, 'active_vertical_id', None)
+    return await get_constant(
+        CONTROL_AGENT_ID, 'active_vertical_id', None,
+        description='Which business-vertical deployment is active, if any. Empty means every agent runs on plain platform defaults.',
+    )
 
 
 async def set_active_vertical_id(vertical_id: Optional[str]) -> bool:
@@ -319,15 +355,17 @@ async def list_agent_ids(vertical_id: str = PLATFORM_VERTICAL) -> List[str]:
 
 
 async def get_full_config(agent_id: str, vertical_id: str = PLATFORM_VERTICAL) -> Optional[Dict[str, Any]]:
-    """{'stages': {...}, 'constants': {...}} for one agent's one layer
-    (platform by default), or None if it has no config document yet.
-    Bypasses the read cache deliberately - a caller asking for the *entire*
-    config (Config Agent answering a question, the dashboard rendering a
-    page) wants what's actually on file right now, not a value that might
-    be up to _ttl_seconds() stale. Does not merge layers - the dashboard's
-    job is to show each layer distinctly (a support person editing
-    "Orchestrator" should see the platform default, not a value silently
-    blended with some vertical's override), not this module's."""
+    """{'stages': {...}, 'constants': {...}, 'descriptions': {...}} for one
+    agent's one layer (platform by default), or None if it has no config
+    document yet. 'descriptions' is keyed the same as constants/stages -
+    the dashboard cross-references by key, not by position. Bypasses the
+    read cache deliberately - a caller asking for the *entire* config
+    (Config Agent answering a question, the dashboard rendering a page)
+    wants what's actually on file right now, not a value that might be up
+    to _ttl_seconds() stale. Does not merge layers - the dashboard's job is
+    to show each layer distinctly (a support person editing "Orchestrator"
+    should see the platform default, not a value silently blended with
+    some vertical's override), not this module's."""
     if not await _ensure_initialized():
         return None
     try:
@@ -337,7 +375,7 @@ async def get_full_config(agent_id: str, vertical_id: str = PLATFORM_VERTICAL) -
         return None
     if doc is None:
         return None
-    return {'stages': doc.stages, 'constants': doc.constants}
+    return {'stages': doc.stages, 'constants': doc.constants, 'descriptions': doc.descriptions}
 
 
 async def list_vertical_ids(agent_id: str) -> List[str]:

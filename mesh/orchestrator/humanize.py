@@ -43,7 +43,10 @@ async def humanize(original_message: str, result: Dict[str, Any], cfg: Dict[str,
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(HumanReply)
 
-    template = await config_sdk.get_constant(AGENT_ID, 'humanize_prompt_template', _DEFAULT_PROMPT_TEMPLATE)
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'humanize_prompt_template', _DEFAULT_PROMPT_TEMPLATE,
+        description="Prompt used to rewrite an agent's raw answer into a natural WhatsApp-toned reply before sending.",
+    )
     try:
         prompt = template.format(original_message=original_message, result=result)
     except Exception as e:

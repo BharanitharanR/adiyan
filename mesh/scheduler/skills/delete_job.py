@@ -28,7 +28,10 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     # to cron_trigger is Scheduler acting on that already-authorized
     # request, not a second thing the original caller needs rights to.
     token = permissions.mint_token('scheduler', 'service')
-    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    cron_trigger_url = await config_sdk.get_constant(
+        AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
+        description='URL of the cron_trigger MCP server that actually fires scheduled jobs at their due time.',
+    )
     await call_tool(cron_trigger_url, 'remove_trigger', {'job_id': job['id']}, token=token)
 
     return {

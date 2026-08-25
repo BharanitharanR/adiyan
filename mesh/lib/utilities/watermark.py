@@ -22,7 +22,10 @@ async def apply(text: str) -> str:
     """Appends the current watermark to an outgoing message. An empty
     watermark_text constant is a deliberate off-switch, not an error -
     returns the message unchanged in that case."""
-    watermark = await config_sdk.get_constant(config_sdk.CONTROL_AGENT_ID, 'watermark_text', DEFAULT_TEXT)
+    watermark = await config_sdk.get_constant(
+        config_sdk.CONTROL_AGENT_ID, 'watermark_text', DEFAULT_TEXT,
+        description='Signature appended to every outgoing WhatsApp message. Leave empty to disable it entirely.',
+    )
     if not watermark:
         return text
     return f'{text}\n\n{watermark}'
@@ -35,7 +38,10 @@ async def has_watermark(text: str) -> bool:
     message the owner composed by hand on their linked phone, which never
     passes through apply(). An empty/disabled watermark never matches -
     with the off-switch engaged there's no marker left to detect."""
-    watermark = await config_sdk.get_constant(config_sdk.CONTROL_AGENT_ID, 'watermark_text', DEFAULT_TEXT)
+    watermark = await config_sdk.get_constant(
+        config_sdk.CONTROL_AGENT_ID, 'watermark_text', DEFAULT_TEXT,
+        description='Signature appended to every outgoing WhatsApp message. Leave empty to disable it entirely.',
+    )
     if not watermark:
         return False
     return watermark in text

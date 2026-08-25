@@ -63,7 +63,10 @@ async def run(contact_name: str, theme: Optional[str] = None) -> Dict[str, Any]:
         # Service token - the caller's own right to craft_reflection_prompt
         # was already checked at the agent_executor boundary.
         token = permissions.mint_token('journal', 'service')
-        memory_agent_url = await config_sdk.get_constant(AGENT_ID, 'memory_agent_url', MEMORY_AGENT_URL)
+        memory_agent_url = await config_sdk.get_constant(
+            AGENT_ID, 'memory_agent_url', MEMORY_AGENT_URL,
+            description='URL of the Memory Agent this checks with for past conversation snippets before writing a reflection prompt.',
+        )
         memory_result = await call_agent(memory_agent_url, 'recall_contact_memory', {
             'contact_name': contact_name,
             'query': theme or 'recent thoughts, mood, and challenges',

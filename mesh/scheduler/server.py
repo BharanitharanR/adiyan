@@ -71,11 +71,18 @@ def _catch_up_retry_loop() -> None:
 
 
 async def _load_startup_config() -> dict:
-    host = await config_sdk.get_constant(AGENT_ID, 'host', HOST)
-    port = await config_sdk.get_constant(AGENT_ID, 'port', PORT)
+    host = await config_sdk.get_constant(
+        AGENT_ID, 'host', HOST,
+        description='Which network interface this agent binds to. Changing this needs a restart to take effect.',
+    )
+    port = await config_sdk.get_constant(
+        AGENT_ID, 'port', PORT,
+        description='Which port this agent listens on. Changing this needs a restart to take effect.',
+    )
     description = await config_sdk.get_constant(
         AGENT_ID, 'card_description',
         'Owns scheduled jobs, durable routines, and trigger phrases for Adiyan.',
+        description='What this agent does, shown in its A2A agent card.',
     )
     skills = await get_skills()
     return {'host': host, 'port': port, 'description': description, 'skills': skills}

@@ -123,7 +123,7 @@ def _cap(text: str, cap: int) -> str:
     return text[:cap] + f'\n\n[...truncated, {len(text) - cap} more characters not shown]'
 
 
-async def _get_message(key: str, default: str, **kwargs: str) -> str:
+async def _get_message(key: str, default: str, description: str = '', **kwargs: str) -> str:
     """Mongo-backed user-facing/tool-observation copy - a fallback or
     "nothing found" message, not the ReAct loop's own reasoning prompts
     (those stay hardcoded for now, a separate, not-yet-agreed piece of
@@ -133,7 +133,7 @@ async def _get_message(key: str, default: str, **kwargs: str) -> str:
     expected placeholder must not break the caller, especially here: these
     strings often feed straight back into the ReAct loop's own reasoning
     as a tool observation, not just a WhatsApp reply."""
-    template = await config_sdk.get_constant(AGENT_ID, key, default)
+    template = await config_sdk.get_constant(AGENT_ID, key, default, description=description or None)
     try:
         return template.format(**kwargs)
     except Exception as e:
@@ -161,7 +161,10 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         except Exception as e:
             return f'search_documents failed: {e}'
         if not result.get('found'):
-            return await _get_message('msg_no_matching_document', 'No matching document found in the knowledge base.')
+            return await _get_message(
+                'msg_no_matching_document', 'No matching document found in the knowledge base.',
+                description="Shown when search_documents finds no document confident enough to match a query.",
+            )
         return f"Best match: {result['source_filename']}"
 
     @tool
@@ -182,6 +185,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         if not result.get('found'):
             return await _get_message(
                 'msg_document_not_found', "No document found with filename '{source_filename}'.",
+                description="Shown when read_document is called with a filename that isn't in the knowledge base.",
                 source_filename=source_filename,
             )
         return _cap(result['text'], observation_char_cap)
@@ -215,6 +219,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         if not result.get('found'):
             return await _get_message(
                 'msg_no_relevant_chunks', "No relevant passages found in '{source_filename}' for that question.",
+                description="Shown when search_within_document finds nothing relevant enough inside an already-known document.",
                 source_filename=source_filename,
             )
         chunks = result['chunks']
@@ -236,7 +241,10 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
             return f'list_documents failed: {e}'
         docs = result.get('documents', [])
         if not docs:
-            return await _get_message('msg_kb_empty', 'The knowledge base is empty - no documents have been uploaded.')
+            return await _get_message(
+                'msg_kb_empty', 'The knowledge base is empty - no documents have been uploaded.',
+                description="Shown when list_documents is called but nothing has ever been uploaded to the knowledge base.",
+            )
         return '\n'.join(docs)
 
     @tool
@@ -247,6 +255,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         if not contact_name:
             return await _get_message(
                 'msg_no_contact', 'No specific person is associated with this request - nothing to recall.',
+                description="Shown when recall_memory is called but no contact_name was ever attached to this conversation.",
             )
         token = permissions.mint_token('analysis', 'service')
         try:
@@ -257,7 +266,10 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
             return f'recall_memory failed: {e}'
         snippets = result.get('snippets', [])
         if not snippets:
-            return await _get_message('msg_nothing_in_memory', 'Nothing relevant found in conversation memory.')
+            return await _get_message(
+                'msg_nothing_in_memory', 'Nothing relevant found in conversation memory.',
+                description="Shown when recall_memory finds a contact but no past conversation snippets relevant to the query.",
+            )
         return '\n'.join(f'- {s}' for s in snippets)
 
     @tool
@@ -267,7 +279,10 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         with something outside your own tools, e.g. a business-specific
         agent installed for this deployment."""
         agents = await list_agents()
-        no_agents_msg = await _get_message('msg_no_agents_discoverable', 'No other agents are currently discoverable.')
+        no_agents_msg = await _get_message(
+            'msg_no_agents_discoverable', 'No other agents are currently discoverable.',
+            description="Shown when discover_agents finds no other agents registered in the mesh.",
+        )
         if not agents:
             return no_agents_msg
         lines = []
@@ -289,6 +304,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         if match is None:
             return await _get_message(
                 'msg_agent_not_registered', "No agent registered with id '{agent_id}' - call discover_agents first.",
+                description="Shown when consult_agent is called with an agent_id that isn't actually registered in the mesh.",
                 agent_id=agent_id,
             )
         token = permissions.mint_token('analysis', 'service')
@@ -519,9 +535,24 @@ def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]
 
 async def run(instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None) -> Dict[str, Any]:
     cfg = await config_sdk.get_stage_config(AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'])
-    strict = await config_sdk.get_constant(AGENT_ID, 'strict_grounding', DEFAULT_STRICT_GROUNDING)
-    observation_char_cap = await config_sdk.get_constant(AGENT_ID, 'observation_char_cap', OBSERVATION_CHAR_CAP)
-    doc_search_top_k = await config_sdk.get_constant(AGENT_ID, 'doc_search_top_k', DEFAULT_DOC_SEARCH_TOP_K)
+    strict = await config_sdk.get_constant(
+        AGENT_ID, 'strict_grounding', DEFAULT_STRICT_GROUNDING,
+        description="If true, only tool-verified evidence counts as a basis for an answer - even an ordinary "
+                    "general-knowledge question gets an honest \"nothing relevant found\" instead of an answer "
+                    "from the model's own training data. If false, general knowledge is a legitimate fallback "
+                    "when no document/memory/agent had anything relevant, but a specific verifiable detail "
+                    "(a date, a price, a port number) still requires real tool-verified evidence.",
+    )
+    observation_char_cap = await config_sdk.get_constant(
+        AGENT_ID, 'observation_char_cap', OBSERVATION_CHAR_CAP,
+        description="Max characters kept from any single tool result before it's truncated - protects the "
+                    "ReAct loop's own prompt from being blown out by one huge document dump.",
+    )
+    doc_search_top_k = await config_sdk.get_constant(
+        AGENT_ID, 'doc_search_top_k', DEFAULT_DOC_SEARCH_TOP_K,
+        description="How many passages search_within_document returns per query - more raises the odds the "
+                    "actually-relevant one is included, at the cost of a longer observation to read.",
+    )
     tools, tools_by_name = _make_tools(contact_name, observation_char_cap, doc_search_top_k)
 
     scratchpad = Scratchpad()
@@ -542,7 +573,10 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
         if not response.tool_calls:
             # Answered directly without calling finish - treat its own text
             # as the answer, a graceful outcome, not an error.
-            fallback = await _get_message('msg_no_clear_answer', "I wasn't able to find a clear answer.")
+            fallback = await _get_message(
+                'msg_no_clear_answer', "I wasn't able to find a clear answer.",
+                description="Fallback used if the ReAct loop's own final response has no text at all to fall back on.",
+            )
             return _package_result(response.content or fallback, source_filename)
 
         call = response.tool_calls[0]
@@ -551,7 +585,11 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
 
         tool_obj = tools_by_name.get(call['name'])
         if tool_obj is None:
-            observation = await _get_message('msg_unknown_tool', 'Unknown tool: {tool_name}', tool_name=call['name'])
+            observation = await _get_message(
+                'msg_unknown_tool', 'Unknown tool: {tool_name}',
+                description="Shown when the model calls a tool name that doesn't exist - should never happen in practice.",
+                tool_name=call['name'],
+            )
         else:
             try:
                 observation = await tool_obj.ainvoke(call['args'])

@@ -114,7 +114,10 @@ async def run(
     # Service token - see delete_job.py's identical comment: the caller's
     # own right to schedule_job was already checked upstream.
     token = permissions.mint_token('scheduler', 'service')
-    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    cron_trigger_url = await config_sdk.get_constant(
+        AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
+        description='URL of the cron_trigger MCP server that actually fires scheduled jobs at their due time.',
+    )
     await call_tool(cron_trigger_url, 'register_trigger', {
         'job_id': job['id'],
         'invoke_at': next_run_at,

@@ -221,7 +221,10 @@ async def run(
     # config_sdk.py's own docstring for the auto-seed/degrade-gracefully
     # behavior.
     cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
-    whatsapp_mcp_url = await config_sdk.get_constant(AGENT_ID, 'whatsapp_mcp_url', WHATSAPP_MCP_URL)
+    whatsapp_mcp_url = await config_sdk.get_constant(
+        AGENT_ID, 'whatsapp_mcp_url', WHATSAPP_MCP_URL,
+        description='URL of the WhatsApp MCP server used to actually send the reply back to the sender.',
+    )
 
     text, kb_pending = await _resolve_image_intent(text, image)
     if document is not None:

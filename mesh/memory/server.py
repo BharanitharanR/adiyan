@@ -23,11 +23,18 @@ from mesh.observability.tracing import setup_tracing
 
 
 async def _load_startup_config() -> dict:
-    host = await config_sdk.get_constant(AGENT_ID, 'host', HOST)
-    port = await config_sdk.get_constant(AGENT_ID, 'port', PORT)
+    host = await config_sdk.get_constant(
+        AGENT_ID, 'host', HOST,
+        description='Which network interface this agent binds to. Changing this needs a restart to take effect.',
+    )
+    port = await config_sdk.get_constant(
+        AGENT_ID, 'port', PORT,
+        description='Which port this agent listens on. Changing this needs a restart to take effect.',
+    )
     description = await config_sdk.get_constant(
         AGENT_ID, 'card_description',
         "Looks up what's known about one person or business from their past conversations.",
+        description='What this agent does, shown in its A2A agent card.',
     )
     skills = await get_skills()
     return {'host': host, 'port': port, 'description': description, 'skills': skills}

@@ -113,7 +113,10 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     next_run_at = croniter(job['resolved_schedule'], datetime.now(timezone.utc)).get_next(datetime).isoformat()
     db.update_next_run(conn, job['id'], next_run_at)
     token = permissions.mint_token('scheduler', 'service')
-    cron_trigger_url = await config_sdk.get_constant(AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL)
+    cron_trigger_url = await config_sdk.get_constant(
+        AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
+        description='URL of the cron_trigger MCP server that actually fires scheduled jobs at their due time.',
+    )
     await call_tool(cron_trigger_url, 'register_trigger', {
         'job_id': job['id'],
         'invoke_at': next_run_at,
