@@ -186,7 +186,7 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
 @mcp.custom_route(WEBHOOK_PATH, methods=['POST'])
 async def handle_webhook(request: Request) -> JSONResponse:
     payload = await request.json()
-    message = _adapter.webhook_to_message(payload)
+    message = await _adapter.webhook_to_message(payload)
     if not message:
         return JSONResponse({'status': 'ignored'})
 

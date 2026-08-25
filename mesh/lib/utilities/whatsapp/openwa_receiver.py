@@ -33,7 +33,7 @@ class OpenWAAdapter:
     """Convert OpenWA webhook events to Adiyan AgentState format"""
 
     @staticmethod
-    def webhook_to_message(webhook_data: dict) -> dict:
+    async def webhook_to_message(webhook_data: dict) -> dict:
         """
         Convert OpenWA webhook format to Adiyan message format.
 
@@ -112,7 +112,7 @@ class OpenWAAdapter:
                 # explicitly rather than assumed.
                 logger.debug("Ignoring message.sent with fromMe=False (unexpected)")
                 return None
-            if watermark.has_watermark(data.get('body', '')):
+            if await watermark.has_watermark(data.get('body', '')):
                 logger.debug("Ignoring message.sent that carries our own watermark (self-echo)")
                 return None
 
@@ -331,7 +331,7 @@ class OpenWAReceiver:
             logger.info(f"📬 Received OpenWA webhook: {webhook_data.get('event')}")
 
             # Convert webhook to Adiyan message format
-            message = self.adapter.webhook_to_message(webhook_data)
+            message = await self.adapter.webhook_to_message(webhook_data)
 
             if not message:
                 logger.debug("Webhook ignored (not a message.received event)")

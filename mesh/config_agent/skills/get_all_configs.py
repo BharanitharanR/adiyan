@@ -17,4 +17,15 @@ async def run() -> Dict[str, Any]:
         full = await config_sdk.get_full_config(agent_id)
         if full is not None:
             configs[agent_id] = full
+
+    # list_agent_ids() deliberately excludes CONTROL_AGENT_ID from the
+    # picker it serves (WhatsApp/NLP agent-name resolution) - see its own
+    # docstring. The dashboard is a different caller with a different
+    # need: deployment-wide settings (e.g. the outgoing-message watermark)
+    # have to be editable from somewhere, and this is that somewhere -
+    # included explicitly here, not by loosening list_agent_ids() itself.
+    control = await config_sdk.get_full_config(config_sdk.CONTROL_AGENT_ID)
+    if control is not None:
+        configs[config_sdk.CONTROL_AGENT_ID] = control
+
     return {'agents': configs}

@@ -146,7 +146,7 @@ class OpenWAService:
         WhatsApp MCP send_message tool, Scheduler's run_routine calling
         this directly, the legacy pipeline) ultimately goes through. No
         caller can opt out."""
-        text = watermark.apply(text)
+        text = await watermark.apply(text)
         session_id = await self._session_id_or_refresh()
         async with self._new_client() as client:
             response = await client.post(

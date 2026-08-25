@@ -136,7 +136,7 @@ def _probe_agent(client: httpx.Client, agent_id: str, host: str, port) -> dict:
 # CONTROL_AGENT_ID precedent. Excluded here so they don't show as a
 # permanently-red "offline" row for something that was never meant to be
 # a live process.
-_NON_SERVER_AGENT_IDS = {'eval_engine'}
+_NON_SERVER_AGENT_IDS = {'eval_engine', '_mesh_control'}
 
 
 @app.route('/api/agents/status')
