@@ -108,6 +108,14 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         description='Which Ollama-served TTS model reads each page aloud, and Orpheus\'s own generation knobs (temperature/top_p/repetition_penalty) that control how varied vs. reliable the delivery is.',
     )
     audio = await tts.synthesize(speech_text, job['voice'], tts_cfg)
+    # WhatsApp's voice-note (PTT) bubble has no caption field the way
+    # send_document's does - confirmed live, OpenWA's own send-audio API
+    # takes no caption param at all (mesh/lib/utilities/whatsapp/
+    # openwa_service.py's send_voice()). A short text message announcing
+    # the page, sent right before the audio, is the only way to tell the
+    # listener what they're about to hear before they hear it.
+    title = job['source_filename'].split('/', 1)[-1].rsplit('.', 1)[0].replace('_', ' ')
+    await openwa.send_message(chat_id, f'📖 {title} — page {next_page}')
     await openwa.send_voice(chat_id, audio)
     db.advance_page(conn, reading_job_id, next_page)
 

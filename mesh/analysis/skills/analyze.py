@@ -141,6 +141,53 @@ async def _get_message(key: str, default: str, description: str = '', **kwargs: 
         return default.format(**kwargs)
 
 
+def _make_connection_interceptor(connection_string: str, needs_connection_id: set):
+    """Auto-manages an MCP session's connectionId, so the ReAct loop's model
+    never has to reason about connect/disconnect lifecycle or carry an
+    opaque UUID from one step to the next itself.
+
+    Confirmed live this session: this loop's own scratchpad compaction step
+    (_compact(), which distills every tool observation into structured
+    "findings" via its own LLM call) has nowhere natural to preserve an
+    exact opaque session token - a real connectionId returned by connect()
+    got paraphrased/lost by the time the model reached its next decide
+    step, so it never successfully called find() with a real id even after
+    a prompt hint telling it these tools existed. That's a mismatch between
+    this loop's whole architecture (compact everything into facts) and a
+    stateful multi-call session protocol, not a prompting problem - so this
+    sidesteps it entirely instead of trying to prompt around it: the first
+    call to any tool in needs_connection_id gets connect() invoked
+    automatically, its real connectionId cached, and silently injected -
+    the model only ever sees data-operation tools, never connection
+    lifecycle at all.
+
+    needs_connection_id (the RAW, un-prefixed MCP tool names, e.g. "find")
+    has to be pre-computed from each tool's own args_schema, not guessed
+    from request.args - confirmed live that a caller (model or otherwise)
+    who never provides connectionId doesn't leave an empty key in
+    request.args, it simply omits the key entirely, so "is this key
+    present" can't distinguish "doesn't need one" from "needs one but
+    didn't have it." Also confirmed live: some of this exact server's own
+    tools (list-connections, search-knowledge) have NO connectionId field
+    at all - blindly injecting into every call breaks those with an
+    unexpected extra property."""
+    cached_id: Optional[str] = None
+
+    async def interceptor(request, handler):
+        nonlocal cached_id
+        if request.name not in needs_connection_id or request.args.get('connectionId'):
+            return await handler(request)
+        if cached_id is None:
+            connect_result = await handler(
+                request.override(name='connect', args={'connectionString': connection_string})
+            )
+            cached_id = connect_result.structuredContent['connectionId']
+        request = request.override(args={**request.args, 'connectionId': cached_id})
+        return await handler(request)
+
+    return interceptor
+
+
 async def _load_mcp_tools(server_urls: List[str]) -> List[Any]:
     """Dynamically turns each URL in server_urls into that MCP server's own
     real tool set, merged into this ReAct loop's tools at runtime - the
@@ -167,7 +214,16 @@ async def _load_mcp_tools(server_urls: List[str]) -> List[Any]:
     server logs a warning and contributes zero tools, rather than taking
     down the whole ReAct loop - same tolerance this mesh already gives
     every other soft dependency (mesh/memory/memory_index.py's
-    get_memory_index())."""
+    get_memory_index()).
+
+    connect/disconnect tools are filtered out of what's returned - see
+    _make_connection_interceptor()'s own docstring for why the model
+    should never need to call them itself. connection_string is currently
+    hardcoded for the one real server tested this session (Mongo's
+    adiyan_config) - a real limitation if a second, differently-shaped MCP
+    server is ever added; worth promoting to a per-server config_sdk value
+    at that point, not invented generically now for a server that doesn't
+    exist yet."""
     if not server_urls:
         return []
     from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -176,12 +232,30 @@ async def _load_mcp_tools(server_urls: List[str]) -> List[Any]:
         f'mcp_{i}': {'transport': 'streamable_http', 'url': url}
         for i, url in enumerate(server_urls)
     }
-    client = MultiServerMCPClient(connections, tool_name_prefix=True)
+    connection_string = 'mongodb://localhost:27017/adiyan_config'
+
     try:
-        return await client.get_tools()
+        # First pass, no interceptor: just enough to read each tool's own
+        # args_schema and learn which raw MCP tool names actually declare a
+        # connectionId field - see _make_connection_interceptor()'s own
+        # docstring for why this can't be guessed at call time.
+        probe_client = MultiServerMCPClient(connections, tool_name_prefix=True)
+        probe_tools = await probe_client.get_tools()
+        needs_connection_id = {
+            t.name.split('_', 2)[-1]
+            for t in probe_tools
+            if 'connectionId' in (t.args_schema or {}).get('properties', {})
+        }
+
+        client = MultiServerMCPClient(
+            connections, tool_name_prefix=True,
+            tool_interceptors=[_make_connection_interceptor(connection_string, needs_connection_id)],
+        )
+        tools = await client.get_tools()
     except Exception as e:
         logger.warning(f'Failed to load tools from mcp_servers {server_urls}: {e}')
         return []
+    return [t for t in tools if not (t.name.endswith('_connect') or t.name.endswith('_disconnect'))]
 
 
 def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_search_top_k: int):
