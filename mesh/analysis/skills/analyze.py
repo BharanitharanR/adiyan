@@ -141,6 +141,49 @@ async def _get_message(key: str, default: str, description: str = '', **kwargs: 
         return default.format(**kwargs)
 
 
+async def _load_mcp_tools(server_urls: List[str]) -> List[Any]:
+    """Dynamically turns each URL in server_urls into that MCP server's own
+    real tool set, merged into this ReAct loop's tools at runtime - the
+    consumer half of the mcp_servers config field that's existed since the
+    config_sdk migration but was never actually read by any code (confirmed
+    live: server.py's own _load_startup_config() fetches it only for the
+    agent card, mcp_config.json's own history shows it seeded empty and
+    never consumed). Adding a URL to mcp_servers via the config dashboard
+    and restarting is now enough to grant this agent a brand new tool, no
+    code change here required for the next one.
+
+    Uses langchain_mcp_adapters (already a requirements.txt dependency,
+    unused anywhere in this codebase until now) rather than hand-rolling
+    MCP-tool-to-LangChain-tool conversion - MultiServerMCPClient.get_tools()
+    returns real, directly ainvoke()-able BaseTool objects, the same
+    interface every other tool in _make_tools() already has.
+
+    tool_name_prefix=True: each tool's name gets prefixed with its own
+    server's slot name (mcp_0, mcp_1, ...) so two different MCP servers
+    exposing a same-named tool (e.g. both have a "find") can't collide in
+    tools_by_name.
+
+    Best-effort, not all-or-nothing: one unreachable or misbehaving MCP
+    server logs a warning and contributes zero tools, rather than taking
+    down the whole ReAct loop - same tolerance this mesh already gives
+    every other soft dependency (mesh/memory/memory_index.py's
+    get_memory_index())."""
+    if not server_urls:
+        return []
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    connections = {
+        f'mcp_{i}': {'transport': 'streamable_http', 'url': url}
+        for i, url in enumerate(server_urls)
+    }
+    client = MultiServerMCPClient(connections, tool_name_prefix=True)
+    try:
+        return await client.get_tools()
+    except Exception as e:
+        logger.warning(f'Failed to load tools from mcp_servers {server_urls}: {e}')
+        return []
+
+
 def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_search_top_k: int):
     """Tool functions as closures, not module-level - contact_name varies
     per call, and multiple analyse_this calls can run concurrently with
@@ -397,6 +440,23 @@ async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg
         'it to you - if you are unsure, say so or leave it out, do not assume. '
         + grounding_rule
     )
+    mcp_tool_names = [t.name for t in tools if t.name.startswith('mcp_')]
+    if mcp_tool_names:
+        # Confirmed live this session: a question about this deployment's
+        # OWN internal state ("what voice is AdiyanReader set to") got no
+        # relevant answer from search_documents (correctly - that's not a
+        # user document) and the loop gave up, never trying the newly-loaded
+        # mcp_servers tools at all. Their own tool descriptions (generic
+        # "run a find query against a MongoDB collection") give no hint they
+        # hold THIS deployment's own configuration data specifically - this
+        # is the missing context, not a prompt rewrite of every possible
+        # question shape.
+        prompt += (
+            '\n\nYou also have database tools (' + ', '.join(mcp_tool_names) + ') connected to this '
+            "deployment's own internal database - use these for a question about the system's own "
+            "configuration, settings, or internal state (e.g. which voice/model an agent is set to use, "
+            "what a stage's parameters are), not for questions about a user's uploaded documents."
+        )
     return await model.ainvoke(prompt)
 
 
@@ -554,6 +614,17 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
                     "actually-relevant one is included, at the cost of a longer observation to read.",
     )
     tools, tools_by_name = _make_tools(contact_name, observation_char_cap, doc_search_top_k)
+
+    mcp_servers = await config_sdk.get_constant(
+        AGENT_ID, 'mcp_servers', [],
+        description='URLs of MCP servers whose tools get dynamically added to this ReAct loop at startup '
+                    '(see _load_mcp_tools() in this skill\'s own module) - add a URL here and restart to grant '
+                    'this agent a new tool with no code change. Empty by default.',
+    )
+    mcp_tools = await _load_mcp_tools(mcp_servers)
+    if mcp_tools:
+        tools = tools + mcp_tools
+        tools_by_name = {**tools_by_name, **{t.name: t for t in mcp_tools}}
 
     scratchpad = Scratchpad()
     if source_filename:
