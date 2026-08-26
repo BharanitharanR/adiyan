@@ -35,6 +35,7 @@ from mesh.memory.skills import (
     list_documents,
     recall,
     remember,
+    resolve_book,
     resolve_document,
     search_document_chunks,
     search_kb,
@@ -83,6 +84,7 @@ SKILL_HANDLERS = {
     'list_documents': list_documents.run,
     'ingest_book': ingest_book.run,
     'get_book_page': get_book_page.run,
+    'resolve_book': resolve_book.run,
 }
 
 

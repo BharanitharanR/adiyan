@@ -30,13 +30,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from a2a.types import AgentSkill
+from pydantic import BaseModel, Field
 
 from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.config import load_runtime_config
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
-from mesh.lib.skill_router import classify
+from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db, router, rules_engine
 from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL
 from mesh.orchestrator.humanize import humanize
@@ -71,6 +72,123 @@ _UPLOAD_INSTRUCTION_SKILLS = [
         output_modes=['application/json'],
     ),
 ]
+
+# Same shape as _UPLOAD_INSTRUCTION_SKILLS: a single-skill pool fed to
+# skill_router.classify() as a yes/no check, this time for "does this plain
+# text message mean start reading me a book." Deliberately NOT added to
+# mesh/adiyan_reader/skills_catalog.py's own (empty) get_skills() - that
+# emptiness is intentional (see that file's own docstring: start_reading
+# needs an already-resolved source_filename, never a raw guess from an
+# extraction schema). This classify step only decides intent; the book
+# reference it extracts still has to pass through Memory Agent's
+# resolve_document before it's trusted as a real key - see
+# _resolve_book_reading_request() and _start_book_reading() below.
+_BOOK_READING_SKILLS = [
+    AgentSkill(
+        id='start_book_reading',
+        name='Start Book Reading',
+        description=(
+            'The caller wants Adiyan to start reading a book to them - a nightly '
+            'voice note of the next page, read out loud. Only matches an actual '
+            'request to begin this, not a question about how it works or a '
+            'passing mention of a book title.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Read me the power of now every night',
+            'Can you read this book to me',
+            'Start reading me the book I uploaded',
+            'Read me a book, next page',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+class _BookReadingRequest(BaseModel):
+    book_reference: str = Field(description="How the caller referred to the book - a title, a partial title, or a description like 'the book I uploaded yesterday'. Copy their own wording, don't invent or complete a title they didn't say.")
+
+
+async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[str]:
+    """None if this message isn't actually a "start reading" request - the
+    caller then falls through to normal routing, same degrade-on-failure
+    contract _resolve_upload_instruction() already follows. Otherwise
+    returns the caller's own raw book reference exactly as classify/extract
+    read it from their words - never a filename, never Memory Agent's own
+    key. Resolving THAT into a real source_filename is a separate step
+    (_start_book_reading(), via Memory Agent's resolve_document) - kept
+    apart so a failed classify/extract here never risks a wrong real key
+    reaching adiyan_reader's start_reading."""
+    try:
+        choice = await classify(text, _BOOK_READING_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Book-reading intent classification failed: {e}')
+        return None
+    if choice.skill_id != 'start_book_reading':
+        return None
+    try:
+        params = await extract(text, 'start_book_reading', _BookReadingRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Book-reading reference extraction failed: {e}')
+        return None
+    return params.book_reference
+
+
+async def _start_book_reading(book_reference: str, chat_id: str, from_number: Optional[str], tier: str) -> Optional[str]:
+    """Reply text for the sender, or None only on a genuinely unexpected
+    failure (an agent unreachable, the calls themselves erroring) - same
+    silent-on-unexpected-failure convention run()'s own except-block already
+    documents. An anticipated outcome (book not found among their uploads)
+    still gets a real, specific reply - the sender needs to know to upload
+    the book first, not get silence.
+
+    book_reference is the caller's own free-text wording, resolved here
+    through Memory Agent's resolve_book (a real fuzzy match against their
+    actual page-ingested books, mesh/memory/skills/resolve_book.py) - never
+    trusted as a filename directly. Deliberately NOT resolve_document: that
+    one only searches kb_documents (chunk-ingested via ingest_document),
+    which has zero visibility into a book ingested via ingest_book - see
+    memory_index.py's find_book_by_reference() docstring for how that gap
+    was found live. Only the resolved source_filename that comes back from
+    resolve_book's real lookup is ever passed to adiyan_reader's
+    start_reading, same "never let the model guess a real key" rule
+    mesh/adiyan_reader/skills_catalog.py's own docstring already documents
+    for that skill.
+
+    phone_number defaults to from_number (the sender's real number, already
+    resolved by the WhatsApp receiver) - falls back to chat_id only if
+    from_number wasn't supplied, mirroring contact_name's own `or chat_id`
+    fallback elsewhere in this module."""
+    memory_url = router.get_agent_url('memory')
+    if memory_url is None:
+        return "Knowledge Bank isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        resolved = await call_agent(memory_url, 'resolve_book', {'query': book_reference}, token=token)
+    except Exception as e:
+        logger.error(f'Book resolution failed for {chat_id}: {e}')
+        return None
+
+    source_filename = resolved.get('source_filename') if resolved.get('found') else None
+    if not source_filename:
+        return f"I couldn't find \"{book_reference}\" among your uploaded books - upload the PDF first, then ask me to read it."
+
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    try:
+        started = await call_agent(reader_url, 'start_reading', {
+            'phone_number': from_number or chat_id,
+            'source_filename': source_filename,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'start_reading failed for {chat_id}: {e}')
+        return None
+
+    return f"Got it - I'll read you {source_filename.split('/', 1)[-1]} tonight, and every night after until it's finished. First page comes at {started.get('first_reading_at', 'tonight')}."
 
 
 async def _ingest_into_knowledge_base(
@@ -302,6 +420,14 @@ async def run(
                     reply = await humanize(text, caption_source, cfg['humanize'])
                 else:
                     reply = analysis.get('result') or ingest_reply
+    elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
+        # Only reached once the gate has already let this sender through and
+        # there's no image/document attached - a stranger or an upload
+        # caption never gets here, same reasoning kb_pending's own comment
+        # documents. Lazily evaluated (only classified when the branches
+        # above didn't already claim this message) - no wasted LLM call on
+        # every upload or gate-handled message.
+        reply = await _start_book_reading(book_reference, chat_id, from_number, tier)
     else:
         should_remember = True
         try:

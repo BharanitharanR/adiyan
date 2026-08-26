@@ -391,6 +391,78 @@ class MemoryIndex:
         node_content = points[0].payload.get('_node_content')
         return json.loads(node_content).get('text', '') if node_content else None
 
+    def list_page_ingested_books(self) -> List[str]:
+        """Every distinct source_filename in KB_PAGES_COLLECTION_NAME - the
+        page-ingested books AdiyanReader can actually read (ingest_book(),
+        not ingest_document()). Deliberately separate from list_documents()
+        (which only ever queries kb_documents, the chunk-ingested knowledge
+        base): confirmed live this session that a book ingested via
+        ingest_book() never gets a kb_documents row at all, so
+        find_source_document() has zero visibility into it - resolving a
+        "read me this book" reference has to search THIS collection
+        instead, not the regular knowledge-base document list.
+
+        Scrolls the whole collection client-side and dedupes source_filename
+        values - no dedicated per-document index exists here (each point is
+        one page, not one document), and the collection is small enough
+        (one deployment's own uploaded books) that this is cheap."""
+        if not self._qdrant_client.collection_exists(KB_PAGES_COLLECTION_NAME):
+            return []
+        seen: set = set()
+        offset = None
+        while True:
+            points, offset = self._qdrant_client.scroll(
+                collection_name=KB_PAGES_COLLECTION_NAME,
+                limit=200,
+                offset=offset,
+                with_payload=['source_filename'],
+            )
+            for point in points:
+                source_filename = point.payload.get('source_filename')
+                if source_filename:
+                    seen.add(source_filename)
+            if offset is None:
+                break
+        return sorted(seen)
+
+    def find_book_by_reference(self, query: str) -> Optional[str]:
+        """Fuzzy-matches a free-text book reference (a title, a partial
+        title) against the real page-ingested books on file, returning the
+        exact source_filename or None if nothing matches well enough - the
+        page-ingested equivalent of find_source_document(), which can't see
+        these books at all (see list_page_ingested_books()'s own docstring).
+
+        Plain string matching (difflib), not a semantic/LLM lookup - a book
+        title is short and the candidate list is small, so a fuzzy string
+        match against each book's own display name (the safe_filename with
+        the <username>/ prefix and extension stripped, underscores back to
+        spaces) is enough, and keeps this a real, inspectable lookup against
+        actual data rather than another place an LLM could invent a key."""
+        import difflib
+
+        candidates = self.list_page_ingested_books()
+        if not candidates:
+            return None
+
+        def _display_name(source_filename: str) -> str:
+            basename = source_filename.split('/', 1)[-1]
+            basename = re.sub(r'\.[A-Za-z0-9]+$', '', basename)
+            return basename.replace('_', ' ').replace('-', ' ').strip().lower()
+
+        display_to_source = {_display_name(c): c for c in candidates}
+        query_normalized = query.strip().lower()
+
+        # Exact/substring match first - a real book title mentioned in full
+        # or as a clear substring shouldn't be left to difflib's fuzzier
+        # scoring, which can be swayed by an unrelated but similarly-shaped
+        # title.
+        for display_name, source_filename in display_to_source.items():
+            if query_normalized in display_name or display_name in query_normalized:
+                return source_filename
+
+        matches = difflib.get_close_matches(query_normalized, display_to_source.keys(), n=1, cutoff=0.4)
+        return display_to_source[matches[0]] if matches else None
+
     def retrieve_knowledge_base(self, query: str, top_k: int = KB_DEFAULT_TOP_K) -> List[str]:
         """Return up to top_k relevant knowledge-base chunks, most relevant first.
         Global - not scoped to any one contact, unlike retrieve()."""

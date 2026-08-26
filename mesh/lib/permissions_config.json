@@ -13,6 +13,7 @@
         "memory.search_knowledge_base",
         "memory.share_knowledge_document",
         "memory.resolve_document",
+        "memory.resolve_book",
         "memory.get_document_text",
         "memory.search_document_chunks",
         "memory.remember_interaction",
