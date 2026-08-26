@@ -75,7 +75,7 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
     page_text = page_result['text']
 
     tts_cfg = await config_sdk.get_stage_config(
-        AGENT_ID, 'synthesize_speech', {'model': 'legraphista/Orpheus:3b-ft-q4_k_m', 'temperature': 0.6, 'base_url': OLLAMA_URL},
+        AGENT_ID, 'synthesize_speech', {'model': 'legraphista/Orpheus:3b-ft-q8', 'temperature': 0.6, 'base_url': OLLAMA_URL},
         description='Which Ollama-served TTS model reads each page aloud, and how expressive/varied the delivery is.',
     )
     audio = await tts.synthesize(page_text, job['voice'], tts_cfg)

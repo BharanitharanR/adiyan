@@ -31,6 +31,7 @@ under 100ms, negligible next to the actual TTS generation time.
 """
 import asyncio
 import logging
+import re
 import subprocess
 import tempfile
 import wave
@@ -71,6 +72,73 @@ def _ensure_snac():
     _snac_model, _snac_device = model, device
     logger.info(f'SNAC model loaded on {device}')
     return _snac_model, _snac_device
+
+
+def clean_for_speech(text: str) -> str:
+    """Docling's own markdown export (mesh/memory/memory_index.py's
+    ingest_document_by_page) is a page's real text but with markdown
+    structure baked in - "## Heading" markers, "<!-- image -->" picture
+    placeholders, and similar formatting a human reader ignores by eye but
+    an LLM-driven TTS model reads as literal input. Confirmed live:
+    "<!-- image -->" got vocalized as the word "image" mid-sentence, and
+    page 1 of a real book (title/subtitle/blurb, heavy with ## markers)
+    read incompletely and inconsistently across repeated runs - stripped
+    to plain prose here before it ever reaches Orpheus."""
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)  # <!-- image --> and similar
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)  # markdown headings
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # **bold**
+    text = re.sub(r'\*(.+?)\*', r'\1', text)  # *italic*
+    text = re.sub(r'\n{3,}', '\n\n', text)  # collapse excess blank lines
+    text = re.sub(r'[ \t]{2,}', ' ', text)  # collapse OCR'd multi-space/tab runs between words
+    return text.strip()
+
+
+MAX_CHUNK_CHARS = 220
+
+
+def _split_into_speech_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
+    """Confirmed live this session: Orpheus (a 3B model) reads a short
+    sentence accurately and completely every time, but accuracy/coherence
+    measurably degrades over a longer single generation - a real page
+    (1500+ chars) came back garbled and incomplete even once the
+    max_tokens truncation bug was fixed, at both q4 and q8 quantization.
+    Splitting into shorter, sentence-respecting pieces and synthesizing
+    each separately keeps every individual generation inside the range
+    that actually worked reliably in testing, at the cost of one Ollama
+    round-trip per chunk instead of one per page.
+
+    Splits on sentence-ending punctuation, not python nltk/spacy - good
+    enough for prose, and this module already avoids one more heavy
+    optional dependency (see _ensure_snac()'s own reasoning for
+    torch/snac already being the deliberate exception)."""
+    sentences = re.split(r'(?<=[.!?])\s+', text.replace('\n', ' ').strip())
+    chunks: List[str] = []
+    current = ''
+    for sentence in sentences:
+        if not sentence:
+            continue
+        candidate = f'{current} {sentence}'.strip() if current else sentence
+        if len(candidate) > max_chars and current:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [text]
+
+
+def _estimate_max_tokens(text: str) -> int:
+    """Confirmed live this session: a fixed 1200-token cap (TTS.py's own
+    CLI-tool default, sized for short interactive test phrases) silently
+    truncated a real 303-character book page mid-sentence -
+    done_reason:"length" at exactly eval_count:1200, not a natural stop.
+    Roughly ~5-6 audio-code tokens per character of input held across
+    several real test runs, but with real variance chunk to chunk (one
+    252-char chunk still hit a x12 estimate live) - scaled generously
+    (x16) with headroom, capped so one pathologically long chunk can't
+    turn into a multi-minute generation on its own."""
+    return min(6000, max(1200, len(text) * 16))
 
 
 def _turn_token_into_id(token_string: str, index: int) -> Optional[int]:
@@ -128,17 +196,20 @@ def _convert_frame_to_audio(multiframe: List[int]) -> Optional[bytes]:
     return audio_int16.tobytes()
 
 
-async def _generate_tokens(prompt: str, cfg: Dict[str, Any]) -> List[str]:
+async def _generate_tokens(prompt: str, cfg: Dict[str, Any], max_tokens: int) -> List[str]:
     """Streams raw completion tokens from Ollama for the given already-
     formatted Orpheus prompt. raw=True is the one non-negotiable flag - see
-    this module's own docstring."""
+    this module's own docstring. max_tokens is passed in explicitly
+    (_estimate_max_tokens(), scaled to the actual input length) rather than
+    read from cfg directly - see that function's own docstring for the real
+    truncation this fixes."""
     payload = {
         'model': cfg['model'],
         'prompt': prompt,
         'raw': True,
         'stream': True,
         'options': {
-            'num_predict': cfg.get('max_tokens', 1200),
+            'num_predict': max_tokens,
             'temperature': cfg.get('temperature', 0.6),
             'top_p': cfg.get('top_p', 0.9),
             'repeat_penalty': cfg.get('repetition_penalty', 1.1),
@@ -156,11 +227,21 @@ async def _generate_tokens(prompt: str, cfg: Dict[str, Any]) -> List[str]:
                 if data.get('response'):
                     tokens.append(data['response'])
                 if data.get('done'):
+                    if data.get('done_reason') == 'length':
+                        logger.warning(
+                            f'Orpheus generation hit max_tokens={max_tokens} before finishing '
+                            f'({len(prompt)}-char prompt) - audio is likely cut off. Raise the cap '
+                            "or check _estimate_max_tokens()'s scaling."
+                        )
                     break
     return tokens
 
 
-def _tokens_to_wav_bytes(tokens: List[str]) -> bytes:
+def _tokens_to_pcm_segments(tokens: List[str]) -> List[bytes]:
+    """Raw PCM frames only, no WAV framing yet - synthesize() accumulates
+    these across every text chunk before writing one combined WAV, so a
+    multi-chunk page produces one continuous audio file, not several
+    voice notes stitched by WAV headers."""
     buffer: List[int] = []
     count = 0
     segments: List[bytes] = []
@@ -174,14 +255,17 @@ def _tokens_to_wav_bytes(tokens: List[str]) -> bytes:
             audio = _convert_frame_to_audio(buffer[-28:])
             if audio is not None:
                 segments.append(audio)
+    return segments
 
+
+def _write_wav(pcm_segments: List[bytes]) -> bytes:
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
         wav_path = f.name
     with wave.open(wav_path, 'wb') as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(SAMPLE_RATE)
-        for segment in segments:
+        for segment in pcm_segments:
             wav_file.writeframes(segment)
 
     wav_bytes = Path(wav_path).read_bytes()
@@ -209,17 +293,38 @@ def _wav_to_opus_ogg(wav_bytes: bytes) -> bytes:
 
 async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
     """Text -> Opus/OGG audio bytes, ready for OpenWAService.send_voice().
-    Raises if Orpheus produced no usable audio at all (e.g. Ollama
-    unreachable, or the model genuinely emitted nothing) - callers decide
-    what that means for their own domain, same contract every other tool
-    call in this mesh follows."""
+
+    Synthesized in sentence-respecting chunks (_split_into_speech_chunks),
+    not as one call over the whole page - see that function's own
+    docstring for why: a short chunk reads accurately and completely every
+    time in testing, a long one measurably degrades. Chunks run
+    sequentially, not concurrently - this already competes with real
+    WhatsApp traffic for the same single-slot Ollama the rest of this mesh
+    shares (see mesh/RUNNING_RECORD.md's own account of that contention),
+    so a page's worth of chunks queuing behind each other is the honest
+    cost, not something to hide by firing them in parallel.
+
+    Raises if Orpheus produced no usable audio at all across every chunk
+    (e.g. Ollama unreachable, or the model genuinely emitted nothing) -
+    callers decide what that means for their own domain, same contract
+    every other tool call in this mesh follows."""
     if voice not in VOICES:
         logger.warning(f"Unknown voice {voice!r}, falling back to {DEFAULT_VOICE!r}")
         voice = DEFAULT_VOICE
 
-    prompt = f'{SPECIAL_START}{voice}: {text}{SPECIAL_END}'
-    tokens = await _generate_tokens(prompt, cfg)
-    wav_bytes = await asyncio.to_thread(_tokens_to_wav_bytes, tokens)
-    if len(wav_bytes) <= 44:  # bare WAV header, no actual audio frames written
+    text = clean_for_speech(text)
+    chunks = _split_into_speech_chunks(text)
+
+    all_segments: List[bytes] = []
+    for chunk in chunks:
+        prompt = f'{SPECIAL_START}{voice}: {chunk}{SPECIAL_END}'
+        max_tokens = cfg.get('max_tokens') or _estimate_max_tokens(chunk)
+        tokens = await _generate_tokens(prompt, cfg, max_tokens)
+        segments = await asyncio.to_thread(_tokens_to_pcm_segments, tokens)
+        all_segments.extend(segments)
+
+    if not all_segments:
         raise RuntimeError('Orpheus produced no audio for this text - check Ollama and the model name.')
+
+    wav_bytes = await asyncio.to_thread(_write_wav, all_segments)
     return await asyncio.to_thread(_wav_to_opus_ogg, wav_bytes)
