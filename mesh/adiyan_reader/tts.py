@@ -93,7 +93,12 @@ def clean_for_speech(text: str) -> str:
     return text.strip()
 
 
-MAX_CHUNK_CHARS = 220
+MAX_CHUNK_CHARS = 300
+
+# 16-bit mono silence, inserted between chunks (not within one) to mask the
+# splice between two independent SNAC decodes - see synthesize()'s own note.
+_SILENCE_GAP_MS = 150
+_SILENCE_GAP = b'\x00\x00' * int(SAMPLE_RATE * _SILENCE_GAP_MS / 1000)
 
 
 def _split_into_speech_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
@@ -110,22 +115,45 @@ def _split_into_speech_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> Li
     Splits on sentence-ending punctuation, not python nltk/spacy - good
     enough for prose, and this module already avoids one more heavy
     optional dependency (see _ensure_snac()'s own reasoning for
-    torch/snac already being the deliberate exception)."""
-    sentences = re.split(r'(?<=[.!?])\s+', text.replace('\n', ' ').strip())
-    chunks: List[str] = []
-    current = ''
-    for sentence in sentences:
-        if not sentence:
+    torch/snac already being the deliberate exception).
+
+    Confirmed live this session: a heading-only page (title page, table of
+    contents) has no "." / "!" / "?" anywhere, so the split below returns
+    the ENTIRE page as one unbroken "sentence" - silently defeating the
+    whole point of this function and sending one huge run-on chunk
+    straight to Orpheus. That produced real garbled, looping audio on a
+    live test (whisper transcript showed mangled proper nouns and
+    repeated phrases). Any such piece gets a second, word-boundary split
+    below so no chunk this function returns is ever over max_chars,
+    punctuation or not."""
+    raw_sentences = re.split(r'(?<=[.!?])\s+', text.replace('\n', ' ').strip())
+    sentences: List[str] = []
+    for raw in raw_sentences:
+        if len(raw) <= max_chars:
+            sentences.append(raw)
             continue
-        candidate = f'{current} {sentence}'.strip() if current else sentence
-        if len(candidate) > max_chars and current:
-            chunks.append(current)
-            current = sentence
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks or [text]
+        words = raw.split(' ')
+        piece = ''
+        for word in words:
+            candidate = f'{piece} {word}'.strip() if piece else word
+            if len(candidate) > max_chars and piece:
+                sentences.append(piece)
+                piece = word
+            else:
+                piece = candidate
+        if piece:
+            sentences.append(piece)
+
+    # One sentence, one chunk - deliberately not merged. Confirmed live this
+    # session, twice: pairing even two short sentences into one chunk
+    # measurably increased garbling (whisper transcript showed new
+    # hallucinated words and mangled phrases that weren't there when the
+    # same sentences ran alone). One-per-chunk isn't perfect either - this
+    # model has no fixed random seed, so some run-to-run variance is
+    # unavoidable regardless of chunk size - but it's the best-evidenced
+    # option from actual testing, not a guess. max_chars only matters for
+    # the word-boundary fallback above (sentence-less pages).
+    return [s for s in sentences if s] or [text]
 
 
 def _estimate_max_tokens(text: str) -> int:
@@ -212,7 +240,13 @@ async def _generate_tokens(prompt: str, cfg: Dict[str, Any], max_tokens: int) ->
             'num_predict': max_tokens,
             'temperature': cfg.get('temperature', 0.6),
             'top_p': cfg.get('top_p', 0.9),
-            'repeat_penalty': cfg.get('repetition_penalty', 1.1),
+            # Canopy Labs' own docs recommend 1.1 as the minimum-for-stability
+            # default. Bumped to 1.3 here after live testing this session
+            # kept producing exact-phrase repetition loops ("resh, resh,
+            # resh...") even at 1.1, on both merged and single-sentence
+            # chunks - an experiment based on this deployment's own observed
+            # failures, not a documented Orpheus recommendation.
+            'repeat_penalty': cfg.get('repetition_penalty', 1.3),
         },
     }
     tokens: List[str] = []
@@ -297,12 +331,18 @@ async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
     Synthesized in sentence-respecting chunks (_split_into_speech_chunks),
     not as one call over the whole page - see that function's own
     docstring for why: a short chunk reads accurately and completely every
-    time in testing, a long one measurably degrades. Chunks run
-    sequentially, not concurrently - this already competes with real
-    WhatsApp traffic for the same single-slot Ollama the rest of this mesh
-    shares (see mesh/RUNNING_RECORD.md's own account of that contention),
-    so a page's worth of chunks queuing behind each other is the honest
-    cost, not something to hide by firing them in parallel.
+    time in testing, a long one measurably degrades.
+
+    Chunk *generation* runs sequentially, not concurrently - this already
+    competes with real WhatsApp traffic for the same single-slot Ollama the
+    rest of this mesh shares (see mesh/RUNNING_RECORD.md's own account of
+    that contention), so firing multiple chunks at Ollama in parallel would
+    just queue behind itself, not go faster. But SNAC decoding (local
+    CPU/GPU, not Ollama) doesn't need to wait for that queue: this pipelines
+    it against the *next* chunk's generation instead of running strictly
+    after it - while chunk N's tokens are being turned into audio on this
+    machine, chunk N+1 is already streaming in from Ollama, instead of one
+    completely idle CPU/GPU while the other sits idle.
 
     Raises if Orpheus produced no usable audio at all across every chunk
     (e.g. Ollama unreachable, or the model genuinely emitted nothing) -
@@ -316,12 +356,32 @@ async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
     chunks = _split_into_speech_chunks(text)
 
     all_segments: List[bytes] = []
+    decode_task: Optional[asyncio.Task] = None
+    flushed_any = False
+
+    async def _flush_decode() -> None:
+        nonlocal flushed_any
+        segments = await decode_task
+        if flushed_any and segments:
+            # Each chunk is an independent SNAC decode - splicing them back
+            # to back with zero gap produces an audible click/pop at every
+            # chunk boundary (a phase discontinuity between two unrelated
+            # generations). A short silence smooths the splice and reads as
+            # a natural breath between sentences instead of a stitching seam.
+            all_segments.append(_SILENCE_GAP)
+        all_segments.extend(segments)
+        flushed_any = True
+
     for chunk in chunks:
         prompt = f'{SPECIAL_START}{voice}: {chunk}{SPECIAL_END}'
         max_tokens = cfg.get('max_tokens') or _estimate_max_tokens(chunk)
         tokens = await _generate_tokens(prompt, cfg, max_tokens)
-        segments = await asyncio.to_thread(_tokens_to_pcm_segments, tokens)
-        all_segments.extend(segments)
+        if decode_task is not None:
+            await _flush_decode()
+        decode_task = asyncio.create_task(asyncio.to_thread(_tokens_to_pcm_segments, tokens))
+
+    if decode_task is not None:
+        await _flush_decode()
 
     if not all_segments:
         raise RuntimeError('Orpheus produced no audio for this text - check Ollama and the model name.')

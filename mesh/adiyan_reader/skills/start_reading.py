@@ -27,8 +27,16 @@ from mesh.lib.paths import state_db_path
 
 
 async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOICE) -> Dict[str, Any]:
-    if voice not in VOICES:
-        voice = DEFAULT_VOICE
+    available_voices = await config_sdk.get_constant(
+        AGENT_ID, 'available_voices', list(VOICES),
+        description='The Orpheus voice names this deployment allows readers to pick from.',
+    )
+    default_voice = await config_sdk.get_constant(
+        AGENT_ID, 'default_voice', DEFAULT_VOICE,
+        description='Which voice a reading job uses when none is specified or the requested one isn\'t in available_voices.',
+    )
+    if voice not in available_voices:
+        voice = default_voice
 
     conn = db.connect(state_db_path(AGENT_ID))
     job = db.create_reading_job(conn, phone_number, source_filename, voice)

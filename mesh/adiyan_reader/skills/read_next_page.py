@@ -75,8 +75,17 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
     page_text = page_result['text']
 
     tts_cfg = await config_sdk.get_stage_config(
-        AGENT_ID, 'synthesize_speech', {'model': 'legraphista/Orpheus:3b-ft-q8', 'temperature': 0.6, 'base_url': OLLAMA_URL},
-        description='Which Ollama-served TTS model reads each page aloud, and how expressive/varied the delivery is.',
+        AGENT_ID, 'synthesize_speech', {
+            'model': 'legraphista/Orpheus:3b-ft-q8', 'base_url': OLLAMA_URL,
+            # temperature/top_p: Canopy Labs' own documented defaults for
+            # Orpheus. repetition_penalty: raised from their documented 1.1
+            # to 1.3 after live testing this session - 1.1 still produced
+            # real exact-phrase repetition loops (see tts.py's own
+            # _generate_tokens docstring), 1.3 measurably fixed them on the
+            # same real sentences.
+            'temperature': 0.6, 'top_p': 0.9, 'repetition_penalty': 1.3,
+        },
+        description='Which Ollama-served TTS model reads each page aloud, and Orpheus\'s own generation knobs (temperature/top_p/repetition_penalty) that control how varied vs. reliable the delivery is.',
     )
     audio = await tts.synthesize(page_text, job['voice'], tts_cfg)
     await openwa.send_voice(chat_id, audio)
