@@ -259,6 +259,28 @@ async def _ingest_into_knowledge_base(
     # ingest.py returns for 'chunks' silently became 1.0 by the time it got
     # here, printing "1.0 chunk(s) indexed" in an actual WhatsApp reply.
     reply = f"Added to the knowledge base ({int(result['chunks'])} chunk(s) indexed)."
+
+    # Also page-ingest every upload - confirmed live this session that
+    # ingest_document alone leaves a document completely invisible to
+    # AdiyanReader (ingest_document/ingest_book write to two entirely
+    # separate stores, see mesh/memory/skills/ingest_book.py's own
+    # docstring), so a WhatsApp upload used to never actually become
+    # readable as a nightly book. Best-effort and silent on failure here -
+    # ingest_book.run() already degrades gracefully for anything that isn't
+    # genuinely paginated (a screenshot, a slide deck), and a book someone
+    # never asks to be read shouldn't cost them a confusing extra reply
+    # about page-ingestion succeeding or failing.
+    try:
+        book_result = await call_agent(memory_url, 'ingest_book', {
+            'content_b64': media['data'],
+            'filename': filename,
+            'username': contact_name or chat_id,
+        }, token=token)
+        if book_result.get('ingested'):
+            reply += f" Ready to be read aloud too ({int(book_result['num_pages'])} pages)."
+    except Exception as e:
+        logger.warning(f'Page-ingestion failed for {chat_id}: {e}')
+
     return reply, result.get('source_filename')
 
 
