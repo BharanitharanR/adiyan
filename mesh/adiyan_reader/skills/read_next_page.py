@@ -74,6 +74,26 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
 
     page_text = page_result['text']
 
+    # speech_text is what actually gets narrated - page_text (the real page
+    # content) stays untouched below for _generate_questions(), which needs
+    # to stay grounded in what the page actually says, not a short spoken
+    # rewrite of it.
+    speech_text = page_text
+    if not tts.looks_like_prose(page_text):
+        # Confirmed live this session: a chapter-list/table-of-contents page
+        # (no real sentences, just headings run together) produced genuinely
+        # bad audio even with every TTS-side fix applied - the input itself
+        # had nothing readable in it. Rewritten into a short, honestly-
+        # grounded spoken description instead of narrating raw fragments -
+        # see tts.rewrite_for_speech()'s own docstring for the "never
+        # invent" constraint this stays under. Only paid for non-prose
+        # pages; a normal prose page never reaches this branch at all.
+        rewrite_cfg = await config_sdk.get_stage_config(
+            AGENT_ID, 'rewrite_page', {'model': 'qwen3:8b-16k', 'temperature': 0.3, 'base_url': OLLAMA_URL},
+            description='Reasoning model that turns a non-prose page (table of contents, chapter-heading list) into a short, honest spoken description instead of reading raw fragments aloud.',
+        )
+        speech_text = await tts.rewrite_for_speech(page_text, rewrite_cfg)
+
     tts_cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'synthesize_speech', {
             'model': 'legraphista/Orpheus:3b-ft-q8', 'base_url': OLLAMA_URL,
@@ -87,7 +107,7 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         },
         description='Which Ollama-served TTS model reads each page aloud, and Orpheus\'s own generation knobs (temperature/top_p/repetition_penalty) that control how varied vs. reliable the delivery is.',
     )
-    audio = await tts.synthesize(page_text, job['voice'], tts_cfg)
+    audio = await tts.synthesize(speech_text, job['voice'], tts_cfg)
     await openwa.send_voice(chat_id, audio)
     db.advance_page(conn, reading_job_id, next_page)
 

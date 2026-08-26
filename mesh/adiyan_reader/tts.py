@@ -93,6 +93,70 @@ def clean_for_speech(text: str) -> str:
     return text.strip()
 
 
+def looks_like_prose(text: str) -> bool:
+    """Confirmed live this session: a chapter-list/table-of-contents page
+    (real example - "Past Pain: Dissolving the Pain-Body ... The Origin of
+    Fear The Ego's Search for Wholeness") produced genuinely bad audio even
+    with every other TTS fix applied (correct chunking, tuned
+    repeat_penalty, pipelined decode). That's not a synthesis bug - the
+    text itself has no sentence structure to read, just headings jammed
+    together. No amount of TTS tuning fixes reading a word-jumble aloud.
+
+    Heuristic, not a real NLP classifier: a page counts as prose if a real
+    majority of its characters end up inside actual sentence-ending-
+    punctuated pieces, not the word-boundary fallback
+    _split_into_speech_chunks() falls back to for punctuation-less runs
+    (see that function's own docstring on why that fallback exists at
+    all - it keeps a heading page from becoming one giant unsplit chunk,
+    but doesn't make heading fragments sound like real speech)."""
+    cleaned = clean_for_speech(text)
+    if not cleaned:
+        return False
+    raw_sentences = re.split(r'(?<=[.!?])\s+', cleaned.replace('\n', ' ').strip())
+    real_sentence_chars = sum(len(s) for s in raw_sentences if re.search(r'[.!?]\s*$', s.strip()))
+    return real_sentence_chars >= len(cleaned) * 0.5
+
+
+async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
+    """Only called for a page looks_like_prose() already said isn't real
+    prose (a heading/table-of-contents page) - normal prose pages never pay
+    this extra Ollama round-trip, they go straight from clean_for_speech()
+    to chunking/Orpheus like before. Uses the reasoning model this agent
+    already calls for comprehension-question generation (qwen3:8b-16k, a
+    different model from Orpheus/SNAC - this is an ordinary chat completion,
+    not audio), not another regex pass - clean_for_speech() only strips
+    markdown syntax, it has no way to turn "Past Pain: Dissolving the
+    Pain-Body ... The Origin of Fear" into an actual sentence.
+
+    Strictly grounded, same "never invent" rule this whole mesh already
+    follows for anything read back to a user (mesh/scheduler/skills/
+    run_routine.py's _compose_generic, mesh/analysis/skills/analyze.py's
+    strict_grounding, this agent's own _generate_questions) - told
+    explicitly to describe, not embellish, and to say plainly when a page
+    is just a table of contents rather than trying to narrate every
+    heading. Falls back to clean_for_speech(text) unchanged on any failure
+    - a Table-of-contents page read awkwardly is still better than no page
+    at all."""
+    cleaned = clean_for_speech(text)
+    try:
+        from langchain_ollama import ChatOllama
+        model = ChatOllama(model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg.get('temperature', 0.3))
+        result = await model.ainvoke(
+            'This is one page from a book, but it reads as headings/a table of contents, not '
+            'prose - reading it aloud word-for-word would sound like a jumbled list. Rewrite it '
+            'as 1-3 short, natural spoken sentences describing what this page actually contains '
+            '(e.g. "This page lists the table of contents" or "This page starts Chapter Three: '
+            'Moving Deeply into the Now"). Only describe what is genuinely here - never invent '
+            'content, opinions, or details not present in the text below.\n\n'
+            f'"""{cleaned}"""'
+        )
+        rewritten = (result.content or '').strip()
+        return rewritten or cleaned
+    except Exception as e:
+        logger.warning(f'rewrite_for_speech failed, falling back to raw cleaned text: {e}')
+        return cleaned
+
+
 MAX_CHUNK_CHARS = 300
 
 # 16-bit mono silence, inserted between chunks (not within one) to mask the
