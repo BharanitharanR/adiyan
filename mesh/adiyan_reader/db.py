@@ -60,6 +60,20 @@ def get_reading_job(conn: sqlite3.Connection, job_id: str) -> Optional[Dict[str,
     return dict(row) if row else None
 
 
+def get_active_reading_job(conn: sqlite3.Connection, phone_number: str, source_filename: str) -> Optional[Dict[str, Any]]:
+    """The existing in-progress job for this exact phone+book pair, if one
+    exists - start_reading.py checks this before ever calling
+    create_reading_job(), so asking to start a book that's already being
+    read (e.g. a duplicate "read me this book" message) resumes the
+    existing job instead of silently spinning up a second one reading the
+    same book to the same number in parallel."""
+    row = conn.execute(
+        'SELECT * FROM reading_jobs WHERE phone_number = ? AND source_filename = ? AND active = 1',
+        (phone_number, source_filename),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def advance_page(conn: sqlite3.Connection, job_id: str, new_page: int) -> None:
     conn.execute('UPDATE reading_jobs SET current_page = ? WHERE id = ?', (new_page, job_id))
     conn.commit()

@@ -188,7 +188,10 @@ async def _start_book_reading(book_reference: str, chat_id: str, from_number: Op
         logger.error(f'start_reading failed for {chat_id}: {e}')
         return None
 
-    return f"Got it - I'll read you {source_filename.split('/', 1)[-1]} tonight, and every night after until it's finished. First page comes at {started.get('first_reading_at', 'tonight')}."
+    title = source_filename.split('/', 1)[-1]
+    if started.get('already_active'):
+        return f"Already reading you {title} - you're on page {started.get('current_page', 0)}. Next page comes at {started.get('first_reading_at', 'tonight')}."
+    return f"Got it - I'll read you {title} tonight, and every night after until it's finished. First page comes at {started.get('first_reading_at', 'tonight')}."
 
 
 async def _ingest_into_knowledge_base(

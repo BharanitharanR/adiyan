@@ -39,7 +39,6 @@ async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOIC
         voice = default_voice
 
     conn = db.connect(state_db_path(AGENT_ID))
-    job = db.create_reading_job(conn, phone_number, source_filename, voice)
 
     reading_hour = await config_sdk.get_constant(
         AGENT_ID, 'reading_hour', 0,
@@ -47,6 +46,28 @@ async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOIC
     )
     cron_expression = f'0 {int(reading_hour)} * * *'
     next_run_at = croniter(cron_expression, datetime.now(timezone.utc)).get_next(datetime).isoformat()
+
+    # Resume the existing job instead of creating a second one reading the
+    # same book to the same number in parallel - confirmed live this
+    # session that nothing else guards against this (a repeated "start
+    # reading" request, or now the Orchestrator NL flow, would otherwise
+    # spin up a duplicate every time). next_reading_at here is an
+    # approximation (today's reading_hour applied fresh), not the resumed
+    # job's actual already-registered trigger time - close enough to tell
+    # the sender when to expect the next page, not something anything else
+    # in this skill depends on being exact.
+    existing = db.get_active_reading_job(conn, phone_number, source_filename)
+    if existing is not None:
+        return {
+            'reading_job_id': existing['id'],
+            'source_filename': source_filename,
+            'voice': existing['voice'],
+            'current_page': existing['current_page'],
+            'already_active': True,
+            'first_reading_at': next_run_at,
+        }
+
+    job = db.create_reading_job(conn, phone_number, source_filename, voice)
 
     token = permissions.mint_token(AGENT_ID, 'service')
     cron_trigger_url = await config_sdk.get_constant(
@@ -65,5 +86,7 @@ async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOIC
         'reading_job_id': job['id'],
         'source_filename': source_filename,
         'voice': voice,
+        'current_page': job['current_page'],
+        'already_active': False,
         'first_reading_at': next_run_at,
     }
