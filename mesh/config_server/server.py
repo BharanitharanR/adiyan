@@ -220,6 +220,38 @@ def api_update_stage(agent_id, stage_name):
     }))
 
 
+@app.route('/api/agents/<agent_id>/restart', methods=['POST'])
+@login_required
+def api_restart_agent(agent_id):
+    """Restarts exactly one component via start_all.sh's own `restart
+    <name>` action - reuses that script's existing stop-then-start logic
+    (pkill pattern matching, the readiness-wait loop) rather than
+    reimplementing process management here. An unknown agent_id fails
+    cleanly (start_all.sh's own validate_target_names() exits 1, nothing
+    touched) since agent_id arrives as a plain argv element, not shell-
+    interpolated - no injection risk regardless.
+
+    Synchronous, unlike the eval runner's own background-Popen-plus-poll
+    pattern (api_evals_run()) - a restart is a rare, deliberate click, and
+    the dashboard genuinely needs to know whether it succeeded before
+    telling the user anything, not just that it started.
+
+    Known limitation, not solved here: restarting config_server itself
+    kills this very request mid-flight - the browser will see a failed
+    fetch, not a clean success response, until the page is manually
+    reloaded once start_all.sh's own restart finishes. Same accepted
+    tradeoff as clicking "reload" on the tab you're currently looking at."""
+    script = _REPO_ROOT / 'mesh' / 'start_all.sh'
+    try:
+        result = subprocess.run(
+            ['bash', str(script), 'restart', agent_id],
+            cwd=_REPO_ROOT, capture_output=True, text=True, timeout=200,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'output': f'{agent_id} restart timed out after 200s - check its log directly.'})
+    return jsonify({'success': result.returncode == 0, 'output': result.stdout + result.stderr})
+
+
 @app.route('/api/ollama/models')
 @login_required
 def api_ollama_models():
