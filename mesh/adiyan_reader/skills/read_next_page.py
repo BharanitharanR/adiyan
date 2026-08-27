@@ -107,7 +107,20 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         },
         description='Which Ollama-served TTS model reads each page aloud, and Orpheus\'s own generation knobs (temperature/top_p/repetition_penalty) that control how varied vs. reliable the delivery is.',
     )
-    audio = await tts.synthesize(speech_text, job['voice'], tts_cfg)
+    # job['voice'] is '' unless this job explicitly chose a voice at
+    # start_reading time (see that skill's own docstring) - resolved live
+    # from config_sdk here, not frozen at job creation, so changing
+    # default_voice in the dashboard actually takes effect on the very
+    # next page for every job that never explicitly overrode it. Confirmed
+    # live this session: the old behavior (store the resolved default
+    # forever) meant a dashboard voice change had zero effect on any
+    # already-started job - the value lives in Mongo specifically so it
+    # stays live, not so it gets copied into SQLite once and forgotten.
+    voice = job['voice'] or await config_sdk.get_constant(
+        AGENT_ID, 'default_voice', tts.DEFAULT_VOICE,
+        description='Which voice a reading job uses when none is specified or the requested one isn\'t in available_voices.',
+    )
+    audio = await tts.synthesize(speech_text, voice, tts_cfg)
     # WhatsApp's voice-note (PTT) bubble has no caption field the way
     # send_document's does - confirmed live, OpenWA's own send-audio API
     # takes no caption param at all (mesh/lib/utilities/whatsapp/

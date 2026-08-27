@@ -14,29 +14,35 @@ recurring schedule itself - cron_trigger's register_trigger is a one-shot
 mechanism, the same way Scheduler Agent already treats it.
 """
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from croniter import croniter
 
 from mesh.adiyan_reader import db
 from mesh.adiyan_reader.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
-from mesh.adiyan_reader.tts import DEFAULT_VOICE, VOICES
+from mesh.adiyan_reader.tts import VOICES
 from mesh.lib import config_sdk, permissions
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 
 
-async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOICE) -> Dict[str, Any]:
+async def run(phone_number: str, source_filename: str, voice: Optional[str] = None) -> Dict[str, Any]:
+    # voice=None means "no explicit choice" - stored as '' (not a real
+    # voice name, matches _NO_VOICE_OVERRIDE in read_next_page.py) rather
+    # than resolving default_voice once and freezing it into this job
+    # forever. Confirmed live this session: the old behavior (resolve
+    # default_voice here, store the resolved name) meant changing
+    # default_voice in the dashboard later had zero effect on any
+    # already-started job - the config lives in Mongo specifically so it
+    # stays live, not so it gets copied into SQLite at creation time. A
+    # caller who DID explicitly ask for a specific voice still gets that
+    # exact one stored and respected forever, same as before - this only
+    # changes the "didn't say" case.
     available_voices = await config_sdk.get_constant(
         AGENT_ID, 'available_voices', list(VOICES),
         description='The Orpheus voice names this deployment allows readers to pick from.',
     )
-    default_voice = await config_sdk.get_constant(
-        AGENT_ID, 'default_voice', DEFAULT_VOICE,
-        description='Which voice a reading job uses when none is specified or the requested one isn\'t in available_voices.',
-    )
-    if voice not in available_voices:
-        voice = default_voice
+    stored_voice = voice if (voice is not None and voice in available_voices) else ''
 
     conn = db.connect(state_db_path(AGENT_ID))
 
@@ -61,13 +67,13 @@ async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOIC
         return {
             'reading_job_id': existing['id'],
             'source_filename': source_filename,
-            'voice': existing['voice'],
+            'voice': existing['voice'] or 'default',
             'current_page': existing['current_page'],
             'already_active': True,
             'first_reading_at': next_run_at,
         }
 
-    job = db.create_reading_job(conn, phone_number, source_filename, voice)
+    job = db.create_reading_job(conn, phone_number, source_filename, stored_voice)
 
     token = permissions.mint_token(AGENT_ID, 'service')
     cron_trigger_url = await config_sdk.get_constant(
@@ -85,7 +91,7 @@ async def run(phone_number: str, source_filename: str, voice: str = DEFAULT_VOIC
     return {
         'reading_job_id': job['id'],
         'source_filename': source_filename,
-        'voice': voice,
+        'voice': stored_voice or 'default',
         'current_page': job['current_page'],
         'already_active': False,
         'first_reading_at': next_run_at,

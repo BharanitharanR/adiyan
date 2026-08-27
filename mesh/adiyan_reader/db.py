@@ -95,6 +95,15 @@ def advance_page(conn: sqlite3.Connection, job_id: str, new_page: int) -> None:
     conn.commit()
 
 
+def set_reading_job_voice(conn: sqlite3.Connection, job_id: str, voice: str) -> None:
+    """voice='' clears an explicit override, going back to following
+    default_voice live (see read_next_page.py's own resolution at read
+    time) - the same "empty string means no explicit choice" convention
+    create_reading_job()'s callers already use, not a schema change."""
+    conn.execute('UPDATE reading_jobs SET voice = ? WHERE id = ?', (voice, job_id))
+    conn.commit()
+
+
 def deactivate_reading_job(conn: sqlite3.Connection, job_id: str) -> None:
     """The book has run out of pages - stop re-registering the nightly
     trigger, but leave the row (and its question history) on file rather
