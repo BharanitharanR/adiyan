@@ -74,6 +74,22 @@ def get_active_reading_job(conn: sqlite3.Connection, phone_number: str, source_f
     return dict(row) if row else None
 
 
+def get_active_reading_jobs_by_phone(conn: sqlite3.Connection, phone_number: str) -> List[Dict[str, Any]]:
+    """Every active reading job for this phone number, most recently
+    created first - the read_now skill's own lookup for "send me the next
+    page right now" (mesh/adiyan_reader/skills/read_now.py), which has no
+    book name to disambiguate with (unlike start_reading, which always
+    gets an explicit source_filename). One active job is the common case
+    and resolves unambiguously; the caller decides what to do with more
+    than one (read_now.py picks the most recent rather than guessing which
+    book "now" means)."""
+    rows = conn.execute(
+        'SELECT * FROM reading_jobs WHERE phone_number = ? AND active = 1 ORDER BY created_at DESC',
+        (phone_number,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def advance_page(conn: sqlite3.Connection, job_id: str, new_page: int) -> None:
     conn.execute('UPDATE reading_jobs SET current_page = ? WHERE id = ?', (new_page, job_id))
     conn.commit()

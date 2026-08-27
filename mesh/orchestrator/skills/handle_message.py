@@ -191,7 +191,98 @@ async def _start_book_reading(book_reference: str, chat_id: str, from_number: Op
     title = source_filename.split('/', 1)[-1]
     if started.get('already_active'):
         return f"Already reading you {title} - you're on page {started.get('current_page', 0)}. Next page comes at {started.get('first_reading_at', 'tonight')}."
+
+    # Confirmed live this session: starting a brand-new book only ever
+    # scheduled tonight's first page - even a caller who explicitly said
+    # "read me now" got "I'll read you tonight" back, never an actual page.
+    # A fresh start delivers page 1 immediately too, not just a schedule -
+    # the exact "send a recording at will, not just on the scheduler" gap
+    # this was built to close. Best-effort: a failure here still leaves the
+    # nightly schedule correctly in place (start_reading already succeeded
+    # above), so the reply degrades to the schedule-only message rather
+    # than losing the whole request.
+    try:
+        first_page = await call_agent(reader_url, 'read_next_page', {
+            'reading_job_id': started['reading_job_id'],
+        }, token=token)
+    except Exception as e:
+        logger.error(f'Immediate first-page read failed for {chat_id}: {e}')
+        first_page = None
+
+    if first_page and first_page.get('status') == 'completed':
+        return (
+            f"Got it - here's page {int(first_page.get('page_sent', 1))} of {title} right now, "
+            f"and I'll keep reading you a page every night after. Next one comes at {started.get('first_reading_at', 'tonight')}."
+        )
     return f"Got it - I'll read you {title} tonight, and every night after until it's finished. First page comes at {started.get('first_reading_at', 'tonight')}."
+
+
+# Same single-skill classify-only pool shape as _BOOK_READING_SKILLS - no
+# extraction step needed here (unlike start_book_reading's book_reference),
+# since "who" and "which book" are both already resolved from the sender's
+# own identity (mesh/adiyan_reader/skills/read_now.py's own phone_number
+# lookup), never guessed from the message text.
+_READ_NOW_SKILLS = [
+    AgentSkill(
+        id='read_now',
+        name='Read Next Page Now',
+        description=(
+            'The caller wants their next book page read to them right now, on demand - '
+            'not waiting for tonight\'s scheduled reading. Only matches an explicit '
+            '"read it to me now" style request for an already-started book, not a '
+            'request to start a new book (that\'s start_book_reading) or a question '
+            'about how the schedule works.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Send me the next page now',
+            'Read me another page right now',
+            'Can I get today\'s page early',
+            'Give me the next page of my book now',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+async def _resolve_read_now_request(text: str, cfg: Dict[str, Any]) -> bool:
+    """True only for an explicit on-demand read request - same degrade-on-
+    failure contract every other classify-based resolver in this module
+    follows (a failure here just falls through to normal routing, not an
+    error surfaced to the sender)."""
+    try:
+        choice = await classify(text, _READ_NOW_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Read-now intent classification failed: {e}')
+        return False
+    return choice.skill_id == 'read_now'
+
+
+async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows. Calls
+    adiyan_reader's read_now directly with phone_number only
+    (mesh/adiyan_reader/skills/read_now.py resolves that to the right
+    reading_job_id itself, most-recently-created active job if more than
+    one) - never a reading_job_id or source_filename guessed here.
+
+    Reuses read_next_page's own result shape directly (result_summary,
+    status) rather than re-deriving a reply from scratch - that skill
+    already handles every real outcome (a page sent, the book finished, no
+    active job at all)."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        result = await call_agent(reader_url, 'read_now', {'phone_number': from_number or chat_id}, token=token)
+    except Exception as e:
+        logger.error(f'read_now failed for {chat_id}: {e}')
+        return None
+
+    return result.get('result_summary') or "Couldn't read a page right now - try again in a moment."
 
 
 async def _ingest_into_knowledge_base(
@@ -453,6 +544,11 @@ async def run(
         # above didn't already claim this message) - no wasted LLM call on
         # every upload or gate-handled message.
         reply = await _start_book_reading(book_reference, chat_id, from_number, tier)
+    elif await _resolve_read_now_request(text, cfg):
+        # Same lazy-evaluation reasoning as the book-reading branch above -
+        # only classified once nothing earlier in this chain already
+        # claimed the message.
+        reply = await _read_page_now(chat_id, from_number, tier)
     else:
         should_remember = True
         try:

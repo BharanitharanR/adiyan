@@ -20,13 +20,14 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
 from mesh.adiyan_reader.constants import AGENT_ID
-from mesh.adiyan_reader.skills import dispatch_questions, read_next_page, start_reading
+from mesh.adiyan_reader.skills import dispatch_questions, read_next_page, read_now, start_reading
 from mesh.adiyan_reader.skills_catalog import get_skills
 from mesh.lib import permissions
 
 SKILL_HANDLERS = {
     'start_reading': start_reading.run,
     'read_next_page': read_next_page.run,
+    'read_now': read_now.run,
     'dispatch_questions': dispatch_questions.run,
 }
 
