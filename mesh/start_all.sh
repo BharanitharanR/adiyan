@@ -33,6 +33,17 @@
 #     this exception was added. Runs `npm --prefix penwa start` (the NestJS
 #     API only, not `npm run dev`'s dashboard+API pair - the mesh only
 #     needs the API, port 2785).
+#   - Mongo MCP server: same class of issue as Qdrant - an ephemeral `npx`-
+#     invoked process, no launchd/brew service, doesn't survive a restart
+#     on its own. Without it, Analysis Agent's mcp_servers-driven tool
+#     loading (mesh/analysis/skills/analyze.py's _load_mcp_tools()) just
+#     logs a warning and silently contributes zero tools - a quiet
+#     degradation, not a crash, but one that's easy to not notice.
+#     --readOnly (no write/destructive tools ever exposed) and
+#     --connectionScope global (confirmed live: the default `session`
+#     scope invalidates a connectionId between separate tool calls,
+#     breaking the auto-connect interceptor _make_connection_interceptor()
+#     relies on) are both load-bearing flags, not defaults to tidy up later.
 # All three use this script's own idempotency/pkill model (identical for
 # every other component here), not `brew services` - `stop` shuts them
 # down the same clean way (pkill sends SIGTERM, a graceful shutdown
@@ -59,6 +70,7 @@ COMPONENTS=(
     "phoenix|6006|phoenix serve"
     "mongodb|27017|mongod --config /opt/homebrew/etc/mongod.conf"
     "qdrant|6339|mesh/qdrant/qdrant-bin --config-path mesh/qdrant/config.yaml"
+    "mongo_mcp|3000|mongodb-mcp-server --readOnly --transport http --httpPort 3000 --httpHost 127.0.0.1 --connectionScope global"
     "agent_registry|8424|mesh.mcp.agent_registry.server"
     "cron_trigger|8421|mesh.mcp.cron_trigger.server"
     "scheduler|8420|mesh.scheduler.server"
@@ -115,6 +127,18 @@ do_start() {
         fi
         if [ "$name" = "phoenix" ]; then
             nohup phoenix serve > "$LOG_DIR/$name.log" 2>&1 &
+        elif [ "$name" = "mongo_mcp" ]; then
+            # cmd is deliberately just "mongodb-mcp-server --flags", not
+            # "npx -y mongodb-mcp-server@latest --flags" - confirmed live
+            # that npx/npm rewrite their own invocation internally (ps shows
+            # "npm exec mongodb-mcp-server@latest ..." for the wrapper and
+            # "node .../mongodb-mcp-server --flags" for the actual worker
+            # holding the port), so a cmd starting with "npx -y ...@latest"
+            # never appears verbatim in either real process and do_stop()'s
+            # pkill -f would silently fail to match anything. "npx -y" is
+            # prepended only here, at the actual launch site, while cmd
+            # itself stays exactly what pkill needs to find the real worker.
+            nohup npx -y $cmd > "$LOG_DIR/$name.log" 2>&1 &
         elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ]; then
             # A raw binary/npm invocation, not a `python3 -m` module - mongod
             # logs to its own configured path (systemLog.path in
