@@ -189,31 +189,42 @@ async def _start_book_reading(book_reference: str, chat_id: str, from_number: Op
         return None
 
     title = source_filename.split('/', 1)[-1]
-    if started.get('already_active'):
-        return f"Already reading you {title} - you're on page {started.get('current_page', 0)}. Next page comes at {started.get('first_reading_at', 'tonight')}."
+    already_active = started.get('already_active', False)
 
-    # Confirmed live this session: starting a brand-new book only ever
-    # scheduled tonight's first page - even a caller who explicitly said
-    # "read me now" got "I'll read you tonight" back, never an actual page.
-    # A fresh start delivers page 1 immediately too, not just a schedule -
-    # the exact "send a recording at will, not just on the scheduler" gap
-    # this was built to close. Best-effort: a failure here still leaves the
-    # nightly schedule correctly in place (start_reading already succeeded
-    # above), so the reply degrades to the schedule-only message rather
+    # Confirmed live this session, twice: both a brand-new "read me this
+    # book" AND a repeated one for a book already being read only ever
+    # scheduled/reported a future page - even a caller who explicitly said
+    # "now" got "I'll read you tonight" or "already reading you" back,
+    # never an actual page. Explicitly re-asking to be read a specific
+    # book - fresh or already started - reads as wanting a page right now,
+    # not a second status report. Best-effort: a failure here still leaves
+    # the nightly schedule correctly in place (start_reading already
+    # succeeded above), so the reply degrades to a status message rather
     # than losing the whole request.
     try:
         first_page = await call_agent(reader_url, 'read_next_page', {
             'reading_job_id': started['reading_job_id'],
         }, token=token)
     except Exception as e:
-        logger.error(f'Immediate first-page read failed for {chat_id}: {e}')
+        logger.error(f'Immediate page read failed for {chat_id}: {e}')
         first_page = None
 
-    if first_page and first_page.get('status') == 'completed':
+    # read_next_page.run() returns status='completed' for BOTH "a page was
+    # actually sent" and "the book just finished, nothing left to send" -
+    # only the former includes page_sent, so that's the real signal here,
+    # not status alone (confirmed by reading that skill's own two return
+    # statements - conflating them would have this branch claim "here's
+    # page 1" on a book that just finished with zero pages sent).
+    if first_page and 'page_sent' in first_page:
+        lead_in = "Here's the next page of" if already_active else "Got it - here's page 1 of"
         return (
-            f"Got it - here's page {int(first_page.get('page_sent', 1))} of {title} right now, "
+            f"{lead_in} {title} right now ({int(first_page['page_sent'])}), "
             f"and I'll keep reading you a page every night after. Next one comes at {started.get('first_reading_at', 'tonight')}."
         )
+    if first_page and first_page.get('status') == 'completed':
+        return f"We've already finished reading {title} together - every page has been read out. 📖"
+    if already_active:
+        return f"Already reading you {title} - you're on page {started.get('current_page', 0)}. Next page comes at {started.get('first_reading_at', 'tonight')}."
     return f"Got it - I'll read you {title} tonight, and every night after until it's finished. First page comes at {started.get('first_reading_at', 'tonight')}."
 
 

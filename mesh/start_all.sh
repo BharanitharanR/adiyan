@@ -4,6 +4,16 @@
 #
 #   mesh/start_all.sh          (or: mesh/start_all.sh start)
 #   mesh/start_all.sh stop
+#   mesh/start_all.sh restart adiyan_reader           (one component)
+#   mesh/start_all.sh restart adiyan_reader analysis  (more than one)
+#   mesh/start_all.sh stop adiyan_reader              (start/stop also take names)
+#
+# A component name after start/stop/restart scopes the action to just that
+# one (or more) - everything else is left untouched. No name means every
+# component, the original behavior. restart with no name restarts
+# everything. An unrecognized name is a hard error (exit 1, nothing acted
+# on) rather than silently doing nothing - a typo'd agent name should never
+# look like a successful no-op.
 #
 # Start is idempotent - a component already running is left alone, not
 # restarted. Does NOT start/stop ngrok or nginx itself - those are external
@@ -59,6 +69,8 @@ mkdir -p "$LOG_DIR"
 cd "$REPO_ROOT"
 
 ACTION="${1:-start}"
+shift 2>/dev/null || true
+TARGET_NAMES=("$@")
 
 # name -> port -> match pattern (used by both start's port_open check and
 # stop's pkill -f, so the two commands can never drift apart on identity).
@@ -96,6 +108,39 @@ refresh_listening() {
     LISTENING="$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null || true)"
 }
 
+is_target() {
+    # No names given ("${TARGET_NAMES[@]}" empty) means "every component" -
+    # the original, unscoped behavior. Otherwise only a name explicitly
+    # listed matches.
+    local name="$1"
+    [ "${#TARGET_NAMES[@]}" -eq 0 ] && return 0
+    local t
+    for t in "${TARGET_NAMES[@]}"; do
+        [ "$t" = "$name" ] && return 0
+    done
+    return 1
+}
+
+validate_target_names() {
+    # Fails loudly on a typo'd name (exit 1, nothing started/stopped) rather
+    # than silently acting on zero components - a name that matches nothing
+    # should never look like a successful no-op.
+    [ "${#TARGET_NAMES[@]}" -eq 0 ] && return 0
+    local t known found
+    for t in "${TARGET_NAMES[@]}"; do
+        found=0
+        for entry in "${COMPONENTS[@]}"; do
+            IFS='|' read -r known _ _ <<< "$entry"
+            [ "$known" = "$t" ] && found=1 && break
+        done
+        if [ "$found" -eq 0 ]; then
+            echo "Unknown component: $t" >&2
+            echo "Known components: $(for e in "${COMPONENTS[@]}"; do IFS='|' read -r n _ _ <<< "$e"; echo -n "$n "; done)" >&2
+            exit 1
+        fi
+    done
+}
+
 port_open() {
     # -n/-P avoid lsof's hostname/service-name resolution, which alone took
     # ~20s per call on this machine - snapshot once up front instead of
@@ -121,6 +166,7 @@ do_start() {
     echo "Starting:"
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
+        is_target "$name" || continue
         if component_alive "$port" "$cmd"; then
             echo "  [skip] $name already running"
             continue
@@ -167,12 +213,14 @@ do_start() {
         still_down=0
         for entry in "${COMPONENTS[@]}"; do
             IFS='|' read -r name port cmd <<< "$entry"
+            is_target "$name" || continue
             component_alive "$port" "$cmd" || still_down=1
         done
         [ "$still_down" -eq 0 ] && break
     done
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
+        is_target "$name" || continue
         if component_alive "$port" "$cmd"; then
             echo "  ok   :${port} ($name)"
         else
@@ -185,6 +233,7 @@ do_stop() {
     echo "Stopping:"
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
+        is_target "$name" || continue
         if pkill -f "$cmd" 2>/dev/null; then
             echo "  [stop] $name"
         else
@@ -200,6 +249,7 @@ do_stop() {
         still_up=0
         for entry in "${COMPONENTS[@]}"; do
             IFS='|' read -r name port cmd <<< "$entry"
+            is_target "$name" || continue
             component_alive "$port" "$cmd" && still_up=1
         done
         [ "$still_up" -eq 0 ] && break
@@ -207,6 +257,7 @@ do_stop() {
     refresh_listening
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
+        is_target "$name" || continue
         if component_alive "$port" "$cmd"; then
             echo "  still up :${port} ($name)  (kill manually if this persists)"
         else
@@ -215,11 +266,14 @@ do_stop() {
     done
 }
 
+validate_target_names
+
 case "$ACTION" in
-    start) do_start ;;
-    stop)  do_stop ;;
+    start)   do_start ;;
+    stop)    do_stop ;;
+    restart) do_stop; echo; do_start ;;
     *)
-        echo "Usage: $0 [start|stop]" >&2
+        echo "Usage: $0 [start|stop|restart] [component ...]" >&2
         exit 1
         ;;
 esac
