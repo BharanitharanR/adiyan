@@ -15,7 +15,7 @@ work the old mtime-cached watermark.json file used to do by hand.
 """
 from mesh.lib import config_sdk
 
-DEFAULT_TEXT = '[அடியேன் - at your service]'
+DEFAULT_TEXT = '[அடியான் - at your service]'
 
 
 async def apply(text: str) -> str:
