@@ -1,0 +1,6 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Adiyan logo">
+  <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="5"/>
+  <text x="100" y="112" text-anchor="middle"
+        font-family="'Courier New', 'SF Mono', monospace" font-weight="700"
+        font-size="30" letter-spacing="1" fill="currentColor">ADiYAN</text>
+</svg>

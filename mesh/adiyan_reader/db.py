@@ -8,7 +8,7 @@ follows (see mesh/scheduler/db.py's own module docstring for why).
 """
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,11 +34,28 @@ CREATE TABLE IF NOT EXISTS questions (
 );
 """
 
+# Columns added after the table's original release - ALTER TABLE'd in on
+# connect() for any pre-existing state.db, same pattern as
+# mesh/orchestrator/db.py's own _migrate(), since CREATE TABLE IF NOT
+# EXISTS only applies to a table that doesn't exist yet.
+_MIGRATIONS = [
+    ("last_delivered_at", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {row['name'] for row in conn.execute('PRAGMA table_info(reading_jobs)')}
+    for column, ddl in _MIGRATIONS:
+        if column not in existing:
+            conn.execute(f'ALTER TABLE reading_jobs ADD COLUMN {column} {ddl}')
+    conn.commit()
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -91,8 +108,38 @@ def get_active_reading_jobs_by_phone(conn: sqlite3.Connection, phone_number: str
 
 
 def advance_page(conn: sqlite3.Connection, job_id: str, new_page: int) -> None:
-    conn.execute('UPDATE reading_jobs SET current_page = ? WHERE id = ?', (new_page, job_id))
+    conn.execute(
+        'UPDATE reading_jobs SET current_page = ?, last_delivered_at = ? WHERE id = ?',
+        (new_page, datetime.now(timezone.utc).isoformat(), job_id),
+    )
     conn.commit()
+
+
+def find_overdue_reading_jobs(conn: sqlite3.Connection, stale_after_hours: float = 30.0) -> List[Dict[str, Any]]:
+    """Every active job whose most recent real signal of life - the last
+    page actually delivered, or its own creation if it's never had a first
+    night yet - is older than stale_after_hours. Checked once at
+    AdiyanReader's own startup (see mesh/adiyan_reader/server.py), same
+    reasoning as mesh/scheduler/db.py's own find_overdue_jobs(): catches a
+    nightly fire that mcp/cron_trigger's own misfire handling silently
+    dropped while this mesh was down (see mcp/cron_trigger/server.py's
+    MISFIRE_GRACE_SECONDS docstring for the mechanism this compensates for
+    - that one only covers up to 6 hours of downtime, this catches
+    whatever slips past it).
+
+    30 hours, not 24 - a job re-registers itself for the next literal
+    midnight UTC after it fires (see read_next_page.py), not "24 hours
+    from last delivery," so the real gap between two consecutive on-time
+    deliveries already varies by several hours depending on what time of
+    day the job was first created. 30 hours gives that natural variance
+    room without also catching a job that's merely running a few hours
+    late tonight but not actually missed."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=stale_after_hours)).isoformat()
+    rows = conn.execute(
+        'SELECT * FROM reading_jobs WHERE active = 1 AND COALESCE(last_delivered_at, created_at) < ?',
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_reading_job_voice(conn: sqlite3.Connection, job_id: str, voice: str) -> None:

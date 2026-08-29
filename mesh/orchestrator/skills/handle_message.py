@@ -24,6 +24,7 @@ nothing here is specific to that one skill_id; any future skill from any
 agent that wants to hand back a file just needs to return
 {content_b64, filename, mimetype} the same way.
 """
+import base64
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +46,17 @@ from mesh.orchestrator.router import route_to_agent
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger('HandleMessage')
+
+# The logo sent alongside a fresh registration's welcome reply - read once
+# at import time (a static asset baked into the repo, not something that
+# changes at runtime the way config_sdk-backed values do) and cached as
+# base64, ready to hand straight to send_document's own content_b64 field.
+_LOGO_PATH = Path(__file__).parent.parent.parent / 'config_server' / 'static' / 'adiyan_logo.png'
+try:
+    _LOGO_B64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode('ascii')
+except Exception as e:
+    logger.warning(f'Could not load Adiyan logo for the registration reply, sending text-only: {e}')
+    _LOGO_B64 = None
 
 # A single-skill pool fed to skill_router.classify() purely as a yes/no
 # check: does this upload's caption read as an actual instruction (analyze,
@@ -509,6 +521,13 @@ async def run(
         # Registration, unregistration, or an unregistered-sender rejection
         # already fully handled it - never reaches routing.
         reply = gate_reply
+        if gate_reply == rules_engine.REGISTERED_REPLY and _LOGO_B64 is not None:
+            # A fresh registration gets the logo alongside the welcome text,
+            # sent as one message via send_document's own caption field -
+            # not a separate text send followed by a separate image send.
+            pending_document = {
+                'filename': 'adiyan_logo.png', 'content_b64': _LOGO_B64, 'mimetype': 'image/png',
+            }
     elif kb_pending:
         # Only reachable once the gate above has already let this sender
         # through (owner or a registered client) - a stranger's image or

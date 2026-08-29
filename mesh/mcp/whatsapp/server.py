@@ -104,13 +104,22 @@ async def get_own_phone(ctx: Context) -> Dict[str, Any]:
 
 async def _resolve_from_number(message: Dict[str, Any]) -> str:
     """The parsed from_number when it's trustworthy, or the live session's
-    own phone when it isn't. message.sent (message['from_me']) is
+    own phone when it isn't. In a genuine self-chat, message['from_me'] is
     unconditionally the account owner - confirmed live that WhatsApp
     reports the `from` JID inconsistently there (sometimes the real
     phone-form JID, sometimes the same `@lid` the chat itself is addressed
     by), which silently broke owner recognition in a self-chat even though
-    there is structurally no other possible sender for that event."""
-    if message['from_me']:
+    there is structurally no other possible sender for that event.
+
+    Gated on is_self_chat now, not from_me alone - confirmed live that
+    from_me is true any time the owner's own device sends into ANY chat,
+    not just the self-chat (e.g. the owner typing a follow-up message
+    directly into a registered client's chat while testing). Trusting
+    from_me unconditionally there collapsed a real client's identity to
+    the owner's own number - their reading job got resolved to the
+    owner's, and the reply was delivered back into the owner's own chat
+    instead of the client's."""
+    if message['from_me'] and message.get('is_self_chat'):
         status = await _openwa.get_session_status()
         return status.get('phone') or message['from_number']
     return message['from_number']
