@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.config import load_runtime_config
+from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.skill_router import classify, extract
@@ -135,14 +136,14 @@ async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optio
     try:
         choice = await classify(text, _BOOK_READING_SKILLS, cfg['book_reading_intent'])
     except Exception as e:
-        logger.error(f'Book-reading intent classification failed: {e}')
+        logger.error(f'Book-reading intent classification failed: {describe_exception(e)}')
         return None
     if choice.skill_id != 'start_book_reading':
         return None
     try:
         params = await extract(text, 'start_book_reading', _BookReadingRequest, cfg['extract_parameters'])
     except Exception as e:
-        logger.error(f'Book-reading reference extraction failed: {e}')
+        logger.error(f'Book-reading reference extraction failed: {describe_exception(e)}')
         return None
     return params.book_reference
 
@@ -218,7 +219,7 @@ async def _start_book_reading(book_reference: str, chat_id: str, from_number: Op
             'reading_job_id': started['reading_job_id'],
         }, token=token)
     except Exception as e:
-        logger.error(f'Immediate page read failed for {chat_id}: {e}')
+        logger.error(f'Immediate page read failed for {chat_id}: {describe_exception(e)}')
         first_page = None
 
     # read_next_page.run() returns status='completed' for BOTH "a page was
@@ -277,7 +278,7 @@ async def _resolve_read_now_request(text: str, cfg: Dict[str, Any]) -> bool:
     try:
         choice = await classify(text, _READ_NOW_SKILLS, cfg['book_reading_intent'])
     except Exception as e:
-        logger.error(f'Read-now intent classification failed: {e}')
+        logger.error(f'Read-now intent classification failed: {describe_exception(e)}')
         return False
     return choice.skill_id == 'read_now'
 
@@ -302,7 +303,7 @@ async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) ->
     try:
         result = await call_agent(reader_url, 'read_now', {'phone_number': from_number or chat_id}, token=token)
     except Exception as e:
-        logger.error(f'read_now failed for {chat_id}: {e}')
+        logger.error(f'read_now failed for {chat_id}: {describe_exception(e)}')
         return None
 
     return result.get('result_summary') or "Couldn't read a page right now - try again in a moment."
@@ -411,7 +412,7 @@ async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Opti
     try:
         choice = await classify(caption, _UPLOAD_INSTRUCTION_SKILLS, cfg)
     except Exception as e:
-        logger.error(f'Caption-intent classification failed: {e}')
+        logger.error(f'Caption-intent classification failed: {describe_exception(e)}')
         return None
     return caption if choice.skill_id == 'analyze_upload' else None
 
@@ -511,6 +512,7 @@ async def run(
     text = rules_engine.strip_adiyan_mention(text)
 
     pending_document = None
+    pending_image = None
     # True only for a genuine routed conversation exchange (the else branch
     # below) - not a registration/unregistration command, not a document
     # upload. Those aren't "what did we talk about" content, and conflating
@@ -523,9 +525,11 @@ async def run(
         reply = gate_reply
         if gate_reply == rules_engine.REGISTERED_REPLY and _LOGO_B64 is not None:
             # A fresh registration gets the logo alongside the welcome text,
-            # sent as one message via send_document's own caption field -
-            # not a separate text send followed by a separate image send.
-            pending_document = {
+            # sent as one message via send_image's own caption field - not
+            # a separate text send followed by a separate image send.
+            # send_image, not send_document - confirmed live send_document
+            # hangs until it times out for an actual image mimetype.
+            pending_image = {
                 'filename': 'adiyan_logo.png', 'content_b64': _LOGO_B64, 'mimetype': 'image/png',
             }
     elif kb_pending:
@@ -675,7 +679,15 @@ async def run(
         # Orchestrator's own action, not something authorized by whoever
         # triggered this run.
         delivery_token = permissions.mint_token('orchestrator', 'service')
-        if pending_document is not None:
+        if pending_image is not None:
+            await call_tool(whatsapp_mcp_url, 'send_image', {
+                'chat_id': chat_id,
+                'filename': pending_image['filename'],
+                'content_b64': pending_image['content_b64'],
+                'mimetype': pending_image.get('mimetype') or 'image/png',
+                'caption': reply,
+            }, token=delivery_token)
+        elif pending_document is not None:
             await call_tool(whatsapp_mcp_url, 'send_document', {
                 'chat_id': chat_id,
                 'filename': pending_document['filename'],
@@ -701,7 +713,7 @@ async def run(
         # no send_message call in whatsapp_mcp's own log) when it actually
         # happened, indistinguishable from routing having silently decided
         # not to reply at all.
-        logger.error(f'Failed to deliver reply for {chat_id}: {e}')
+        logger.error(f'Failed to deliver reply for {chat_id}: {describe_exception(e)}')
         delivered = False
         reply = f'{reply} (delivery failed: {e})'
 

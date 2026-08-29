@@ -186,6 +186,40 @@ class OpenWAService:
         logger.info(f"Sent document '{filename}' to {chat_id}: {result.get('messageId')}")
         return result
 
+    async def send_image(self, chat_id: str, filename: str, data: bytes,
+                          mimetype: str = 'image/png', caption: Optional[str] = None) -> Dict[str, Any]:
+        """Send a real image message (renders as a photo in the chat, not a
+        file attachment) - OpenWA's own send-image endpoint, distinct from
+        send-document. Confirmed live: send_document() with an image
+        mimetype hung until httpx.ReadTimeout every single time, even
+        against the owner's own self-chat with an 8.8KB PNG - penwa's own
+        message.service.ts handles 'image' and 'document' as genuinely
+        different WhatsApp message types (different chatId save path,
+        different underlying engine call), not just a label on the same
+        document-send flow. Same payload shape as send_document() otherwise,
+        just a different endpoint and default mimetype."""
+        import base64
+        session_id = await self._session_id_or_refresh()
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={'X-API-Key': self.api_key, 'Content-Type': 'application/json'},
+            timeout=60.0,
+        ) as client:
+            response = await client.post(
+                f'/api/sessions/{session_id}/messages/send-image',
+                json={
+                    'chatId': chat_id,
+                    'base64': base64.b64encode(data).decode('ascii'),
+                    'mimetype': mimetype,
+                    'filename': filename,
+                    **({'caption': caption} if caption else {}),
+                },
+            )
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Sent image '{filename}' to {chat_id}: {result.get('messageId')}")
+        return result
+
     async def send_voice(self, chat_id: str, data: bytes, mimetype: str = 'audio/ogg; codecs=opus') -> Dict[str, Any]:
         """Send audio as a real WhatsApp voice note (PTT - mic bubble +
         waveform, not a plain audio-file attachment) - ptt=True is what
@@ -265,11 +299,25 @@ class OpenWAService:
         sends (services/cron_scheduler.py) can't rely on a live message to supply
         one, so they need to resolve it from the phone number instead.
 
+        `phone` is not always a real phone number, despite the parameter name -
+        confirmed live: a contact whose real number was never captured (the lid
+        was the only identifier ever seen for them) gets that lid stored as their
+        "phone_number" wherever a caller needed something to key on, and it's
+        already a valid WhatsApp chat id in its own right - stripping it to
+        digits and running it through the phone-to-JID lookup below fails
+        outright, since the digits inside a lid aren't a dialable number at all
+        (mesh/adiyan_reader/skills/read_next_page.py's own reading_jobs.phone_number
+        column hit exactly this - a registered client's book reading silently
+        never sent because of it). Anything that already looks like a JID
+        (carries an '@') is returned as-is, no lookup needed.
+
         Strips non-digit characters first - confirmed live that the endpoint 500s
         on a leading '+' (a stored phone number like '+919080089081' must become
         '919080089081'), while session status's own `phone` field (used by
         get_own_chat_id) never has one to begin with.
         """
+        if '@' in phone:
+            return phone
         digits_only = ''.join(ch for ch in phone if ch.isdigit())
         session_id = await self._session_id_or_refresh()
         async with self._new_client() as client:

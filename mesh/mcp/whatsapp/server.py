@@ -85,6 +85,22 @@ async def send_document(
 
 
 @mcp.tool()
+async def send_image(
+    chat_id: str, filename: str, content_b64: str, mimetype: str, ctx: Context, caption: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends an image (base64-encoded) to chat_id, rendered as a real photo
+    in the chat, not a file attachment - use this for an actual image
+    (e.g. a logo), never send_document. Confirmed live: send_document with
+    an image mimetype hangs until it times out, every time - OpenWA's own
+    send-document and send-image are genuinely different message types,
+    not two names for the same thing."""
+    permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.send_image')
+    content = base64.b64decode(content_b64)
+    result = await _openwa.send_image(chat_id, filename, content, mimetype=mimetype, caption=caption)
+    return {'sent': True, 'result': result}
+
+
+@mcp.tool()
 async def get_own_phone(ctx: Context) -> Dict[str, Any]:
     """The linked account's own phone number - lets a caller (Orchestrator's
     rules engine) recognize the owner without Orchestrator ever touching

@@ -29,6 +29,7 @@
         "mcp.cron_trigger.remove_trigger",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document",
+        "mcp.whatsapp.send_image",
         "mcp.whatsapp.get_own_phone",
         "mcp.agent_registry.register_agent",
         "mcp.agent_registry.list_agents"
@@ -50,7 +51,8 @@
         "adiyan_reader.read_next_page",
         "adiyan_reader.read_now",
         "mcp.whatsapp.send_message",
-        "mcp.whatsapp.send_document"
+        "mcp.whatsapp.send_document",
+        "mcp.whatsapp.send_image"
       ]
     }
   }
