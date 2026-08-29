@@ -101,7 +101,19 @@ else
     bash mesh/qdrant/fetch_binary.sh
 fi
 
-step "OpenWA (WhatsApp) Node dependencies"
+step "OpenWA (WhatsApp)"
+# penwa/ is a separate repo (rmyndharis/OpenWA), deliberately excluded from
+# this one via .gitignore - a fresh clone of Adiyan has no penwa/ directory
+# at all. Confirmed live: install.sh silently assumed it already existed
+# (true only on a machine that already had a manual checkout) and failed
+# with a bare "no such file" from npm on a genuinely fresh clone.
+if [ -d "penwa/.git" ]; then
+    skip "penwa/ already present"
+else
+    git clone https://github.com/rmyndharis/OpenWA penwa
+    ok "Cloned penwa/"
+fi
+
 if [ -d "penwa/node_modules" ]; then
     skip "penwa/node_modules already present"
 else
