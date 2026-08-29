@@ -18,7 +18,7 @@
 # Start is idempotent - a component already running is left alone, not
 # restarted. Does NOT start/stop ngrok or nginx itself - those are external
 # infra this script assumes are managed separately (see
-# mesh/EXTERNAL_DEPENDENCIES.md). MongoDB, Qdrant, and OpenWA ARE
+# docs/EXTERNAL_DEPENDENCIES.md). MongoDB, Qdrant, and OpenWA ARE
 # started/stopped here despite also being third-party infra - explicit
 # exceptions:
 #   - MongoDB: mesh/lib/config_sdk.py's whole point is degrading gracefully

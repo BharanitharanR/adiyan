@@ -1,0 +1,68 @@
+{
+  "constants": {
+    "decide_next_step_prompt_template": {
+      "value": "Instruction: {instruction}\n\nWhat you have found so far:\n{scratchpad}\n\nDecide your next action. Use a tool to keep investigating, or call finish with your complete answer once you have enough evidence. If the instruction refers to something ambiguously - \"the game\", \"it\", \"that\", \"like I mentioned\" - and the scratchpad has not already checked conversation memory, call recall_memory first to see if what the person is referring to is already known from earlier conversation, before asking them to clarify or giving up. Confirmed live: a person who said earlier they enjoy tennis, then later asked to \"explain the rules of the game\", got asked \"which game?\" instead of getting tennis rules - recall_memory would have resolved that on its own, it was just never called. search_documents only ever returns a filename, never document content - if the scratchpad shows a document under documents_known that has not yet been read, investigate it (read_document or search_within_document) before treating anything about that document as a finding or citing it in your answer. If a document is already known to be relevant (in documents_known) and you have a specific thing to find within it, call search_within_document with that specific question as the query - not read_document, which dumps the whole document and, for a long one, gets truncated before reaching the relevant part. Only use read_document when you need the document's full content or a general overview rather than something specific in it. Never state a specific real-world detail (an event, an exact date, a price, current availability) as fact unless a tool actually gave it to you - if you are unsure, say so or leave it out, do not assume. {grounding_rule}",
+      "description": "Main ReAct decide-step prompt - how the model chooses between tools (document search, memory recall, agent consultation, database resolution) or finish. Needs {instruction}, {scratchpad}, and {grounding_rule} placeholders."
+    },
+    "compact_prompt_template": {
+      "value": "Instruction: {instruction}\n\nCurrent scratchpad:\n{scratchpad}\n\nNew observation, from calling {tool_name}:\n{observation}\n\nProduce the UPDATED scratchpad. Merge genuinely new, relevant findings from the observation into the findings list - do not just append the raw text, extract what actually matters for the instruction. Relevant means it helps answer THIS instruction specifically, not merely that a tool returned it - a document being the closest available match doesn't make its content relevant if the document itself is actually about something unrelated (e.g. a habit-formation guide, when asked about trip planning). If an observation doesn't genuinely bear on the instruction, don't add it as a finding - note in open_questions that this avenue turned up nothing relevant instead. Keep findings focused: at most 8 entries, dropping the least relevant if you would exceed that. Track documents_checked/agents_consulted if this observation came from reading one. Carry forward everything from the current scratchpad that is still relevant - do not silently drop prior findings unless this observation supersedes them.",
+      "description": "Folds one new tool observation into the running scratchpad. Needs {instruction}, {scratchpad}, {tool_name}, and {observation} placeholders."
+    },
+    "final_answer_prompt_template": {
+      "value": "Instruction: {instruction}\n\nEverything found during the investigation:\n{scratchpad}\n\nYou are out of further investigation steps. Answer the instruction now. For any specific, verifiable real-world detail (an event, an exact date, a price, current availability), use only what is actually in the scratchpad above - if it is not there, say you are unsure or leave it out, do not assume. That includes findings that are real but irrelevant to what was actually asked (e.g. a document that turned out to be about something unrelated) - reporting on an irrelevant finding is not an answer. {grounding_rule}",
+      "description": "Forced final-answer prompt, used when the ReAct loop hits its step cap without calling finish. Needs {instruction}, {scratchpad}, and {grounding_rule} placeholders."
+    },
+    "msg_no_matching_document": {
+      "value": "No matching document found in the knowledge base.",
+      "description": "Shown when search_documents finds no document confident enough to match a query."
+    },
+    "msg_document_not_found": {
+      "value": "No document found with filename '{source_filename}'.",
+      "description": "Shown when read_document is called with a filename that isn't in the knowledge base."
+    },
+    "msg_no_relevant_chunks": {
+      "value": "No relevant passages found in '{source_filename}' for that question.",
+      "description": "Shown when search_within_document finds nothing relevant enough inside an already-known document."
+    },
+    "msg_kb_empty": {
+      "value": "The knowledge base is empty - no documents have been uploaded.",
+      "description": "Shown when list_documents is called but nothing has ever been uploaded to the knowledge base."
+    },
+    "msg_no_contact": {
+      "value": "No specific person is associated with this request - nothing to recall.",
+      "description": "Shown when recall_memory is called but no contact_name was ever attached to this conversation."
+    },
+    "msg_nothing_in_memory": {
+      "value": "Nothing relevant found in conversation memory.",
+      "description": "Shown when recall_memory finds a contact but no past conversation snippets relevant to the query."
+    },
+    "msg_no_agents_discoverable": {
+      "value": "No other agents are currently discoverable.",
+      "description": "Shown when discover_agents finds no other agents registered in the mesh."
+    },
+    "msg_agent_not_registered": {
+      "value": "No agent registered with id '{agent_id}' - call discover_agents first.",
+      "description": "Shown when consult_agent is called with an agent_id that isn't actually registered in the mesh."
+    },
+    "msg_no_clear_answer": {
+      "value": "I wasn't able to find a clear answer.",
+      "description": "Fallback used if the ReAct loop's own final response has no text at all to fall back on."
+    },
+    "msg_unknown_tool": {
+      "value": "Unknown tool: {tool_name}",
+      "description": "Shown when the model calls a tool name that doesn't exist - should never happen in practice."
+    },
+    "strict_grounding": {
+      "value": true,
+      "description": "If true, only tool-verified evidence counts as a basis for an answer - even an ordinary general-knowledge question gets an honest \"nothing relevant found\" instead of an answer from the model's own training data. If false, general knowledge is a legitimate fallback when no document/memory/agent had anything relevant, but a specific verifiable detail (a date, a price, a port number) still requires real tool-verified evidence."
+    },
+    "observation_char_cap": {
+      "value": 6000,
+      "description": "Max characters kept from any single tool result before it's truncated - protects the ReAct loop's own prompt from being blown out by one huge document dump."
+    },
+    "doc_search_top_k": {
+      "value": 5,
+      "description": "How many passages search_within_document returns per query - more raises the odds the actually-relevant one is included, at the cost of a longer observation to read."
+    }
+  }
+}

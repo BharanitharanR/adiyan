@@ -32,6 +32,10 @@ AGENT_CODE_DIR = Path(__file__).parent
 
 
 async def _load_startup_config() -> dict:
+    # Every key in seed_config.json goes into Mongo right now, not lazily
+    # the first time whatever branch happens to touch it - see
+    # mesh/lib/config_sdk.py's seed_from_file().
+    await config_sdk.seed_from_file(AGENT_ID, AGENT_CODE_DIR)
     host = await config_sdk.get_constant(
         AGENT_ID, 'host', HOST,
         description='Which network interface this agent binds to. Changing this needs a restart to take effect.',

@@ -1,0 +1,12 @@
+{
+  "constants": {
+    "rewrite_for_speech_prompt_template": {
+      "value": "This is one page from a book, but it reads as headings/a table of contents, not prose - reading it aloud word-for-word would sound like a jumbled list. Rewrite it as 1-3 short, natural spoken sentences describing what this page actually contains (e.g. \"This page lists the table of contents\" or \"This page starts Chapter Three: Moving Deeply into the Now\"). Only describe what is genuinely here - never invent content, opinions, or details not present in the text below.\n\n\"\"\"{cleaned}\"\"\"",
+      "description": "Rewrites a non-prose page (headings/TOC) into natural spoken sentences before TTS. Needs a {cleaned} placeholder."
+    },
+    "generate_questions_prompt_template": {
+      "value": "Here is a page from a book someone was just read out loud:\n\n\"\"\"{page_text}\"\"\"\n\nWrite exactly {count} short comprehension questions about what this specific page actually said - nothing about the rest of the book, nothing invented. Someone who listened to this page should be able to answer each one directly from it.",
+      "description": "Generates next-day comprehension quiz questions for a read page. Needs {page_text} and {count} placeholders."
+    }
+  }
+}

@@ -23,7 +23,7 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from pydantic import BaseModel
 
 from mesh.lib import config_sdk, permissions
-from mesh.lib.config import load_runtime_config
+from mesh.lib.config import load_runtime_config, load_seed_config
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.scheduler import db
@@ -35,6 +35,11 @@ EMBED_MODEL = 'nomic-embed-text'
 # mesh/scheduler/ - the code directory holding runtime_config.json, not to be
 # confused with ~/.Adiyan/agents/scheduler/ (runtime data - see mesh/lib/paths.py).
 AGENT_CODE_DIR = Path(__file__).parent.parent
+_SEED = load_seed_config(AGENT_CODE_DIR)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 
 class ResolvedSchedule(BaseModel):
@@ -59,10 +64,15 @@ async def _resolve_schedule(description: str) -> str:
     )
     model = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
     structured = model.with_structured_output(ResolvedSchedule)
-    result = structured.invoke(
-        f'Convert this into a standard 5-field cron expression (minute hour day month weekday). '
-        f'Respond with only the cron expression.\n\nDescription: "{description}"'
+    seeded = _seeded('resolve_schedule_prompt_template')
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'resolve_schedule_prompt_template', seeded['value'], description=seeded['description'],
     )
+    try:
+        prompt = template.format(description=description)
+    except Exception:
+        prompt = seeded['value'].format(description=description)
+    result = structured.invoke(prompt)
     return result.cron_expression
 
 

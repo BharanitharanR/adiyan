@@ -12,7 +12,7 @@ Only real A2A agents register here, never MCP-only servers (cron_trigger,
 whatsapp) - the registry works by fetching an agent's own
 /.well-known/agent-card.json, which only A2A agents serve. An MCP server has
 tools, not AgentSkills, and stays discovered by direct URL knowledge
-(mesh/AGENTS.md), exactly as before this existed.
+(docs/AGENTS.md), exactly as before this existed.
 
 Both register() and list_agents() are best-effort, never raise: a
 registry that's briefly unreachable (e.g. still starting up) must never

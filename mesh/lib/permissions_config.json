@@ -45,6 +45,10 @@
         "memory.recall_contact_memory",
         "memory.search_knowledge_base",
         "memory.share_knowledge_document",
+        "memory.resolve_book",
+        "adiyan_reader.start_reading",
+        "adiyan_reader.read_next_page",
+        "adiyan_reader.read_now",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document"
       ]

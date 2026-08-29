@@ -21,6 +21,7 @@ import asyncio
 import logging
 import threading
 import time
+from pathlib import Path
 
 from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
@@ -34,6 +35,8 @@ from mesh.scheduler.skills import run_routine
 from mesh.scheduler.skills_catalog import get_skills
 
 logger = logging.getLogger('SchedulerServer')
+
+AGENT_CODE_DIR = Path(__file__).parent
 
 # Confirmed live: a startup-only catch-up attempt that fails once (e.g.
 # WhatsApp's session hadn't reconnected yet at that exact moment) leaves the
@@ -71,6 +74,10 @@ def _catch_up_retry_loop() -> None:
 
 
 async def _load_startup_config() -> dict:
+    # Every key in seed_config.json goes into Mongo right now, not lazily
+    # the first time whatever branch happens to touch it - see
+    # mesh/lib/config_sdk.py's seed_from_file().
+    await config_sdk.seed_from_file(AGENT_ID, AGENT_CODE_DIR)
     host = await config_sdk.get_constant(
         AGENT_ID, 'host', HOST,
         description='Which network interface this agent binds to. Changing this needs a restart to take effect.',

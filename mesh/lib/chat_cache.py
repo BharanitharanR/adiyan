@@ -29,10 +29,24 @@ import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
+
+from mesh.lib import config_sdk
+from mesh.lib.config import load_seed_config
+
+# Shared platform prompt, same pseudo agent_id convention as
+# skill_router.py/tool_resolution.py/vision.py - relevance filtering is the
+# same decision regardless of which agent's conversation this cache belongs to.
+_SHARED_AGENT_ID = '_chat_cache'
+_SEED = load_seed_config(Path(__file__).parent)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 logger = logging.getLogger(__name__)
 
@@ -138,17 +152,15 @@ async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str
         f'    Reply: {_cap(t["reply_text"], _TURN_CHAR_CAP)}'
         for i, t in enumerate(turns)
     )
-    prompt = (
-        f'Recent conversation history, oldest first:\n{numbered}\n\n'
-        f'New message: {new_message}\n\n'
-        'Which of the numbered turns above are relevant context for '
-        'understanding or answering the new message - e.g. it refers back to '
-        'something in that turn ("it", "that", "the same thing"), continues '
-        "the same topic, or the new message can't be fully understood without "
-        'it? A turn that is just unrelated small talk or a completely '
-        'different topic is not relevant even if it is recent. List the '
-        'indices of the relevant turns, oldest first.'
+    seeded = _seeded('chat_cache_relevance_prompt_template')
+    template = await config_sdk.get_constant(
+        _SHARED_AGENT_ID, 'chat_cache_relevance_prompt_template', seeded['value'], description=seeded['description'],
     )
+    fmt_kwargs = dict(numbered=numbered, new_message=new_message)
+    try:
+        prompt = template.format(**fmt_kwargs)
+    except Exception:
+        prompt = seeded['value'].format(**fmt_kwargs)
     try:
         model = ChatOllama(
             model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'),

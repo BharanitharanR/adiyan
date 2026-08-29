@@ -307,7 +307,7 @@ async def set_active_vertical_id(vertical_id: Optional[str]) -> bool:
     plain platform defaults. True on success. This is the one write every
     'confirmed by owner or support' activation flow (Config Agent's
     activate_vertical skill, the dashboard's activation control) actually
-    calls - see mesh/CONFIG_ARCHITECTURE.md."""
+    calls - see docs/CONFIG_ARCHITECTURE.md."""
     return await set_constant(CONTROL_AGENT_ID, 'active_vertical_id', vertical_id)
 
 
@@ -391,3 +391,27 @@ async def list_vertical_ids(agent_id: str) -> List[str]:
     except Exception as e:
         logger.warning(f'Config SDK could not list vertical ids for {agent_id!r}: {e}')
         return []
+
+
+async def seed_from_file(agent_id: str, agent_dir) -> None:
+    """The platform half of the seed-data framework: any agent whose own
+    directory has a seed_config.json (see mesh/lib/config.py's
+    load_seed_config()) gets every key in it written into config_sdk right
+    now, at boot - not lazily, the first time whatever code path happens
+    to call get_constant() for that key. Without this, a key only used
+    deep in a rarely-hit branch (e.g. a forced-final-answer prompt that
+    only runs when the ReAct loop hits its step cap) wouldn't show up on
+    the config dashboard until that branch happened to run once - a
+    constant existing should not depend on it having been used yet.
+
+    Calling this is safe and idempotent on every boot - it's just N
+    ordinary get_constant() calls, which already no-op (beyond a read) once
+    a key is on file; nothing here re-seeds a value a human has since
+    edited via the dashboard. An agent with no seed_config.json (most
+    agents, today) gets an empty loop - adopting this file, not calling
+    this function, is what turns the mechanism on for a given agent."""
+    from mesh.lib.config import load_seed_config
+
+    seed = load_seed_config(agent_dir)
+    for key, entry in seed.items():
+        await get_constant(agent_id, key, entry['value'], description=entry.get('description'))

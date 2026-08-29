@@ -1,5 +1,5 @@
 """
-Analysis Agent eval runner - see mesh/evals/EVAL_DESIGN.md for the full
+Analysis Agent eval runner - see docs/EVAL_DESIGN.md for the full
 design and why each case exists. Run manually:
     python3 -m mesh.evals.eval_analysis
 
@@ -28,7 +28,7 @@ any vertical activates. That's wrong for cases specifically, so this
 sidesteps auto-resolution rather than relying on it.
 
 Single run per case, no majority voting, no CI wiring - see
-EVAL_DESIGN.md's own "what this deliberately does not do" section.
+docs/EVAL_DESIGN.md's own "what this deliberately does not do" section.
 
 Every run writes a report - one timestamped Markdown + JSON pair, plus an
 overwritten latest.md/latest.json - under eval_reports_dir(EVAL_ENGINE_AGENT_ID)
@@ -40,6 +40,7 @@ that gate itself is still out of scope here.
 import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 import httpx
@@ -50,12 +51,18 @@ from mesh.analysis.constants import AGENT_URL as ANALYSIS_AGENT_URL
 from mesh.analysis.constants import MEMORY_AGENT_URL
 from mesh.lib import config_sdk
 from mesh.lib.a2a_client import call_agent
+from mesh.lib.config import load_seed_config
 from mesh.lib.paths import eval_reports_dir
 from mesh.lib.permissions import mint_token
 
 GRAPHQL_URL = 'http://localhost:6006/graphql'
 EVAL_ENGINE_AGENT_ID = 'eval_engine'
 CASES_KEY = 'cases'
+_SEED = load_seed_config(Path(__file__).parent)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 # Export latency on Phoenix's own OTel batch exporter - no existing
 # documented constant for this anywhere else in the mesh, a pragmatic
@@ -135,10 +142,10 @@ PLATFORM_CASES_DEFAULT: List[EvalCase] = [
         'prompt': 'What does the Analysis Agent eval check, and what data does it use?',
         'contact_name': None,
         'judge_criteria': (
-            "Correct answer, per EVAL_DESIGN.md: checks Analysis Agent's ReAct loop "
+            "Correct answer, per docs/EVAL_DESIGN.md: checks Analysis Agent's ReAct loop "
             "against 5 cases mapped to real bugs, using this project's own docs as "
             "fixture data. PASS if the answer reflects this and the trace shows "
-            "EVAL_DESIGN.md (or another fixture doc) actually being retrieved. FAIL if "
+            "docs/EVAL_DESIGN.md (or another fixture doc) actually being retrieved. FAIL if "
             "vague, wrong, or ungrounded."
         ),
     },
@@ -228,15 +235,18 @@ async def run_judge(case: EvalCase, result: Dict[str, Any], spans: List[Dict[str
         f"[{s['spanKind']}] {s['name']}: input={s['input']}, output={s['output']}"
         for s in spans if s['spanKind'] in ('tool', 'llm')
     )
-    prompt = (
-        f"Prompt given to Analysis Agent: {case['prompt']}\n\n"
-        f"Analysis Agent's final answer: {result.get('result', '(no result field)')}\n\n"
-        f"Trace evidence (tool calls and LLM calls, in order):\n{trace_summary}\n\n"
-        f"Judge criteria: {case['judge_criteria']}\n\n"
-        "Decide pass/fail against the criteria above, using the trace evidence as your "
-        "only source of truth for what actually happened - not the final answer's own "
-        "claims about what it checked."
+    seeded = _seeded('judge_prompt_template')
+    template = await config_sdk.get_constant(
+        EVAL_ENGINE_AGENT_ID, 'judge_prompt_template', seeded['value'], description=seeded['description'],
     )
+    fmt_kwargs = dict(
+        instruction=case['prompt'], result=result.get('result', '(no result field)'),
+        trace_summary=trace_summary, judge_criteria=case['judge_criteria'],
+    )
+    try:
+        prompt = template.format(**fmt_kwargs)
+    except Exception:
+        prompt = seeded['value'].format(**fmt_kwargs)
     return await model.ainvoke(prompt)
 
 
@@ -363,7 +373,7 @@ def _validation_type(case: EvalCase) -> str:
     """How this case was checked - shown as its own report column so a
     reader can tell an LLM-judged case (nuanced, needs a human's own
     read of the reason) from a structurally-checked one (exact, no
-    ambiguity) at a glance, per EVAL_DESIGN.md's judge-vs-structural split."""
+    ambiguity) at a glance, per docs/EVAL_DESIGN.md's judge-vs-structural split."""
     parts = []
     if 'judge_criteria' in case:
         parts.append('LLM judge')

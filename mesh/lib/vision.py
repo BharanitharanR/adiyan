@@ -15,41 +15,36 @@ every other LLM stage in this system, already pulled locally, confirmed
 capable of reading a synthetic name+phone screenshot live before this was
 wired in.
 """
-from typing import Literal, Optional
+from pathlib import Path
+from typing import Any, Dict, Literal, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
+from mesh.lib import config_sdk
+from mesh.lib.config import load_seed_config
+
 VISION_MODEL = 'qwen3-vl:8b'
 OLLAMA_URL = 'http://localhost:11434'
 TEMPERATURE = 0.2
+
+# Shared platform prompts, same _tool_resolution/_skill_router pseudo
+# agent_id convention - vision classification is genuinely the same
+# decision regardless of which agent's flow the image arrived through.
+_SHARED_AGENT_ID = '_vision'
+_SEED = load_seed_config(Path(__file__).parent)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
+
 
 ImagePurpose = Literal['contact_card', 'knowledge_content', 'unclear']
 
 
 class _PurposeChoice(BaseModel):
     purpose: ImagePurpose
-
-
-_CLASSIFY_PROMPT = (
-    'Look at this image and decide what it is:\n'
-    '- contact_card: a WhatsApp contact card, or a screenshot of a phone '
-    "contact entry, showing a person's name and phone number.\n"
-    '- knowledge_content: anything else worth remembering or storing - a '
-    'document, receipt, note, photo, screenshot of text, a page from a '
-    'book, a whiteboard, etc.\n'
-    "- unclear: neither of the above, or the image doesn't clearly fit.\n"
-    'Choose exactly one.'
-)
-
-_CAPTION_PROMPT = (
-    "This image is a WhatsApp contact card or a screenshot of one. "
-    "If it clearly shows a person's name and phone number, reply with exactly one line: "
-    '"Add <name> as a client, their number is <phone number>". '
-    'Use only what is actually visible - do not guess a missing name or number. '
-    'If no name+phone pair is clearly visible in the image, reply with exactly: NONE.'
-)
 
 
 def _image_message(prompt: str, image_b64: str, mimetype: str) -> HumanMessage:
@@ -67,7 +62,11 @@ async def classify_image(image_b64: str, mimetype: str) -> ImagePurpose:
     model = ChatOllama(
         model=VISION_MODEL, base_url=OLLAMA_URL, temperature=TEMPERATURE,
     ).with_structured_output(_PurposeChoice)
-    choice = await model.ainvoke([_image_message(_CLASSIFY_PROMPT, image_b64, mimetype)])
+    seeded = _seeded('vision_classify_prompt')
+    prompt = await config_sdk.get_constant(
+        _SHARED_AGENT_ID, 'vision_classify_prompt', seeded['value'], description=seeded['description'],
+    )
+    choice = await model.ainvoke([_image_message(prompt, image_b64, mimetype)])
     return choice.purpose
 
 
@@ -79,7 +78,11 @@ async def describe_contact_image(image_b64: str, mimetype: str) -> Optional[str]
     add_named_contact classify/extract stage a typed admin command goes
     through."""
     model = ChatOllama(model=VISION_MODEL, base_url=OLLAMA_URL, temperature=TEMPERATURE)
-    result = await model.ainvoke([_image_message(_CAPTION_PROMPT, image_b64, mimetype)])
+    seeded = _seeded('vision_caption_prompt')
+    prompt = await config_sdk.get_constant(
+        _SHARED_AGENT_ID, 'vision_caption_prompt', seeded['value'], description=seeded['description'],
+    )
+    result = await model.ainvoke([_image_message(prompt, image_b64, mimetype)])
     caption = (result.content or '').strip()
     if not caption or caption.upper() == 'NONE':
         return None

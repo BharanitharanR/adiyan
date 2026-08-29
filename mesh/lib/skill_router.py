@@ -10,12 +10,33 @@ skills or parameter shapes. The caller supplies the AgentSkill list (for
 building the classifier prompt from real card content, not duplicated text)
 and a {skill_id: Pydantic model} map (for extraction) - both are agent-
 specific and don't belong in a shared module.
-"""
+
+The two prompt templates themselves are seeded from mesh/lib/seed_config.json
+(this module's own directory), config_sdk-backed under the shared pseudo
+agent_id _SHARED_AGENT_ID below - not per-caller, since "given these skills,
+pick one" is genuinely the same structure regardless of which agent is
+asking, the same way mesh/lib/config_sdk.py's own CONTROL_AGENT_ID
+(_mesh_control) already holds deployment-wide state that isn't really any
+one agent's. Every one of this module's 8+ callers (config_agent,
+scheduler, orchestrator, ...) gets this automatically - none of them pass
+or know about a template; that's the point of it being shared, not
+per-agent."""
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
 from a2a.types import AgentSkill
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
+
+from mesh.lib import config_sdk
+from mesh.lib.config import load_seed_config
+
+_SHARED_AGENT_ID = '_skill_router'
+_SEED = load_seed_config(Path(__file__).parent)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 
 class SkillChoice(BaseModel):
@@ -28,20 +49,19 @@ class SkillChoice(BaseModel):
     ambiguous_between: List[str] = []
 
 
-def _classify_prompt(message_text: str, skills: List[AgentSkill]) -> str:
+async def _classify_prompt(message_text: str, skills: List[AgentSkill]) -> str:
     skill_blocks = []
     for skill in skills:
         examples = '\n'.join(f'  e.g. "{ex}"' for ex in skill.examples)
         skill_blocks.append(f'Skill: {skill.id}\n  {skill.description}\n{examples}')
-    return (
-        'Given the skills below and what the caller said, decide which skill applies.\n'
-        'If exactly one clearly applies, set skill_id and leave ambiguous_between empty.\n'
-        'If none apply, leave both empty.\n'
-        'If two or more plausibly apply and the text does not disambiguate them, '
-        'leave skill_id empty and list their ids in ambiguous_between.\n\n'
-        + '\n\n'.join(skill_blocks)
-        + f'\n\nCaller said: "{message_text}"'
+    seeded = _seeded('classify_prompt_template')
+    template = await config_sdk.get_constant(
+        _SHARED_AGENT_ID, 'classify_prompt_template', seeded['value'], description=seeded['description'],
     )
+    try:
+        return template.format(skill_blocks='\n\n'.join(skill_blocks), message_text=message_text)
+    except Exception:
+        return seeded['value'].format(skill_blocks='\n\n'.join(skill_blocks), message_text=message_text)
 
 
 async def classify(message_text: str, skills: List[AgentSkill], model_cfg: Dict[str, Any]) -> SkillChoice:
@@ -50,7 +70,7 @@ async def classify(message_text: str, skills: List[AgentSkill], model_cfg: Dict[
         base_url=model_cfg.get('base_url', 'http://localhost:11434'),
         temperature=model_cfg['temperature'],
     ).with_structured_output(SkillChoice)
-    choice = await model.ainvoke(_classify_prompt(message_text, skills))
+    choice = await model.ainvoke(await _classify_prompt(message_text, skills))
     valid_ids = {s.id for s in skills}
     if choice.skill_id not in valid_ids:
         # Covers two real, confirmed failure modes: "" instead of JSON null
@@ -92,13 +112,15 @@ async def extract(
         if not field.is_required():
             line += f' (default: {field.default!r} - use this unless the text clearly says otherwise, never invent a value)'
         field_lines.append(line)
-    return await model.ainvoke(
-        'Extract these fields from what the caller said. For any field with a '
-        'default listed, use that default unless the text clearly specifies '
-        'otherwise - do not guess or invent a value just to fill the field.\n\n'
-        + '\n'.join(field_lines)
-        + f'\n\nCaller said: "{message_text}"'
+    seeded = _seeded('extract_prompt_template')
+    template = await config_sdk.get_constant(
+        _SHARED_AGENT_ID, 'extract_prompt_template', seeded['value'], description=seeded['description'],
     )
+    try:
+        prompt = template.format(field_lines='\n'.join(field_lines), message_text=message_text)
+    except Exception:
+        prompt = seeded['value'].format(field_lines='\n'.join(field_lines), message_text=message_text)
+    return await model.ainvoke(prompt)
 
 
 async def route(

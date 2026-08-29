@@ -1,0 +1,8 @@
+{
+  "constants": {
+    "humanize_prompt_template": {
+      "value": "The user said: \"{original_message}\"\n\nHere is the structured result from handling their request: {result}\n\nWrite a short, natural WhatsApp reply based only on what is in this result - do not invent anything not present in it.",
+      "description": "Prompt used to rewrite an agent's raw answer into a natural WhatsApp-toned reply before sending."
+    }
+  }
+}

@@ -16,10 +16,15 @@ from pydantic import BaseModel
 from mesh.journal.constants import AGENT_ID, MEMORY_AGENT_URL
 from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent
-from mesh.lib.config import load_runtime_config
+from mesh.lib.config import load_runtime_config, load_seed_config
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
 OLLAMA_URL = 'http://localhost:11434'
+_SEED = load_seed_config(AGENT_CODE_DIR)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 
 class ReflectionPrompt(BaseModel):
@@ -30,14 +35,19 @@ async def _craft_personalized(theme: Optional[str], snippets: list, cfg: Dict[st
     model = ChatOllama(
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(ReflectionPrompt)
-    result = await model.ainvoke(
-        'Here is what is actually known about this person recently, from their own past conversations:\n\n'
-        + '\n'.join(f'- {s}' for s in snippets)
-        + f'\n\nTheme to focus on: {theme or "whatever seems most relevant from the above"}\n\n'
-        'Write ONE tailored journaling reflection question. Reference something '
-        'specific and true from what is listed above - do not invent details '
-        'that are not actually there.'
+    seeded = _seeded('craft_personalized_prompt_template')
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'craft_personalized_prompt_template', seeded['value'], description=seeded['description'],
     )
+    fmt_kwargs = dict(
+        snippets='\n'.join(f'- {s}' for s in snippets),
+        theme=theme or 'whatever seems most relevant from the above',
+    )
+    try:
+        prompt = template.format(**fmt_kwargs)
+    except Exception:
+        prompt = seeded['value'].format(**fmt_kwargs)
+    result = await model.ainvoke(prompt)
     return result.question
 
 
@@ -45,12 +55,16 @@ async def _craft_generic(theme: Optional[str], cfg: Dict[str, Any]) -> str:
     model = ChatOllama(
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(ReflectionPrompt)
-    result = await model.ainvoke(
-        'Write ONE warm, general journaling reflection question for someone '
-        'writing tonight. Nothing is known about this specific person, so do '
-        f'not reference any personal detail as if it were true.\n\n'
-        f'Theme (if any): {theme or "no specific theme - keep it open-ended"}'
+    seeded = _seeded('craft_generic_prompt_template')
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'craft_generic_prompt_template', seeded['value'], description=seeded['description'],
     )
+    fmt_kwargs = dict(theme=theme or 'no specific theme - keep it open-ended')
+    try:
+        prompt = template.format(**fmt_kwargs)
+    except Exception:
+        prompt = seeded['value'].format(**fmt_kwargs)
+    result = await model.ainvoke(prompt)
     return result.question
 
 

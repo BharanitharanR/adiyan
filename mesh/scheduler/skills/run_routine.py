@@ -13,7 +13,7 @@ cron_trigger.
 The Journal-or-generic decision reuses skill_router.classify() against
 Journal Agent's own AgentSkill, exactly the mechanism a real registry would
 generalize to later - just hardcoded to one candidate agent today, since the
-registry idea is deliberately parked (see mesh/AGENTS.md).
+registry idea is deliberately parked (see docs/AGENTS.md).
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -34,7 +34,7 @@ from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
 from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
-from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, OLLAMA_URL
+from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, OLLAMA_URL, _seeded
 
 OPENWA_URL = 'http://localhost:2785'
 OPENWA_SESSION_NAME = 'adiyan'
@@ -57,11 +57,15 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> str:
     model = ChatOllama(
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(GenericMessage)
-    result = await model.ainvoke(
-        f'Write a short, warm WhatsApp reminder message for this: "{description}". '
-        'Do not invent specific details (like actual to-do items) that are not '
-        'in the description itself - this is a nudge, not a report.'
+    seeded = _seeded('compose_generic_prompt_template')
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'compose_generic_prompt_template', seeded['value'], description=seeded['description'],
     )
+    try:
+        prompt = template.format(description=description)
+    except Exception:
+        prompt = seeded['value'].format(description=description)
+    result = await model.ainvoke(prompt)
     return result.text
 
 

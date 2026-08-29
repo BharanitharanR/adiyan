@@ -6,6 +6,7 @@ Run from the repo root as `python -m mesh.journal.server`. Memory Agent
 directly.
 """
 import asyncio
+from pathlib import Path
 
 from mesh.journal.agent_executor import JournalAgentExecutor
 from mesh.journal.constants import AGENT_ID, HOST, PORT
@@ -16,8 +17,14 @@ from mesh.lib.card import adiyan_card
 from mesh.lib.paths import tasks_db_path
 from mesh.observability.tracing import setup_tracing
 
+AGENT_CODE_DIR = Path(__file__).parent
+
 
 async def _load_startup_config() -> dict:
+    # Every key in seed_config.json goes into Mongo right now, not lazily
+    # the first time whatever branch happens to touch it - see
+    # mesh/lib/config_sdk.py's seed_from_file().
+    await config_sdk.seed_from_file(AGENT_ID, AGENT_CODE_DIR)
     host = await config_sdk.get_constant(
         AGENT_ID, 'host', HOST,
         description='Which network interface this agent binds to. Changing this needs a restart to take effect.',

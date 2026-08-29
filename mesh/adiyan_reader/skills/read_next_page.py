@@ -16,6 +16,7 @@ the book has run out of pages, that's said plainly and the reading job is
 deactivated, not silently looped or papered over with invented content.
 """
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 
 from croniter import croniter
@@ -23,6 +24,7 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.adiyan_reader import db, tts
+from mesh.lib.config import load_seed_config
 from mesh.adiyan_reader.constants import (
     AGENT_ID, AGENT_URL, CRON_TRIGGER_URL, MEMORY_AGENT_URL, OLLAMA_URL, OPENWA_SESSION_NAME, OPENWA_URL,
 )
@@ -31,6 +33,13 @@ from mesh.lib.a2a_client import call_agent
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
+
+AGENT_CODE_DIR = Path(__file__).parent.parent
+_SEED = load_seed_config(AGENT_CODE_DIR)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
 
 
 class ComprehensionQuestions(BaseModel):
@@ -41,12 +50,16 @@ async def _generate_questions(page_text: str, cfg: Dict[str, Any], count: int) -
     model = ChatOllama(
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(ComprehensionQuestions)
-    result = await model.ainvoke(
-        f'Here is a page from a book someone was just read out loud:\n\n"""{page_text}"""\n\n'
-        f'Write exactly {count} short comprehension questions about what this specific page actually '
-        'said - nothing about the rest of the book, nothing invented. Someone who listened to this '
-        'page should be able to answer each one directly from it.'
+    seeded = _seeded('generate_questions_prompt_template')
+    template = await config_sdk.get_constant(
+        AGENT_ID, 'generate_questions_prompt_template', seeded['value'], description=seeded['description'],
     )
+    fmt_kwargs = dict(page_text=page_text, count=count)
+    try:
+        prompt = template.format(**fmt_kwargs)
+    except Exception:
+        prompt = seeded['value'].format(**fmt_kwargs)
+    result = await model.ainvoke(prompt)
     return result.questions[:count]
 
 

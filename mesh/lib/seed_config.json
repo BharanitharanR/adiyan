@@ -1,0 +1,40 @@
+{
+  "constants": {
+    "classify_prompt_template": {
+      "value": "Given the skills below and what the caller said, decide which skill applies.\nIf exactly one clearly applies, set skill_id and leave ambiguous_between empty.\nIf none apply, leave both empty.\nIf two or more plausibly apply and the text does not disambiguate them, leave skill_id empty and list their ids in ambiguous_between.\n\n{skill_blocks}\n\nCaller said: \"{message_text}\"",
+      "description": "Shared classify-stage prompt used by every agent's skill_router.route() to pick which skill applies to free text. Needs {skill_blocks} and {message_text} placeholders."
+    },
+    "extract_prompt_template": {
+      "value": "Extract these fields from what the caller said. For any field with a default listed, use that default unless the text clearly specifies otherwise - do not guess or invent a value just to fill the field.\n\n{field_lines}\n\nCaller said: \"{message_text}\"",
+      "description": "Shared extract-stage prompt used by every agent's skill_router.route() to pull a matched skill's parameters from free text. Needs {field_lines} and {message_text} placeholders."
+    },
+    "select_groups_prompt_template": {
+      "value": "Instruction: {question}\n\nAvailable tool groups:\n{listing}\n\nWhich group(s), if any, are relevant to this instruction? Name only groups from the list above, most relevant first.",
+      "description": "Step 1 of tool_resolution.py's two-phase resolution - picks which registered tool group(s) apply to a question. Needs {question} and {listing} placeholders."
+    },
+    "select_tool_call_answer_with_discoveries": {
+      "value": "A discovery from list-databases, list-collections, db-stats, or collection-schema tells you WHERE to look next - it is never itself an answer, and describing a plan to look further ISN'T answering either. Confirmed live: writing out \"you would need to inspect X, then check Y\" instead of actually calling X was treated as giving up, not as progress. Only set answer once a discovery contains the actual value asked for (typically from find, aggregate, or count) - otherwise pick the next tool that gets you there, using what you now know (e.g. a real database name from list-databases) in its arguments instead of guessing one. Which tool, with what ",
+      "description": "select_tool_call's answer-eligibility instruction once at least one discovery exists. No placeholders."
+    },
+    "select_tool_call_answer_cold_start": {
+      "value": "Nothing has been discovered yet, so answer is not available - you must pick a tool below to start investigating. Which tool, with what ",
+      "description": "select_tool_call's instruction on the very first attempt, before any discovery exists - deliberately omits mentioning 'answer' as an option at all. No placeholders."
+    },
+    "select_tool_call_prompt_template": {
+      "value": "Instruction: {question}\n\n{discoveries_block}Available tools in group '{group_name}':\n{listing}\n\n{answer_instruction}arguments, gets you closer? A tool needing a real database, collection, or field name you do not actually know yet (rather than guessing one) should be a schema/listing tool first, not the data query itself.\n\nIf the instruction names a specific thing (a person, an agent, an id) - filter by it. Confirmed live: a query against a collection holding many things (many agents' settings, in one shared collection) with no filter at all returned everything undifferentiated, then guessed which field of which document was relevant - wrong guess, wrong document. A schema sample only shows ONE arbitrary document's fields, not necessarily the named thing's own fields (each entry in a shared collection can have different fields) - it tells you the collection's OWN identifying field name (e.g. \"agent_id\"), not what value to expect in it. Once you know that identifying field, filter using the actual name from the instruction as that field's value, then read whatever that one document actually contains, rather than sampling a different document and guessing which of its fields might match.\n\nA filter that matches ZERO documents most likely means the instruction's own casing/spelling of the name isn't the exact stored value, NOT that the thing does not exist - confirmed live: filtering by \"adiyanReader\" (the name exactly as written in the instruction) got 0 documents, because the real stored value uses a different convention (\"adiyan_reader\", lowercase with underscores) - concluding \"this does not exist\" from that 0-result was wrong. If a filter gets 0 documents, try again with a normalized version of the name (lowercase, underscores instead of camelCase) before concluding the data genuinely is not there.\n\nPick only from the tools listed above, by their exact name, and use only argument names that appear in that tool's own schema.",
+      "description": "Step 2 of tool_resolution.py's two-phase resolution - picks a specific tool + arguments within one group. Needs {question}, {discoveries_block}, {group_name}, {listing}, and {answer_instruction} placeholders."
+    },
+    "vision_classify_prompt": {
+      "value": "Look at this image and decide what it is:\n- contact_card: a WhatsApp contact card, or a screenshot of a phone contact entry, showing a person's name and phone number.\n- knowledge_content: anything else worth remembering or storing - a document, receipt, note, photo, screenshot of text, a page from a book, a whiteboard, etc.\n- unclear: neither of the above, or the image doesn't clearly fit.\nChoose exactly one.",
+      "description": "Vision-model classification of an incoming WhatsApp image (contact card / knowledge content / unclear). No placeholders."
+    },
+    "vision_caption_prompt": {
+      "value": "This image is a WhatsApp contact card or a screenshot of one. If it clearly shows a person's name and phone number, reply with exactly one line: \"Add <name> as a client, their number is <phone number>\". Use only what is actually visible - do not guess a missing name or number. If no name+phone pair is clearly visible in the image, reply with exactly: NONE.",
+      "description": "Extracts a name+phone caption from a contact-card image, or NONE. No placeholders."
+    },
+    "chat_cache_relevance_prompt_template": {
+      "value": "Recent conversation history, oldest first:\n{numbered}\n\nNew message: {new_message}\n\nWhich of the numbered turns above are relevant context for understanding or answering the new message - e.g. it refers back to something in that turn (\"it\", \"that\", \"the same thing\"), continues the same topic, or the new message can't be fully understood without it? A turn that is just unrelated small talk or a completely different topic is not relevant even if it is recent. List the indices of the relevant turns, oldest first.",
+      "description": "Filters recent conversation turns down to the ones actually relevant to a new message. Needs {numbered} and {new_message} placeholders."
+    }
+  }
+}

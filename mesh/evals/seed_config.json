@@ -1,0 +1,8 @@
+{
+  "constants": {
+    "judge_prompt_template": {
+      "value": "Prompt given to Analysis Agent: {instruction}\n\nAnalysis Agent's final answer: {result}\n\nTrace evidence (tool calls and LLM calls, in order):\n{trace_summary}\n\nJudge criteria: {judge_criteria}\n\nDecide pass/fail against the criteria above, using the trace evidence as your only source of truth for what actually happened - not the final answer's own claims about what it checked.",
+      "description": "LLM-judge prompt for the Analysis Agent eval - grades a real run against its own trace evidence. Needs {instruction}, {result}, {trace_summary}, {judge_criteria} placeholders."
+    }
+  }
+}

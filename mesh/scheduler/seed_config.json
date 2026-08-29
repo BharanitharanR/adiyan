@@ -1,0 +1,12 @@
+{
+  "constants": {
+    "resolve_schedule_prompt_template": {
+      "value": "Convert this into a standard 5-field cron expression (minute hour day month weekday). Respond with only the cron expression.\n\nDescription: \"{description}\"",
+      "description": "Converts a free-text schedule description into a cron expression. Needs a {description} placeholder."
+    },
+    "compose_generic_prompt_template": {
+      "value": "Write a short, warm WhatsApp reminder message for this: \"{description}\". Do not invent specific details (like actual to-do items) that are not in the description itself - this is a nudge, not a report.",
+      "description": "Fallback reminder-message wording for anything Journal Agent doesn't cover. Needs a {description} placeholder."
+    }
+  }
+}

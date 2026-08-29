@@ -40,6 +40,16 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from mesh.adiyan_reader.constants import AGENT_ID
+from mesh.lib import config_sdk
+from mesh.lib.config import load_seed_config
+
+_SEED = load_seed_config(Path(__file__).parent)
+
+
+def _seeded(key: str) -> Dict[str, Any]:
+    return _SEED.get(key, {'value': '', 'description': ''})
+
 logger = logging.getLogger('AdiyanReaderTTS')
 
 SPECIAL_START = '<|audio|>'
@@ -141,15 +151,15 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
     try:
         from langchain_ollama import ChatOllama
         model = ChatOllama(model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg.get('temperature', 0.3))
-        result = await model.ainvoke(
-            'This is one page from a book, but it reads as headings/a table of contents, not '
-            'prose - reading it aloud word-for-word would sound like a jumbled list. Rewrite it '
-            'as 1-3 short, natural spoken sentences describing what this page actually contains '
-            '(e.g. "This page lists the table of contents" or "This page starts Chapter Three: '
-            'Moving Deeply into the Now"). Only describe what is genuinely here - never invent '
-            'content, opinions, or details not present in the text below.\n\n'
-            f'"""{cleaned}"""'
+        seeded = _seeded('rewrite_for_speech_prompt_template')
+        template = await config_sdk.get_constant(
+            AGENT_ID, 'rewrite_for_speech_prompt_template', seeded['value'], description=seeded['description'],
         )
+        try:
+            prompt = template.format(cleaned=cleaned)
+        except Exception:
+            prompt = seeded['value'].format(cleaned=cleaned)
+        result = await model.ainvoke(prompt)
         rewritten = (result.content or '').strip()
         return rewritten or cleaned
     except Exception as e:
@@ -399,7 +409,7 @@ async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
 
     Chunk *generation* runs sequentially, not concurrently - this already
     competes with real WhatsApp traffic for the same single-slot Ollama the
-    rest of this mesh shares (see mesh/RUNNING_RECORD.md's own account of
+    rest of this mesh shares (see docs/RUNNING_RECORD.md's own account of
     that contention), so firing multiple chunks at Ollama in parallel would
     just queue behind itself, not go faster. But SNAC decoding (local
     CPU/GPU, not Ollama) doesn't need to wait for that queue: this pipelines

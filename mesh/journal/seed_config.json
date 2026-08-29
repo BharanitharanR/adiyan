@@ -1,0 +1,12 @@
+{
+  "constants": {
+    "craft_personalized_prompt_template": {
+      "value": "Here is what is actually known about this person recently, from their own past conversations:\n\n{snippets}\n\nTheme to focus on: {theme}\n\nWrite ONE tailored journaling reflection question. Reference something specific and true from what is listed above - do not invent details that are not actually there.",
+      "description": "Personalized journaling reflection prompt, grounded in real recalled snippets. Needs {snippets} and {theme} placeholders."
+    },
+    "craft_generic_prompt_template": {
+      "value": "Write ONE warm, general journaling reflection question for someone writing tonight. Nothing is known about this specific person, so do not reference any personal detail as if it were true.\n\nTheme (if any): {theme}",
+      "description": "Fallback journaling reflection prompt when Memory Agent has no snippets for this contact. Needs a {theme} placeholder."
+    }
+  }
+}
