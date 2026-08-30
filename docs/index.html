@@ -527,7 +527,7 @@ h1,h2,h3{
   <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
   <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
 </button>
-<div class="counter"><b id="cnum">01</b> / 13</div>
+<div class="counter"><b id="cnum">01</b> / 18</div>
 
 <main class="deck">
 
@@ -563,10 +563,12 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">The idea</p>
       <h2 class="h2">Underneath, it's <em>a mesh, not one bot.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">One agent remembers what you've told it before. One reads an entire book back to you, one page a night. One runs your schedule and routines. An orchestrator routes each conversation to whichever one actually knows how to help. All of it is self-hosted, coordinating on your own machine, not rented from someone else's cloud. The agent your clientele actually talks to reaches them through WhatsApp, the app they already have open: tailored to how your business talks, and built on a harness made to grow past just that.</p>
+      <p class="prose" style="margin-top:1.2rem;">Adiyan is the harness itself, not a single bot: a modular mesh where each agent does one job well, and an orchestrator routes every conversation to whichever one actually knows how to help. Memory works on two timescales, the recent thread so you're never re-explaining yourself, and a longer-term knowledge base it can search and cite back from, real retrieval, not a guess. AdiyanReader, the agent that reads a book back to you one page a night, isn't a separate product; it's built on this same harness, the same way any new agent would be. All of it self-hosted, coordinating on your own machine, not rented from someone else's cloud. The agent your clientele actually talks to reaches them through WhatsApp, the app they already have open: tailored to how your business talks, and built on a harness made to grow past just that.</p>
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">Self-hosted, not SaaS</span>
         <span class="chip">A mesh, not one bot</span>
+        <span class="chip">Modular by design</span>
+        <span class="chip">Short + long-term memory</span>
         <span class="chip">End-to-end encrypted, on WhatsApp</span>
         <span class="chip">One phrase to join</span>
         <span class="chip">One phrase to leave</span>
@@ -590,13 +592,100 @@ h1,h2,h3{
   <div class="control-list" style="margin-top:1rem;">
     <div class="control-item"><span class="control-mark">i.</span><p><strong>Tailored to how your business talks, today.</strong> Adiyan's persona (its voice, its knowledge, the way it engages your clientele) is configured per business, not hardcoded. Change it without touching code, and it takes effect immediately. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
     <div class="control-item"><span class="control-mark">ii.</span><p><strong>Designed to extend further.</strong> Live web lookups, and, for the owner alone, private email and calendar access right from the same WhatsApp thread, are on the roadmap next. Never something a client's own conversation could reach. <span class="chip-soon" style="margin-left:.4em;">Coming soon</span></p></div>
-    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Your roadmap, not a vendor's.</strong> It's a harness, not a single sealed bot. Self-hosted, so what agent joins the mesh next is a decision you make, not a plan a vendor sells back to you a feature at a time.</p></div>
+    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Managed from a browser tab, not a config file.</strong> A dashboard on your own machine lets you tune each agent's model, temperature, and behavior, watch which agents are online, and restart one on the spot, all without opening a terminal or touching code. It's a harness, not a single sealed bot: self-hosted, so what agent joins the mesh next is a decision you make from that same dashboard, not a plan a vendor sells back to you a feature at a time. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
     <div class="control-item"><span class="control-mark">iv.</span><p><strong>Set it once, and it runs itself.</strong> Tell Adiyan, in plain language, to check in with someone every week, send a reminder every night, or send a one-time note today. No code, no schedule to configure by hand. It figures out the timing and handles the sending. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
     <div class="control-item"><span class="control-mark">v.</span><p><strong>Every key locked down.</strong> Everything Adiyan needs to connect to the outside world is stored in your Mac's own encrypted credential vault, the same one that protects your saved passwords, never sitting in a plain text file on disk. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">vi.</span><p><strong>It doesn't repeat itself.</strong> Every recurring check-in becomes a reusable routine Adiyan recognizes by what it means, not just what it's called, so "did I get to office" and "office check-in" are understood as the same thing, and nothing gets set up twice by accident. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">vi.</span><p><strong>Recognizes a routine by what it means.</strong> Every recurring check-in is matched against your existing routines by meaning, not just by name, so "did I get to office" and "office check-in" are understood as close enough to be the same thing. Still a live area of work: two routines with genuinely different schedules but similar wording have slipped through as separate before, so today it's a safety net worth double-checking, not a guarantee. <span class="chip-soon" style="margin-left:.4em;">Maturing</span></p></div>
     <div class="control-item"><span class="control-mark">vii.</span><p><strong>Instant, on your own words.</strong> Set a routine to fire the moment someone sends an exact phrase, like "reached office," "closed the deal", instead of waiting on a schedule. It can log the moment quietly or run the full routine right then. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">viii.</span><p><strong>It'll start noticing things on its own.</strong> For the owner only: looking across real engagement: who's active, who's drifting, what routines are landing, and surfacing what it finds, even drafting a new routine when it spots an opportunity worth acting on. Every routine it proposes would stay switched off until you turn it on, and it'd never be allowed to target anyone but you. <span class="chip-soon" style="margin-left:.4em;">Coming soon</span></p></div>
-    <div class="control-item"><span class="control-mark">ix.</span><p><strong>It'll read to you, every night.</strong> Hand Adiyan a book and it reads it back one page at a time, as a real voice note, synthesized entirely on your own machine, delivered on WhatsApp at the same time every night until it's finished. The next morning, a couple of comprehension questions on what you just heard. Everyone it reads to keeps their own place, at their own pace. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">viii.</span><p><strong>It'll start noticing things on its own.</strong> For the owner only: looking across real engagement: who's active, who's drifting, what routines are landing, and surfacing what it finds. An early version of this already runs; it's being tuned for judgment before it's allowed to draft a routine on your behalf. Every routine it proposes would stay switched off until you turn it on, and it'd never be allowed to target anyone but you. <span class="chip-soon" style="margin-left:.4em;">Early, tuning in progress</span></p></div>
+    <div class="control-item"><span class="control-mark">ix.</span><p><strong>It'll read to you, every night.</strong> Hand it a book and it reads it back, one page a night, as a real voice note. More on the next slide. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+  </div>
+</section>
+
+<!-- 04a : AGENT OFFERINGS - ADIYANREADER -->
+<section class="slide" id="s4a">
+  <div class="grid-split">
+    <div>
+      <p class="eyebrow">Agent offerings</p>
+      <h2 class="h2">Meet AdiyanReader. <em>One agent, built on this harness.</em></h2>
+      <p class="prose" style="margin-top:1.2rem;">Hand it a book, a PDF is enough, and it takes over from there. Every night, at the same time, the next page arrives as a real voice note, synthesized entirely on your own machine, not a recording pulled from somewhere else. The next morning, a couple of comprehension questions on what was actually read, so it's a habit, not just a file sitting there. Anyone it's reading to keeps their own place at their own pace; one person falling behind never holds up anyone else's.</p>
+      <p class="prose" style="margin-top:1rem;">Nothing about it is special-cased. It's an ordinary agent living in the same mesh as everything else, built the same way the next one will be.</p>
+      <div class="tag-row" style="margin-top:1.6rem;">
+        <span class="chip">One page a night</span>
+        <span class="chip">Real synthesized voice</span>
+        <span class="chip">Next-day comprehension check</span>
+        <span class="chip">Everyone keeps their own pace</span>
+      </div>
+    </div>
+    <div class="phone">
+      <div class="thread">
+        <div class="bubble bubble--sys">10:00 PM</div>
+        <div class="bubble bubble--in">🎙️ Page 14 of "The Almanack of Naval Ravikant" <span class="tag">Adiyan · voice note</span></div>
+        <div class="bubble bubble--sys">The next morning</div>
+        <div class="bubble bubble--in">Quick check on last night's page: what did Naval say wealth actually buys you?<span class="tag">Adiyan · just now</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 04b : PLUGGABLE AGENTS -->
+<section class="slide" id="s4b">
+  <p class="eyebrow">For anyone extending it</p>
+  <h2 class="h2">Clear permission groups. <em>Plugging in an agent stays simple.</em></h2>
+  <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
+    <div>
+      <p class="prose" style="margin-top:.2rem;">Every call into the mesh carries one of three permission tiers, checked the same way everywhere, so a new agent's access is a deliberate choice, not an accident:</p>
+      <div class="control-list" style="margin-top:1rem;">
+        <div class="control-item"><span class="control-mark" style="width:5rem;">Owner</span><p>You. Full access to every skill in the mesh.</p></div>
+        <div class="control-item"><span class="control-mark" style="width:5rem;">Service</span><p>Internal, agent-to-agent calls with no WhatsApp identity behind them, scoped to exactly what today's routines need, nothing more by default.</p></div>
+        <div class="control-item"><span class="control-mark" style="width:5rem;">Client</span><p>Whoever's registered and talking to your business, scoped to only what a client should ever be able to trigger.</p></div>
+      </div>
+    </div>
+    <div>
+      <p class="prose" style="margin-top:.2rem;">Adding a new agent is three plain steps, not a rewrite of anything existing:</p>
+      <div class="steps" style="margin-top:1rem;">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div><h3>Describe what it does.</h3><p>A name and a plain-language description, the same thing an orchestrator uses to decide when a conversation belongs to this agent instead of another one.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div><h3>Write the function.</h3><p>One plain async function that does the actual work, calling other agents already in the mesh if it needs to.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div><h3>It's live.</h3><p>Grant it a permission tier, and the orchestrator starts routing to it based on its own description, no rewiring anything else.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 04c : PLUGGABLE AGENTS - CODE SAMPLE -->
+<section class="slide" id="s4c">
+  <p class="eyebrow">Not a metaphor - real code</p>
+  <h2 class="h2">This is the whole job. <em>Everything else is copied, not written.</em></h2>
+  <p class="prose" style="max-width:56ch;">A real, runnable reference agent lives in the repo at <code>mesh/example_agent/</code>. This is its entire skill, unedited:</p>
+  <div class="command-box" style="align-items:flex-start;max-width:64rem;">
+    <code>async def run(sides: int = 6) -&gt; dict:
+    if sides &lt; 2:
+        raise ValueError('A die needs at least 2 sides.')
+    result = random.randint(1, sides)
+    return {'sides': sides, 'result': result}</code>
+  </div>
+  <p class="prose" style="margin-top:1.4rem;max-width:56ch;">No permission check, no A2A wiring, no routing logic in there, all of that already happened before this function is ever called. The rest of the agent (its executor, its server entrypoint, its config) is the same handful of files every agent in this mesh shares, copied and renamed, not designed from scratch. The repo's <code>mesh/example_agent/README.md</code> walks through exactly what's boilerplate and what you get for free just by following the shape.</p>
+</section>
+
+<!-- 04d : RESEARCH FOUNDATIONS -->
+<section class="slide" id="s4d">
+  <p class="eyebrow">Built on published work</p>
+  <h2 class="h2">Not reinvented. <em>Built on real research.</em></h2>
+  <p class="prose" style="max-width:60ch;">Adiyan doesn't invent its own answer to memory, retrieval, or reasoning. Each piece is a named, published approach, wired in and verified against its own source, not just referenced in a slide:</p>
+  <div class="control-list" style="margin-top:1.4rem;">
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">RAG</span><p><strong>Retrieval-Augmented Generation</strong> (Lewis et al., 2020). The mechanism behind every document search: an answer is only ever built from what was actually retrieved, never invented to fill a gap.</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">ReAct</span><p><strong>Reason + Act</strong> (Yao et al., 2022). The loop behind any real investigation Adiyan runs: decide the next step, use a tool, fold the observation back in, repeat, until there's a real answer or an honest "nothing found."</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">Mem0</span><p><strong>Scalable long-term memory for agents</strong> (Mem0, 2025). Runs fully local against your own machine's models and vector store, zero telemetry, powering the recent-thread and longer-term memory that lets Adiyan follow context across conversations.</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">SNAC</span><p><strong>Multi-Scale Neural Audio Codec</strong> (Siuzdak et al., 2024). Decodes AdiyanReader's nightly voice notes from the Orpheus speech model's own output, entirely on-device, no audio ever generated in someone else's cloud.</p></div>
   </div>
 </section>
 
@@ -636,6 +725,23 @@ h1,h2,h3{
       </div>
     </div>
     <p class="prose">This is a real exchange, generated live, not a marketing mock-up. Every reply is shaped by a persona configured for exactly what you need: two or three specific, doable steps, and one honest question at the end, never a wall of generic frameworks.</p>
+  </div>
+</section>
+
+<!-- 06b : GROUNDING -->
+<section class="slide" id="s6b">
+  <div class="grid-split reverse">
+    <div>
+      <p class="eyebrow">Grounded, not guessing</p>
+      <h2 class="h2">If it can't find the answer, <em>it says so.</em></h2>
+      <p class="prose" style="margin-top:1.2rem;">A specific, verifiable detail, a date, a document's contents, what a person actually said, is only ever answered from something a tool actually retrieved: your documents, your conversation history, a real lookup. Never invented to sound complete. When nothing relevant turns up, Adiyan says exactly that instead of confidently making something up, the same discipline behind any real retrieval-augmented system, held to even when the honest answer is less satisfying than a guess would be.</p>
+    </div>
+    <div class="phone">
+      <div class="thread">
+        <div class="bubble bubble--out">What does the report say about the Q3 numbers?</div>
+        <div class="bubble bubble--in">I don't have anything on that. Nothing in your documents or our conversation mentions Q3 specifically, so I'm not going to guess at figures I can't verify.<span class="tag">Adiyan · just now</span></div>
+      </div>
+    </div>
   </div>
 </section>
 
