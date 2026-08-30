@@ -126,7 +126,16 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
         'invoke_at': next_run_at,
         'target_agent_url': AGENT_URL,
         'skill_id': 'run_routine',
-        'params': {},
+        # run_routine's own signature reads job_id, not cron_trigger's
+        # registration-level 'job_id' field above (that one's just the
+        # trigger's own identity, used for lookup/cancellation - see
+        # register_trigger's own docstring). cron_trigger used to inject
+        # its 'job_id' into every fire's params for free; now that it
+        # calls call_agent() like everything else in this mesh, params is
+        # passed through exactly as given, so this needs to be explicit
+        # here (same as AdiyanReader's start_reading already does with its
+        # own 'reading_job_id').
+        'params': {'job_id': job['id']},
     }, token=token)
 
     return {

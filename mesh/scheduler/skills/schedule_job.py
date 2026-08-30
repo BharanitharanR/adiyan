@@ -133,7 +133,11 @@ async def run(
         'invoke_at': next_run_at,
         'target_agent_url': AGENT_URL,
         'skill_id': 'run_routine',
-        'params': {},
+        # See run_routine.py's own identical comment - cron_trigger no
+        # longer injects its registration-level job_id into fired params
+        # (it calls call_agent() now, params pass through as given), so
+        # run_routine's own job_id parameter has to be explicit here.
+        'params': {'job_id': job['id']},
     }, token=token)
 
     return {

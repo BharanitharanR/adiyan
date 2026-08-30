@@ -444,13 +444,22 @@ class MemoryIndex:
         if not candidates:
             return None
 
+        query_normalized = query.strip().lower()
+        if not query_normalized:
+            # Confirmed live: an empty/blank query is a substring of every
+            # display name, so the exact/substring branch below would
+            # "match" whatever book happens to come first in the whole
+            # shared library and confidently start reading it - never a
+            # deliberate choice. No reference at all means no match, full
+            # stop, not "guess one."
+            return None
+
         def _display_name(source_filename: str) -> str:
             basename = source_filename.split('/', 1)[-1]
             basename = re.sub(r'\.[A-Za-z0-9]+$', '', basename)
             return basename.replace('_', ' ').replace('-', ' ').strip().lower()
 
         display_to_source = {_display_name(c): c for c in candidates}
-        query_normalized = query.strip().lower()
 
         # Exact/substring match first - a real book title mentioned in full
         # or as a clear substring shouldn't be left to difflib's fuzzier

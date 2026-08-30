@@ -34,3 +34,8 @@ mesh/qdrant/qdrant-bin
 
 # Qdrant drops this marker in the process's cwd on start
 .qdrant-initialized
+
+# Downloaded base-model checkpoint for the voice-training prep work
+# (mesh/adiyan_reader/voice_training/README.md) - ~14GB, pulled fresh from
+# Hugging Face by whoever runs the training, never committed.
+mesh/adiyan_reader/voice_training/models/

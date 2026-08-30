@@ -145,7 +145,16 @@ async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optio
     except Exception as e:
         logger.error(f'Book-reading reference extraction failed: {describe_exception(e)}')
         return None
-    return params.book_reference
+    # Confirmed live: a vague request ("read me a book") correctly makes
+    # extract() return an empty book_reference rather than inventing a
+    # title - but the caller's own `is not None` check let that empty
+    # string straight through to resolve_book(''), which matched whatever
+    # book happened to come first in the whole shared library (an empty
+    # string is a substring of every title) and confidently started
+    # reading it. Blank/whitespace-only is treated the same as "not a
+    # book-reading request" here - the caller falls through to normal
+    # routing instead of resolving a book nobody actually named.
+    return params.book_reference if params.book_reference.strip() else None
 
 
 async def _start_book_reading(book_reference: str, chat_id: str, from_number: Optional[str], tier: str) -> Optional[str]:

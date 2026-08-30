@@ -18,12 +18,24 @@ schedules - Scheduler Agent owns all recurrence, and re-registers the next
 occurrence itself after each successful fire. This keeps cron_trigger
 genuinely dumb: wake once, at this exact time, call this URL.
 
-Firing uses plain httpx, not the a2a-sdk client (mesh/lib doesn't have an
-A2A-client helper yet) - a deliberate deviation from "use the SDK for both
-sides," acceptable here because the call is already fully precise (a
-DataPart, not free text needing classification) and this component is meant
-to stay minimal. Worth revisiting if an a2a-sdk-based client helper gets
-built for mesh/lib later.
+Firing goes through mesh/lib/a2a_client.py's call_agent() - the same
+helper every other agent-to-agent call in this mesh uses. This used to be
+a hand-rolled raw JSON-RPC httpx call instead (this module's own prior
+docstring called that "worth revisiting if an a2a-sdk-based client helper
+gets built for mesh/lib later" - it since was, in a2a_client.py, but this
+file was never updated to use it). Confirmed live: that hand-rolled
+payload's 'method': 'message/send' was the OLD a2a protocol's method name,
+now only present in a2a.compat.v0_3 - the installed a2a SDK's real
+dispatcher expects 'SendMessage', so every single cron-fired job (every
+nightly reading, across every registered reader) was failing outright
+with a JSON-RPC -32601 'Method not found', silently, since nothing here
+retries or alerts on a fire failure. Using call_agent() also fixes a
+second, related bug this had: the hand-rolled version hardcoded a 30s
+httpx timeout, which would have kept failing real jobs anyway once the
+method name was fixed - actual TTS synthesis + voice-note delivery
+regularly takes well over a minute (confirmed live tonight). call_agent()
+carries a 3-hour default timeout instead, sized for exactly this kind of
+slow local-model work.
 
 Run from the repo root as `python -m mesh.mcp.cron_trigger.server`.
 Requires: pip install "mcp[cli]" apscheduler sqlalchemy httpx
@@ -33,13 +45,13 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-import httpx
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from mcp.server.fastmcp import Context, FastMCP
 
 from mesh.lib import permissions
+from mesh.lib.a2a_client import call_agent
 from mesh.lib.paths import mcp_state_db_path
 
 SERVER_NAME = 'cron_trigger'
@@ -69,31 +81,20 @@ _scheduler = AsyncIOScheduler(
 
 async def _fire(job_id: str, target_agent_url: str, skill_id: str, params: Dict[str, Any]) -> None:
     """Called by APScheduler when a registered job is due. A plain A2A
-    message/send call carrying a structured Part.data - no NLU needed, this
-    call was already precise when it was registered."""
+    call carrying a structured Part.data - no NLU needed, this call was
+    already precise when it was registered."""
     # A scheduled fire has no WhatsApp identity behind it at all - a
-    # service token, same as every other purely-internal call in this
-    # mesh. 'metadata' sits alongside 'message' in SendMessageRequest
-    # (confirmed against a2a_pb2's own field list) - the raw-JSON-RPC
-    # equivalent of what a2a_client.py does with the SDK's request object.
+    # service token, same as every other purely-internal call in this mesh.
     token = permissions.mint_token('service', 'service')
-    payload = {
-        'jsonrpc': '2.0',
-        'id': job_id,
-        'method': 'message/send',
-        'params': {
-            'message': {
-                'role': 'ROLE_USER',
-                'parts': [{'data': {'skill_id': skill_id, 'job_id': job_id, **params}}],
-            },
-            'metadata': {'token': token},
-        },
-    }
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(target_agent_url, json=payload)
-            response.raise_for_status()
-    except httpx.HTTPError as e:
+        # No 'job_id' injected into params here (the old hand-rolled
+        # payload added one on top of **params) - the target skill's own
+        # signature already gets everything it needs from params exactly
+        # as register_trigger's caller built it (e.g. read_next_page's own
+        # {'reading_job_id': ...}), and handler(**params) in every agent's
+        # executor would raise on an unexpected extra 'job_id' kwarg.
+        await call_agent(target_agent_url, skill_id, params, token=token)
+    except Exception as e:
         # Firing failure is logged, not retried here - Scheduler Agent owns
         # what "job failed to fire" means for its own domain (job_data,
         # whether to re-register). cron_trigger's job for this occurrence
