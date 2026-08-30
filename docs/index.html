@@ -634,27 +634,27 @@ h1,h2,h3{
   <h2 class="h2">Clear permission groups. <em>Plugging in an agent stays simple.</em></h2>
   <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
     <div>
-      <p class="prose" style="margin-top:.2rem;">Every call into the mesh carries one of three permission tiers, checked the same way everywhere, so a new agent's access is a deliberate choice, not an accident:</p>
+      <p class="prose" style="margin-top:.2rem;">Every call into the mesh carries one of three permission tiers. Access is explicit, not accidental.</p>
       <div class="control-list" style="margin-top:1rem;">
         <div class="control-item"><span class="control-mark" style="width:5rem;">Owner</span><p>You. Full access to every skill in the mesh.</p></div>
-        <div class="control-item"><span class="control-mark" style="width:5rem;">Service</span><p>Internal, agent-to-agent calls with no WhatsApp identity behind them, scoped to exactly what today's routines need, nothing more by default.</p></div>
-        <div class="control-item"><span class="control-mark" style="width:5rem;">Client</span><p>Whoever's registered and talking to your business, scoped to only what a client should ever be able to trigger.</p></div>
+        <div class="control-item"><span class="control-mark" style="width:5rem;">Service</span><p>Internal agent-to-agent calls, with no WhatsApp identity attached. Scoped to only what today's routines need.</p></div>
+        <div class="control-item"><span class="control-mark" style="width:5rem;">Client</span><p>A registered client talking to your business. Scoped to only what a client is allowed to trigger.</p></div>
       </div>
     </div>
     <div>
-      <p class="prose" style="margin-top:.2rem;">Adding a new agent is three plain steps, not a rewrite of anything existing:</p>
+      <p class="prose" style="margin-top:.2rem;">Adding a new agent takes three plain steps. Nothing existing needs to change.</p>
       <div class="steps" style="margin-top:1rem;">
         <div class="step">
           <div class="step-num">1</div>
-          <div><h3>Describe what it does.</h3><p>A name and a plain-language description, the same thing an orchestrator uses to decide when a conversation belongs to this agent instead of another one.</p></div>
+          <div><h3>Describe what it does.</h3><p>A name and a plain description. The orchestrator uses this text to decide which agent handles which conversation.</p></div>
         </div>
         <div class="step">
           <div class="step-num">2</div>
-          <div><h3>Write the function.</h3><p>One plain async function that does the actual work, calling other agents already in the mesh if it needs to.</p></div>
+          <div><h3>Write the function.</h3><p>One async function that does the actual work. It can call other agents in the mesh if it needs to.</p></div>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <div><h3>It's live.</h3><p>Grant it a permission tier, and the orchestrator starts routing to it based on its own description, no rewiring anything else.</p></div>
+          <div><h3>It's live.</h3><p>Grant it a permission tier. The orchestrator starts routing to it right away, based on its own description.</p></div>
         </div>
       </div>
     </div>
@@ -663,9 +663,9 @@ h1,h2,h3{
 
 <!-- 04c : PLUGGABLE AGENTS - CODE SAMPLE -->
 <section class="slide" id="s4c">
-  <p class="eyebrow">Not a metaphor - real code</p>
+  <p class="eyebrow">Real code, not a metaphor</p>
   <h2 class="h2">This is the whole job. <em>Everything else is copied, not written.</em></h2>
-  <p class="prose" style="max-width:56ch;">A real, runnable reference agent lives in the repo at <code>mesh/example_agent/</code>. This is its entire skill, unedited:</p>
+  <p class="prose" style="max-width:56ch;">A real, runnable reference agent lives in the repo at <code>mesh/example_agent/</code>. Here is its entire skill, unedited:</p>
   <div class="command-box" style="align-items:flex-start;max-width:64rem;">
     <code>async def run(sides: int = 6) -&gt; dict:
     if sides &lt; 2:
@@ -673,19 +673,19 @@ h1,h2,h3{
     result = random.randint(1, sides)
     return {'sides': sides, 'result': result}</code>
   </div>
-  <p class="prose" style="margin-top:1.4rem;max-width:56ch;">No permission check, no A2A wiring, no routing logic in there, all of that already happened before this function is ever called. The rest of the agent (its executor, its server entrypoint, its config) is the same handful of files every agent in this mesh shares, copied and renamed, not designed from scratch. The repo's <code>mesh/example_agent/README.md</code> walks through exactly what's boilerplate and what you get for free just by following the shape.</p>
+  <p class="prose" style="margin-top:1.4rem;max-width:56ch;">There is no permission check here, no A2A wiring, no routing logic. All of that runs before this function is ever called. The rest of the agent, its executor, its server entrypoint, its config, is the same handful of files every agent in this mesh shares. You copy them and rename them, you don't design them again. The repo's <code>mesh/example_agent/README.md</code> lists exactly what's boilerplate and what you get for free just by following the shape.</p>
 </section>
 
 <!-- 04d : RESEARCH FOUNDATIONS -->
 <section class="slide" id="s4d">
   <p class="eyebrow">Built on published work</p>
   <h2 class="h2">Not reinvented. <em>Built on real research.</em></h2>
-  <p class="prose" style="max-width:60ch;">Adiyan doesn't invent its own answer to memory, retrieval, or reasoning. Each piece is a named, published approach, wired in and verified against its own source, not just referenced in a slide:</p>
+  <p class="prose" style="max-width:60ch;">Adiyan does not invent its own answer to memory, retrieval, or reasoning. Each piece below is a named, published method. Each one is verified against its own source code, not just named because it sounds right.</p>
   <div class="control-list" style="margin-top:1.4rem;">
-    <div class="control-item"><span class="control-mark" style="width:6.5rem;">RAG</span><p><strong>Retrieval-Augmented Generation</strong> (Lewis et al., 2020). The mechanism behind every document search: an answer is only ever built from what was actually retrieved, never invented to fill a gap.</p></div>
-    <div class="control-item"><span class="control-mark" style="width:6.5rem;">ReAct</span><p><strong>Reason + Act</strong> (Yao et al., 2022). The loop behind any real investigation Adiyan runs: decide the next step, use a tool, fold the observation back in, repeat, until there's a real answer or an honest "nothing found."</p></div>
-    <div class="control-item"><span class="control-mark" style="width:6.5rem;">Mem0</span><p><strong>Scalable long-term memory for agents</strong> (Mem0, 2025). Runs fully local against your own machine's models and vector store, zero telemetry, powering the recent-thread and longer-term memory that lets Adiyan follow context across conversations.</p></div>
-    <div class="control-item"><span class="control-mark" style="width:6.5rem;">SNAC</span><p><strong>Multi-Scale Neural Audio Codec</strong> (Siuzdak et al., 2024). Decodes AdiyanReader's nightly voice notes from the Orpheus speech model's own output, entirely on-device, no audio ever generated in someone else's cloud.</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">RAG</span><p><strong>Retrieval-Augmented Generation</strong> (Lewis et al., 2020). Powers every document search. An answer is only built from what was actually retrieved. Nothing is invented to fill a gap.</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">ReAct</span><p><strong>Reason and Act</strong> (Yao et al., 2022). Powers every real investigation Adiyan runs: decide the next step, use a tool, read the result, repeat. It stops with a real answer or an honest "nothing found."</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">Mem0</span><p><strong>Scalable long-term memory for agents</strong> (Mem0, 2025). Runs fully on your own machine, against your own models and vector store, with zero telemetry. Powers both the recent-thread memory and the longer-term memory.</p></div>
+    <div class="control-item"><span class="control-mark" style="width:6.5rem;">SNAC</span><p><strong>Multi-Scale Neural Audio Codec</strong> (Siuzdak et al., 2024). Decodes AdiyanReader's nightly voice notes from the Orpheus speech model's output. Runs entirely on-device. No audio is generated in anyone else's cloud.</p></div>
   </div>
 </section>
 
