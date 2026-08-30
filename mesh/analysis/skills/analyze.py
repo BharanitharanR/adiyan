@@ -43,6 +43,7 @@ from mesh.analysis.constants import AGENT_ID, MEMORY_AGENT_URL
 from mesh.lib import config_sdk, permissions, tool_resolution
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.config import load_runtime_config, load_seed_config
+from mesh.lib.errors import describe_exception
 from mesh.lib.registry_client import list_agents
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
@@ -152,7 +153,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'resolve_document', {'query': query}, token=token)
         except Exception as e:
-            return f'search_documents failed: {e}'
+            return f'search_documents failed: {describe_exception(e)}'
         if not result.get('found'):
             return await _get_message('msg_no_matching_document')
         return f"Best match: {result['source_filename']}"
@@ -171,7 +172,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'get_document_text', {'source_filename': source_filename}, token=token)
         except Exception as e:
-            return f'read_document failed: {e}'
+            return f'read_document failed: {describe_exception(e)}'
         if not result.get('found'):
             return await _get_message('msg_document_not_found', source_filename=source_filename)
         return _cap(result['text'], observation_char_cap)
@@ -201,7 +202,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
                 'source_filename': source_filename, 'query': query, 'top_k': doc_search_top_k,
             }, token=token)
         except Exception as e:
-            return f'search_within_document failed: {e}'
+            return f'search_within_document failed: {describe_exception(e)}'
         if not result.get('found'):
             return await _get_message('msg_no_relevant_chunks', source_filename=source_filename)
         chunks = result['chunks']
@@ -220,7 +221,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'list_documents', {}, token=token)
         except Exception as e:
-            return f'list_documents failed: {e}'
+            return f'list_documents failed: {describe_exception(e)}'
         docs = result.get('documents', [])
         if not docs:
             return await _get_message('msg_kb_empty')
@@ -238,7 +239,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
                 'contact_name': contact_name, 'query': query, 'top_k': 5,
             }, token=token)
         except Exception as e:
-            return f'recall_memory failed: {e}'
+            return f'recall_memory failed: {describe_exception(e)}'
         snippets = result.get('snippets', [])
         if not snippets:
             return await _get_message('msg_nothing_in_memory')
@@ -275,7 +276,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         try:
             result = await call_agent_with_text(match['url'], request, token=token)
         except Exception as e:
-            return f'consult_agent failed: {e}'
+            return f'consult_agent failed: {describe_exception(e)}'
         return _cap(str(result), observation_char_cap)
 
     @tool
@@ -524,10 +525,21 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
             except Exception as e:
                 observation = f"Tool call failed: {e}"
 
-        if call['name'] == 'list_documents':
+        list_documents_kb_empty_msg = await _get_message('msg_kb_empty') if call['name'] == 'list_documents' else None
+        if call['name'] == 'list_documents' and not str(observation).startswith('list_documents failed:') \
+                and str(observation) != list_documents_kb_empty_msg:
             # Code-enforced, not LLM-judged - see _merge_document_list()'s
             # own docstring for why this tool's output specifically must
-            # never reach the 'extract findings' compaction step.
+            # never reach the 'extract findings' compaction step. The two
+            # guards above matter for the same reason that fix exists:
+            # confirmed live, a real Phoenix trace showed the tool's own
+            # "list_documents failed: ... Not authorized for this" error
+            # string getting split-by-line and appended into
+            # documents_known as if it were itself a filename - and it then
+            # got carried forward by every subsequent compact() step for
+            # the rest of the run, since nothing ever recognized it as
+            # garbage rather than a real document. An empty-KB message
+            # would fail the exact same way for the exact same reason.
             scratchpad = _merge_document_list(scratchpad, str(observation))
         elif call['name'] == 'search_documents' and str(observation).startswith('Best match: '):
             # Same reasoning, same fix - see _merge_search_result()'s own

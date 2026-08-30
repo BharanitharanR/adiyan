@@ -230,17 +230,30 @@ def _split_into_speech_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> Li
     return [s for s in sentences if s] or [text]
 
 
-def _estimate_max_tokens(text: str) -> int:
-    """Confirmed live this session: a fixed 1200-token cap (TTS.py's own
-    CLI-tool default, sized for short interactive test phrases) silently
-    truncated a real 303-character book page mid-sentence -
-    done_reason:"length" at exactly eval_count:1200, not a natural stop.
-    Roughly ~5-6 audio-code tokens per character of input held across
-    several real test runs, but with real variance chunk to chunk (one
-    252-char chunk still hit a x12 estimate live) - scaled generously
-    (x16) with headroom, capped so one pathologically long chunk can't
-    turn into a multi-minute generation on its own."""
-    return min(6000, max(1200, len(text) * 16))
+# Every chunk _split_into_speech_chunks() produces is <= MAX_CHUNK_CHARS
+# (300) by construction, never an unbounded string - so the actual worst
+# case this needs to cover is fixed and known, not something to estimate
+# per call. Confirmed live this session that scaling the budget DOWN for
+# a short chunk is exactly what causes truncation: a 75-character chunk
+# needed more than max(1200, 75*16)=1200 tokens to finish naturally, while
+# every chunk that got the full 6000 (long or short) has always completed
+# well under it. There's no cost to over-provisioning num_predict -
+# Ollama stops at a real completion regardless of how high the cap is set
+# (confirmed by every successful synthesis this session finishing far
+# short of 6000) - so there's no reason to ever request less than this
+# for any chunk. Checked directly against Ollama's own model info for
+# this model: num_ctx=32768, real trained context_length=131072 - 6000
+# tokens of generation plus a ~200-token prompt uses under a fifth of the
+# configured window, nowhere near a context overrun.
+#
+# What this does NOT protect against: a genuine repetition loop (the
+# model looping on itself instead of ever reaching a natural stop) can
+# still exhaust any fixed budget, however large - that's a different
+# failure mode than undersized budget, and no number fixes it
+# deterministically. _generate_tokens() still logs plainly when this
+# happens so it surfaces as what it actually is, not a mysteriously cut
+# off voice note.
+ORPHEUS_MAX_TOKENS = 6000
 
 
 def _turn_token_into_id(token_string: str, index: int) -> Optional[int]:
@@ -301,10 +314,10 @@ def _convert_frame_to_audio(multiframe: List[int]) -> Optional[bytes]:
 async def _generate_tokens(prompt: str, cfg: Dict[str, Any], max_tokens: int) -> List[str]:
     """Streams raw completion tokens from Ollama for the given already-
     formatted Orpheus prompt. raw=True is the one non-negotiable flag - see
-    this module's own docstring. max_tokens is passed in explicitly
-    (_estimate_max_tokens(), scaled to the actual input length) rather than
-    read from cfg directly - see that function's own docstring for the real
-    truncation this fixes."""
+    this module's own docstring. max_tokens is ORPHEUS_MAX_TOKENS unless a
+    caller explicitly overrides it via cfg - see that constant's own
+    docstring for why a fixed ceiling replaced a per-chunk estimate that
+    could (and did) undershoot for a short chunk."""
     payload = {
         'model': cfg['model'],
         'prompt': prompt,
@@ -336,10 +349,17 @@ async def _generate_tokens(prompt: str, cfg: Dict[str, Any], max_tokens: int) ->
                     tokens.append(data['response'])
                 if data.get('done'):
                     if data.get('done_reason') == 'length':
+                        # max_tokens is already the fixed, proven-sufficient
+                        # ceiling (ORPHEUS_MAX_TOKENS) for any chunk this
+                        # size ever needs - hitting it anyway points to a
+                        # genuine repetition loop, not an undersized budget.
+                        # No number fixes that deterministically, so this
+                        # stays a plain warning, not a "raise the cap"
+                        # instruction to act on.
                         logger.warning(
                             f'Orpheus generation hit max_tokens={max_tokens} before finishing '
-                            f'({len(prompt)}-char prompt) - audio is likely cut off. Raise the cap '
-                            "or check _estimate_max_tokens()'s scaling."
+                            f'({len(prompt)}-char prompt) - likely a repetition loop, not an '
+                            'undersized budget. Audio for this chunk is cut off.'
                         )
                     break
     return tokens
@@ -448,7 +468,7 @@ async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
 
     for chunk in chunks:
         prompt = f'{SPECIAL_START}{voice}: {chunk}{SPECIAL_END}'
-        max_tokens = cfg.get('max_tokens') or _estimate_max_tokens(chunk)
+        max_tokens = cfg.get('max_tokens') or ORPHEUS_MAX_TOKENS
         tokens = await _generate_tokens(prompt, cfg, max_tokens)
         if decode_task is not None:
             await _flush_decode()
