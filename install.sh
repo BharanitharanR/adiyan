@@ -14,6 +14,33 @@
 # Safe to re-run - every step checks whether its own work is already done
 # before doing it again, the same idempotent shape mesh/start_all.sh's own
 # "start is a no-op for something already running" already follows.
+#
+# 2026-08-30 incident fixes (all in source, so a fresh clone gets them for
+# free - nothing this script needs to seed):
+#   - mesh/scheduler/job_lookup.py: name_or_phrase lookup (used by
+#     delete_job/run_routine) was reusing find_similar_job(), a function
+#     built for exact-schedule dedup - crashed on a missing arg, and even
+#     fixed would have wrongly excluded jobs on a different schedule. Added
+#     db.find_job_by_name() (searches all jobs, no schedule filter) instead.
+#   - mesh/scheduler/skills/run_routine.py + seed_config.json: a scheduled
+#     job with nothing concrete to report (a vague description like "Log
+#     progress each day at 6pm") reliably made compose_generic produce
+#     unfilled "Hi [Name]!" template text. Prompt rewritten to forbid
+#     placeholder address entirely, and _looks_like_unfilled_template()
+#     now drops the message (stays silent) instead of sending it if one
+#     slips through anyway.
+#   - mesh/lib/permissions_config.json: mcp.whatsapp.send_message/
+#     send_document/send_image removed from the 'service' tier (scheduler
+#     and journal have no real WhatsApp identity and always mint this
+#     tier) - a deliberate, current lockdown after a runaway-message
+#     incident whose root cause was never fully isolated before shutdown.
+#     Your own live @Adiyan chat replies are unaffected (owner tier).
+#     Re-add those three lines once you've confirmed what was actually
+#     sending and are ready to re-enable automated sends.
+#   - mesh/lib/utilities/watermark.py: DEFAULT_TEXT confirmed correct
+#     ('அடியான்') - the live config value had drifted to a different
+#     spelling ('அடியேன்') at some point; reset via config_sdk.set_constant,
+#     not something install.sh seeds.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -157,3 +184,6 @@ echo -e "${DIM}  See which known keys are already set: .venv/bin/python3 -m mesh
 
 echo -e "\n${GREEN}${BOLD}Setup complete.${RESET}"
 echo -e "Next: run ${BOLD}mesh/start_all.sh${RESET} when you're ready to start the mesh - this script deliberately doesn't start anything itself."
+echo -e "\n${DIM}Note: automated WhatsApp sends (scheduler, journal) are currently locked down in mesh/lib/permissions_config.json"
+echo -e "following a 2026-08-30 runaway-message incident. Your own live @Adiyan chat replies still work. See this script's"
+echo -e "header comment for what changed and what to check before re-enabling.${RESET}"

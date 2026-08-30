@@ -27,9 +27,6 @@
         "adiyan_reader.dispatch_questions",
         "mcp.cron_trigger.register_trigger",
         "mcp.cron_trigger.remove_trigger",
-        "mcp.whatsapp.send_message",
-        "mcp.whatsapp.send_document",
-        "mcp.whatsapp.send_image",
         "mcp.whatsapp.get_own_phone",
         "mcp.agent_registry.register_agent",
         "mcp.agent_registry.list_agents"

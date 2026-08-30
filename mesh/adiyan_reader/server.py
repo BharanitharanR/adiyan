@@ -24,6 +24,7 @@ from mesh.adiyan_reader.skills_catalog import get_skills
 from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
+from mesh.lib.errors import describe_exception
 from mesh.lib.paths import state_db_path, tasks_db_path
 from mesh.observability.tracing import setup_tracing
 
@@ -60,7 +61,7 @@ def _catch_up_retry_loop() -> None:
         try:
             asyncio.run(_catch_up_overdue_reading_jobs())
         except Exception as e:
-            logger.warning(f'Catch-up retry pass failed: {e}')
+            logger.warning(f'Catch-up retry pass failed: {describe_exception(e)}')
 
 
 async def _load_startup_config() -> dict:

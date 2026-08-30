@@ -29,6 +29,7 @@ from a2a.server.tasks import TaskUpdater
 
 from mesh.lib import config_sdk, permissions
 from mesh.lib.config import load_runtime_config
+from mesh.lib.errors import describe_exception
 from mesh.lib.skill_router import route
 from mesh.scheduler.constants import AGENT_ID
 from mesh.scheduler.job_lookup import JobNotFoundError
@@ -187,7 +188,7 @@ class SchedulerAgentExecutor(AgentExecutor):
             # WhatsApp) that schedule_job/list_jobs don't - any of those can
             # fail at runtime in ways worth surfacing cleanly, not crashing
             # execute() unhandled.
-            await updater.failed(new_text_message(f'{skill_id} failed: {e}'))
+            await updater.failed(new_text_message(f'{skill_id} failed: {describe_exception(e)}'))
             return
 
         await updater.add_artifact(parts=[new_data_part(result)])

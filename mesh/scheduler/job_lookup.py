@@ -27,7 +27,7 @@ async def resolve_job(
             raise JobNotFoundError(f'No job with id {job_id}')
         return job
     embedding = await _embed(name_or_phrase)
-    job = db.find_similar_job(conn, embedding)
+    job = db.find_job_by_name(conn, embedding)
     if job is None:
         raise JobNotFoundError(f"No routine matches '{name_or_phrase}'")
     return job

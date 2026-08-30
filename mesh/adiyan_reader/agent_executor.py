@@ -23,6 +23,7 @@ from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.adiyan_reader.skills import change_voice, dispatch_questions, read_next_page, read_now, start_reading
 from mesh.adiyan_reader.skills_catalog import get_skills
 from mesh.lib import permissions
+from mesh.lib.errors import describe_exception
 
 SKILL_HANDLERS = {
     'start_reading': start_reading.run,
@@ -79,7 +80,7 @@ class AdiyanReaderAgentExecutor(AgentExecutor):
         try:
             result = await handler(**params)
         except Exception as e:
-            await updater.failed(new_text_message(f'{skill_id} failed: {e}'))
+            await updater.failed(new_text_message(f'{skill_id} failed: {describe_exception(e)}'))
             return
 
         await updater.add_artifact(parts=[new_data_part(result)])

@@ -5,8 +5,8 @@
       "description": "Converts a free-text schedule description into a cron expression. Needs a {description} placeholder."
     },
     "compose_generic_prompt_template": {
-      "value": "Write a short, warm WhatsApp reminder message for this: \"{description}\". Do not invent specific details (like actual to-do items) that are not in the description itself - this is a nudge, not a report.",
-      "description": "Fallback reminder-message wording for anything Journal Agent doesn't cover. Needs a {description} placeholder."
+      "value": "Write a short WhatsApp reminder message for this: \"{description}\". This is a self-chat with no name to address - never write \"Hi [Name]\" or any bracketed placeholder, and never invent a name. Do not invent specific details (like actual to-do items) that are not in the description itself - this is a nudge, not a report. If the description gives nothing concrete to say beyond itself, just restate it plainly instead of dressing it up with generic warmth.",
+      "description": "Fallback reminder-message wording for anything Journal Agent doesn't cover. Needs a {description} placeholder. Rewritten after a live bug: the original ('warm... nudge') reliably produced unfilled \"Hi [Name]\" placeholders for content-free descriptions, since nothing ever told the model this is a self-chat with no name to fill in. run_routine.py's _looks_like_unfilled_template() is the backstop if this still slips through - the message is dropped rather than sent."
     }
   }
 }

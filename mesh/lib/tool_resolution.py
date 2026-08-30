@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from mesh.lib import config_sdk, mcp_registry
 from mesh.lib.config import load_seed_config
+from mesh.lib.errors import describe_exception
 
 logger = logging.getLogger('ToolResolution')
 
@@ -120,7 +121,7 @@ async def select_groups(question: str, groups: List[ToolGroup], cfg: Dict[str, A
     try:
         selection = await model.ainvoke(prompt)
     except Exception as e:
-        logger.warning(f'select_groups failed: {e}')
+        logger.warning(f'select_groups failed: {describe_exception(e)}')
         return []
     by_name = {g.name: g for g in groups}
     return [by_name[n] for n in selection.group_names if n in by_name]

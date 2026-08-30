@@ -22,6 +22,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
 from mesh.lib.config import load_runtime_config
+from mesh.lib.errors import describe_exception
 from mesh.lib.skill_router import route
 from mesh.orchestrator.skills import handle_message
 from mesh.orchestrator.skills_catalog import get_skills
@@ -89,7 +90,7 @@ class OrchestratorAgentExecutor(AgentExecutor):
         try:
             result = await handle_message.run(**params)
         except Exception as e:
-            await updater.failed(new_text_message(f'handle_message failed: {e}'))
+            await updater.failed(new_text_message(f'handle_message failed: {describe_exception(e)}'))
             return
 
         await updater.add_artifact(parts=[new_data_part(result)])

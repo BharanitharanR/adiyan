@@ -15,6 +15,7 @@ Journal Agent's own AgentSkill, exactly the mechanism a real registry would
 generalize to later - just hardcoded to one candidate agent today, since the
 registry idea is deliberately parked (see docs/AGENTS.md).
 """
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -50,10 +51,27 @@ async def _wants_journal(description: str, cfg: Dict[str, Any]) -> bool:
     return choice.skill_id == 'craft_reflection_prompt'
 
 
-async def _compose_generic(description: str, cfg: Dict[str, Any]) -> str:
+def _looks_like_unfilled_template(text: str) -> bool:
+    """True if text contains a literal bracket placeholder like '[Name]' -
+    the tell that the model reached for mail-merge-style phrasing instead of
+    writing something grounded in the job's actual description. Confirmed
+    live: asking the model for a 'warm' message about a content-free
+    description (e.g. "Log progress each day at 6pm") reliably produced
+    exactly this pattern - "Hi [Name]!..." - never a real name, since
+    nothing in the prompt ever supplies one."""
+    return bool(re.search(r'\[[A-Za-z][A-Za-z ]{0,20}\]', text))
+
+
+async def _compose_generic(description: str, cfg: Dict[str, Any]) -> Optional[str]:
     """Honest fallback for anything Journal Agent doesn't cover - a plain
     reminder grounded only in the job's own description, nothing invented
-    past that (see the "todos" job design discussion for why)."""
+    past that (see the "todos" job design discussion for why).
+
+    Returns None instead of templated filler when the model can't produce
+    real content - see _looks_like_unfilled_template's docstring. Silence
+    here is deliberate, the same principle as never sending raw error text:
+    a job with nothing concrete to report shouldn't manufacture fake warmth
+    to fill the gap."""
     model = ChatOllama(
         model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
     ).with_structured_output(GenericMessage)
@@ -66,10 +84,12 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> str:
     except Exception:
         prompt = seeded['value'].format(description=description)
     result = await model.ainvoke(prompt)
+    if _looks_like_unfilled_template(result.text):
+        return None
     return result.text
 
 
-async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any]) -> str:
+async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
     if await _wants_journal(job['description'], cfg['select_composer']):
         try:
             # Service token - run_routine fires on a schedule (no WhatsApp
@@ -105,11 +125,20 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
     message_text = await _compose_message(job, cfg)
 
-    openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
-    chat_id = await openwa.get_own_chat_id()
-    if chat_id is None:
-        raise RuntimeError('Could not resolve the owner\'s own WhatsApp chat - is WhatsApp connected?')
-    await openwa.send_message(chat_id, message_text)
+    sent = False
+    if message_text is not None:
+        openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
+        chat_id = await openwa.get_own_chat_id()
+        if chat_id is None:
+            raise RuntimeError('Could not resolve the owner\'s own WhatsApp chat - is WhatsApp connected?')
+        await openwa.send_message(chat_id, message_text)
+        sent = True
+    # message_text is None: _compose_generic couldn't produce anything
+    # grounded in the job's actual description (see
+    # _looks_like_unfilled_template) - staying silent here rather than
+    # sending manufactured "[Name]" filler, same principle as never sending
+    # raw error text. Recurrence below still re-registers regardless -
+    # this firing having nothing to say doesn't mean the next one won't.
 
     # Recurrence - Scheduler Agent's own responsibility, not cron_trigger's.
     # A one-time job (never actually built as such today, but defensive)
@@ -141,6 +170,6 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
     return {
         'job_id': job['id'],
         'routine_name': job['name'],
-        'status': 'completed',
+        'status': 'completed' if sent else 'skipped_no_content',
         'result_summary': message_text,
     }

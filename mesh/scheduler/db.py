@@ -76,6 +76,30 @@ def find_similar_job(conn: sqlite3.Connection, embedding: List[float], resolved_
     return None
 
 
+def find_job_by_name(conn: sqlite3.Connection, embedding: List[float]) -> Optional[Dict[str, Any]]:
+    """Returns the closest existing job at/above SIMILARITY_FLOOR, searched
+    across ALL jobs regardless of schedule.
+
+    This is for job_lookup.resolve_job()'s name_or_phrase path (delete_job,
+    run_routine) - a caller looking a job up by name doesn't know its
+    schedule in advance, so there's nothing to pre-filter on. That's the
+    opposite situation from find_similar_job()'s dedup check, which already
+    has a target resolved_schedule in hand and uses it to narrow the
+    candidate set before comparing embeddings. Reusing find_similar_job()
+    here doesn't just need a schedule argument threaded through - even a
+    correct one would wrongly exclude every job on a different schedule,
+    breaking lookup for the exact jobs a caller is most likely searching by
+    name for."""
+    best_row, best_score = None, 0.0
+    for row in conn.execute('SELECT * FROM jobs'):
+        score = _cosine(embedding, json.loads(row['embedding']))
+        if score > best_score:
+            best_row, best_score = row, score
+    if best_row is not None and best_score >= SIMILARITY_FLOOR:
+        return dict(best_row)
+    return None
+
+
 def create_job(
     conn: sqlite3.Connection,
     name: str,
