@@ -241,18 +241,32 @@ else
     # a harder reset that clears both the download cache and node_modules,
     # since Puppeteer's postinstall only re-downloads when it doesn't
     # already think a browser is present.
-    npm --prefix penwa install || true
-    if ! verify_puppeteer_browser; then
-        echo -e "${DIM}  Chrome didn't launch after install - clearing Puppeteer's cache and retrying${RESET}"
+    #
+    # npm's own exit code is tracked separately from verify_puppeteer_browser
+    # now, not just discarded with `|| true` - confirmed live that the two
+    # can disagree: Puppeteer downloads a *second* browser besides the one
+    # verify_puppeteer_browser launches (chrome-headless-shell), and a
+    # corrupted extraction of that one still fails the overall `npm install`
+    # even though the Chrome build verify_puppeteer_browser checks launches
+    # fine. `|| true` swallowed that failure, verify_puppeteer_browser
+    # reported success, and install.sh moved on having actually left
+    # node_modules incomplete - the real symptom downstream was OpenWA's
+    # `nest` binary (a devDependency) missing at startup. Either signal
+    # failing now triggers the same retry path.
+    npm_ok=1
+    npm --prefix penwa install && npm_ok=1 || npm_ok=0
+    if [ "$npm_ok" -eq 0 ] || ! verify_puppeteer_browser; then
+        echo -e "${DIM}  penwa install didn't finish cleanly - clearing Puppeteer's cache and retrying${RESET}"
         rm -rf "$HOME/.cache/puppeteer"
-        npm --prefix penwa install || true
+        npm --prefix penwa install && npm_ok=1 || npm_ok=0
     fi
-    if ! verify_puppeteer_browser; then
+    if [ "$npm_ok" -eq 0 ] || ! verify_puppeteer_browser; then
         echo -e "${DIM}  still failing - clearing node_modules too (Puppeteer's postinstall only redownloads for a fresh install) and retrying once more${RESET}"
         rm -rf "$HOME/.cache/puppeteer" penwa/node_modules
         npm --prefix penwa install
+        npm_ok=1
     fi
-    if verify_puppeteer_browser; then
+    if [ "$npm_ok" -eq 1 ] && verify_puppeteer_browser; then
         ok "penwa dependencies installed, Chrome launches"
     else
         # Confirmed live: on at least one real machine, none of the above
