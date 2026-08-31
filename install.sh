@@ -61,10 +61,22 @@ MISSING=0
 
 step "Checking prerequisites"
 
+# Everything below except Homebrew itself is auto-installed via brew when
+# missing, not just reported - consistent with how the rest of this script
+# already behaves (it pulls multi-GB Ollama models and clones penwa/
+# without asking first). Homebrew itself is the one thing that stays a
+# hard manual step: its own official installer is interactive and can
+# prompt for a sudo password, which isn't something this script should
+# run unattended on someone else's machine.
 if ! command -v brew >/dev/null 2>&1; then
     fail "Homebrew not found - install it first: https://brew.sh"
 else
     ok "Homebrew"
+fi
+
+if [ "$MISSING" -eq 1 ]; then
+    echo -e "\n${RED}Homebrew is required before this script can install anything else - get it from https://brew.sh, then re-run ./install.sh.${RESET}"
+    exit 1
 fi
 
 PYTHON_BIN=""
@@ -74,51 +86,72 @@ PYTHON_BIN=""
 # "Could not find a version that satisfies the requirement
 # llama-index-vector-stores-qdrant>=0.10.0", since that package (and
 # several others in requirements.txt) haven't published anything
-# compatible with 3.14 yet. Caught here instead, with an actionable
-# message, rather than surfacing as an opaque pip resolution error two
-# steps later.
-for candidate in python3.11 python3.12 python3.13 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        version="$("$candidate" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
-        major="${version%%.*}"
-        minor="${version##*.}"
-        if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && [ "$minor" -le 13 ]; then
-            PYTHON_BIN="$candidate"
-            break
+# compatible with 3.14 yet.
+find_compatible_python() {
+    for candidate in python3.11 python3.12 python3.13 python3; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            version="$("$candidate" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+            major="${version%%.*}"
+            minor="${version##*.}"
+            if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && [ "$minor" -le 13 ]; then
+                echo "$candidate"
+                return 0
+            fi
         fi
-    fi
-done
-if [ -z "$PYTHON_BIN" ]; then
-    fail "Python 3.11-3.13 not found (a newer or older python3 doesn't satisfy this repo's dependencies) - install with: brew install python@3.13"
-else
+    done
+    return 1
+}
+if PYTHON_BIN="$(find_compatible_python)"; then
     ok "Python ($PYTHON_BIN, $("$PYTHON_BIN" --version 2>&1))"
+else
+    echo -e "${DIM}  installing${RESET} - Python 3.13 (brew install python@3.13)"
+    brew install python@3.13
+    if PYTHON_BIN="$(find_compatible_python)"; then
+        ok "Python ($PYTHON_BIN, $("$PYTHON_BIN" --version 2>&1))"
+    else
+        fail "Installed python@3.13 via brew, but no python3.11-3.13 is on PATH yet - open a new terminal (or run 'brew link python@3.13') and re-run ./install.sh."
+    fi
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-    fail "Node.js not found - install with: brew install node"
-else
+    echo -e "${DIM}  installing${RESET} - Node.js (brew install node)"
+    brew install node
+fi
+if command -v node >/dev/null 2>&1; then
     ok "Node ($(node --version))"
+else
+    fail "brew install node ran but node still isn't on PATH - open a new terminal and re-run ./install.sh."
 fi
 
 if ! command -v mongod >/dev/null 2>&1; then
-    fail "MongoDB not found - install with: brew tap mongodb/brew && brew trust mongodb/brew && brew install mongodb-community"
+    echo -e "${DIM}  installing${RESET} - MongoDB (brew tap mongodb/brew && brew trust mongodb/brew && brew install mongodb-community)"
+    brew tap mongodb/brew
     # brew trust is required by current Homebrew versions before loading a
     # formula from a non-official tap - confirmed live: 'brew install
     # mongodb-community' on a fresh machine failed with 'Refusing to load
     # formula ... from untrusted tap mongodb/brew', and the fix Homebrew
     # itself suggests is exactly this trust step, not a workaround.
-else
+    brew trust mongodb/brew
+    brew install mongodb-community
+fi
+if command -v mongod >/dev/null 2>&1; then
     ok "MongoDB"
+else
+    fail "brew install mongodb-community ran but mongod still isn't on PATH - open a new terminal and re-run ./install.sh."
 fi
 
 if ! command -v ollama >/dev/null 2>&1; then
-    fail "Ollama not found - install with: brew install ollama"
-else
+    echo -e "${DIM}  installing${RESET} - Ollama (brew install ollama)"
+    brew install ollama
+fi
+if command -v ollama >/dev/null 2>&1; then
     ok "Ollama"
+else
+    fail "brew install ollama ran but ollama still isn't on PATH - open a new terminal and re-run ./install.sh."
 fi
 
 if [ "$MISSING" -eq 1 ]; then
-    echo -e "\n${RED}One or more prerequisites are missing - install them with the commands above, then re-run ./install.sh.${RESET}"
+    echo -e "\n${RED}One or more prerequisites couldn't be finished automatically - see the messages above, then re-run ./install.sh.${RESET}"
     exit 1
 fi
 
