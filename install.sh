@@ -188,23 +188,47 @@ else
     ok "Cloned penwa/"
 fi
 
-if [ -d "penwa/node_modules" ]; then
-    skip "penwa/node_modules already present"
+# A real launch-and-close, not just "npm install exited 0" - confirmed
+# live that the two are different questions. One failure mode surfaces as
+# a non-zero npm exit code ("the executable ... is missing"). A second,
+# worse one doesn't: npm reported success while the actual downloaded
+# Chrome binary was corrupted, and the only symptom was OpenWA failing at
+# runtime with "dlopen ... (no such file)" deep inside a framework
+# bundle - node_modules and the top-level .app folder both looked
+# perfectly normal. Puppeteer's own launch() is the one check that
+# actually exercises the binary the way OpenWA will.
+verify_puppeteer_browser() {
+    node -e "
+require('./penwa/node_modules/puppeteer').launch({headless: true})
+  .then(async b => { await b.close(); process.exit(0); })
+  .catch(() => process.exit(1));
+" >/dev/null 2>&1
+}
+
+if [ -d "penwa/node_modules" ] && verify_puppeteer_browser; then
+    skip "penwa/node_modules already present, Chrome launches"
 else
-    # One retry, clearing Puppeteer's own download cache first - confirmed
-    # live: 'npm install' failed with "The browser folder ... exists but
-    # the executable ... is missing", which is Puppeteer's chrome-headless-
-    # shell download having been interrupted (a network hiccup, not
-    # anything wrong with this repo) on a previous attempt, leaving a
-    # half-there folder that a fresh install won't overwrite on its own.
-    # The cache directory is just a download cache - safe to delete, it
-    # only costs a re-download.
-    if ! npm --prefix penwa install; then
-        echo -e "${DIM}  npm install failed - clearing Puppeteer's download cache and retrying once${RESET}"
+    # Up to two attempts: a plain retry first (handles a non-zero npm exit
+    # code), then - if npm looked fine but the browser still won't launch -
+    # a harder reset that clears both the download cache and node_modules,
+    # since Puppeteer's postinstall only re-downloads when it doesn't
+    # already think a browser is present.
+    npm --prefix penwa install || true
+    if ! verify_puppeteer_browser; then
+        echo -e "${DIM}  Chrome didn't launch after install - clearing Puppeteer's cache and retrying${RESET}"
         rm -rf "$HOME/.cache/puppeteer"
+        npm --prefix penwa install || true
+    fi
+    if ! verify_puppeteer_browser; then
+        echo -e "${DIM}  still failing - clearing node_modules too (Puppeteer's postinstall only redownloads for a fresh install) and retrying once more${RESET}"
+        rm -rf "$HOME/.cache/puppeteer" penwa/node_modules
         npm --prefix penwa install
     fi
-    ok "penwa dependencies installed"
+    if verify_puppeteer_browser; then
+        ok "penwa dependencies installed, Chrome launches"
+    else
+        fail "penwa's Chrome still won't launch after two clean-and-retry attempts - check the output above and https://pptr.dev/troubleshooting by hand"
+    fi
 fi
 
 # The dashboard is a separate npm project (penwa/dashboard/), not an npm
