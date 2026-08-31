@@ -35,7 +35,7 @@ async def send_new_code() -> bool:
     generated - either way, no valid code is left standing on failure."""
     global _current_code, _expires_at
 
-    token = permissions.mint_token('config_server', 'service')
+    token = permissions.mint_token('config_server', 'config_server_otp')
     try:
         phone_result = await call_tool(WHATSAPP_MCP_URL, 'get_own_phone', {}, token=token)
         own_phone = phone_result.get('phone')

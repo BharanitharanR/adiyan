@@ -32,6 +32,13 @@
         "mcp.agent_registry.list_agents"
       ]
     },
+    "config_server_otp": {
+      "description": "config_server's own OTP-login flow (mesh/config_server/otp.py) sending a dashboard login code to the owner's own WhatsApp. Deliberately its own tier, not 'service': one message per human-initiated login attempt, not an automated/recurring job, so it shouldn't be reopened or closed by whatever policy scheduler/journal's automated sends need.",
+      "allow": [
+        "mcp.whatsapp.get_own_phone",
+        "mcp.whatsapp.send_message"
+      ]
+    },
     "peer": {
       "description": "A different Adiyan user's instance, offloaded to for spare compute (see mesh/compute_share/). Scoped to exactly one skill - run_inference - which only ever sees a fully-built prompt, never a document, conversation, or credential. No other skill on any agent is reachable with this tier, by design: a peer proves nothing about identity beyond 'someone holding a short-lived compute_share token', so it gets the narrowest possible allow-list of any tier in this file.",
       "allow": [
