@@ -92,7 +92,12 @@ else
 fi
 
 if ! command -v mongod >/dev/null 2>&1; then
-    fail "MongoDB not found - install with: brew tap mongodb/brew && brew install mongodb-community"
+    fail "MongoDB not found - install with: brew tap mongodb/brew && brew trust mongodb/brew && brew install mongodb-community"
+    # brew trust is required by current Homebrew versions before loading a
+    # formula from a non-official tap - confirmed live: 'brew install
+    # mongodb-community' on a fresh machine failed with 'Refusing to load
+    # formula ... from untrusted tap mongodb/brew', and the fix Homebrew
+    # itself suggests is exactly this trust step, not a workaround.
 else
     ok "MongoDB"
 fi
