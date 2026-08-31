@@ -261,6 +261,33 @@ do_start() {
             echo "  DOWN :${port} ($name)  (check $LOG_DIR/$name.log - may just need more time to boot)"
         fi
     done
+
+    # First-time-only: open the WhatsApp linking page automatically, but
+    # only when there's actually a session to link - not on every restart
+    # once you're already connected. Silently skipped (not a failure) if
+    # config_server isn't up yet or the connection check itself can't run,
+    # since this is a convenience, not something worth failing the whole
+    # start over.
+    if is_target "config_server" && component_alive "8500" "mesh.config_server.server"; then
+        already_connected="no"
+        if connected_check="$("$PYTHON_BIN" -c "
+import asyncio
+from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
+
+async def main():
+    svc = OpenWAService(base_url='http://localhost:2785', api_key='', session_name='adiyan')
+    print('yes' if await svc.is_connected() else 'no')
+
+asyncio.run(main())
+" 2>/dev/null)"; then
+            already_connected="$connected_check"
+        fi
+        if [ "$already_connected" != "yes" ]; then
+            echo
+            echo "WhatsApp isn't linked yet - opening the registration page..."
+            open "http://localhost:8500/register" 2>/dev/null || true
+        fi
+    fi
 }
 
 do_stop() {
