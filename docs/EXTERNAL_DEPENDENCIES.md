@@ -95,11 +95,25 @@ only needs the API on port 2785), same reasoning as Mongo/Qdrant.
 ## ngrok
 
 **What:** Tunneling service, exposing a local port to a public URL.
-**Why Adiyan needs it:** Needed for OpenWA/penwa's webhook delivery when
-WhatsApp needs to reach this machine from outside the local network.
-**Why it's separate:** Same as OpenWA above - explicitly called out in
-`mesh/start_all.sh`'s header comment as externally managed infra.
-**Install:** https://ngrok.com
+**Why Adiyan needs it:** OpenWA's own SSRF guard
+(`penwa/src/common/security/ssrf-guard.ts`) refuses to register a webhook
+pointed at `localhost`/loopback, by design - even though OpenWA and
+`whatsapp_mcp` both run on the same machine, that one hop needs a real
+public URL to satisfy the guard. Without it, incoming WhatsApp messages
+have nowhere to go: no error anywhere (OpenWA's, `whatsapp_mcp`'s, or
+`orchestrator`'s logs), the message just never arrives. Confirmed live -
+went unnoticed through a full WhatsApp registration and QR link, since
+nothing about linking itself depends on this.
+**Confirmed live:** `mesh/start_all.sh` now manages this directly (a
+fourth exception alongside Mongo/Qdrant/OpenWA - see its own header
+comment) and automatically re-registers the webhook against whatever
+public URL ngrok hands out on every restart (the free tier gives a new
+random one each time). The one thing it can't do for you is the account
+itself.
+**Install:** `brew install ngrok` (macOS) or https://ngrok.com - then,
+one-time only: `ngrok config add-authtoken <token from
+https://dashboard.ngrok.com>`. Until that's done, `start_all.sh` skips
+ngrok with an explanation rather than failing or reporting it DOWN.
 
 ## nginx
 

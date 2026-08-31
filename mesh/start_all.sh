@@ -16,11 +16,10 @@
 # look like a successful no-op.
 #
 # Start is idempotent - a component already running is left alone, not
-# restarted. Does NOT start/stop ngrok or nginx itself - those are external
-# infra this script assumes are managed separately (see
-# docs/EXTERNAL_DEPENDENCIES.md). MongoDB, Qdrant, and OpenWA ARE
-# started/stopped here despite also being third-party infra - explicit
-# exceptions:
+# restarted. Does NOT start/stop nginx itself - that's external infra this
+# script assumes is managed separately (see docs/EXTERNAL_DEPENDENCIES.md).
+# MongoDB, Qdrant, OpenWA, and ngrok ARE started/stopped here despite also
+# being third-party infra - explicit exceptions:
 #   - MongoDB: mesh/lib/config_sdk.py's whole point is degrading gracefully
 #     without it, so having start_all.sh guarantee it's up removes the most
 #     common reason that fallback would silently kick in. Started via
@@ -54,7 +53,22 @@
 #     scope invalidates a connectionId between separate tool calls,
 #     breaking the auto-connect interceptor _make_connection_interceptor()
 #     relies on) are both load-bearing flags, not defaults to tidy up later.
-# All three use this script's own idempotency/pkill model (identical for
+#   - ngrok: confirmed live the same "silently never arrives" failure mode
+#     as OpenWA above, one hop further downstream - OpenWA's own SSRF guard
+#     refuses to webhook to localhost, so without a public tunnel every
+#     incoming WhatsApp message has nowhere to go, with nothing in any log
+#     (OpenWA's, whatsapp_mcp's, or orchestrator's) to point at why. Unlike
+#     the other three exceptions, this one has a real one-time human
+#     prerequisite - an ngrok account and its authtoken - that nothing here
+#     can provision; skipped with an explanation (not started, not reported
+#     DOWN) when that prerequisite isn't met yet, the same graceful-
+#     degradation shape Mongo/Qdrant already use for their own missing
+#     prerequisites. do_start() re-registers the webhook against whatever
+#     ngrok's given this run every single time it's up, since the free
+#     tier hands out a brand new random public URL on every restart -
+#     registration is idempotent (updates a webhook already at the same
+#     URL, never duplicates one), so this is always safe to run unconditionally.
+# All four use this script's own idempotency/pkill model (identical for
 # every other component here), not `brew services` - `stop` shuts them
 # down the same clean way (pkill sends SIGTERM, a graceful shutdown
 # request, not a kill -9). OpenWA is the one exception worth a second look
@@ -133,6 +147,13 @@ COMPONENTS=(
     # mesh/mcp/whatsapp/server.py's ensure_self_signed_cert) so OpenWA's
     # outbound webhook fetch doesn't reject it with "TypeError: fetch failed".
     "openwa|2785|env MEDIA_DOWNLOAD_TIMEOUT_MS=3000000 NODE_EXTRA_CA_CERTS=$HOME/.Adiyan/mcp/whatsapp/tls/cert.pem npm --prefix penwa start"
+    # OpenWA's own SSRF guard refuses to webhook to localhost, so incoming
+    # WhatsApp messages have nowhere to go without a public tunnel - see
+    # mesh/mcp/whatsapp/register_webhook.py's docstring. Port 4040 is
+    # ngrok's own local admin API, always on that fixed port regardless of
+    # which random public URL this run's tunnel gets - a stable thing for
+    # component_alive to check, unlike the tunnel URL itself.
+    "ngrok|4040|ngrok http 8425 --log=stdout"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
@@ -142,11 +163,29 @@ refresh_listening() {
     LISTENING="$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null || true)"
 }
 
+# Computed once, up front, not re-checked per call - a fast local check
+# (binary presence + a config-file read), never a network call. Missing
+# either one isn't a failure: ngrok needs a one-time human step (an account
+# and its authtoken) nothing here can provision on someone's behalf, so this
+# degrades the same way Mongo/Qdrant/OpenWA already do when their own
+# external prerequisite isn't met yet - skip it, say why, keep going.
+NGROK_USABLE=0
+if command -v ngrok >/dev/null 2>&1 && ngrok config check >/dev/null 2>&1; then
+    NGROK_USABLE=1
+fi
+
 is_target() {
     # No names given ("${TARGET_NAMES[@]}" empty) means "every component" -
     # the original, unscoped behavior. Otherwise only a name explicitly
     # listed matches.
     local name="$1"
+    # ngrok is never a real target without its one-time setup done - see
+    # NGROK_USABLE above. Folded in here, the single chokepoint every
+    # launch/wait/retry/stop loop already calls through, rather than
+    # threading a separate check into each of them individually.
+    if [ "$name" = "ngrok" ] && [ "$NGROK_USABLE" -ne 1 ]; then
+        return 1
+    fi
     [ "${#TARGET_NAMES[@]}" -eq 0 ] && return 0
     local t
     for t in "${TARGET_NAMES[@]}"; do
@@ -223,10 +262,11 @@ launch_component() {
         # prepended only here, at the actual launch site, while cmd
         # itself stays exactly what pkill needs to find the real worker.
         nohup npx -y $cmd >> "$logfile" 2>&1 &
-    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ]; then
+    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ]; then
         # A raw binary/npm invocation, not a `python3 -m` module - mongod
         # logs to its own configured path (systemLog.path in
-        # mongod.conf) rather than this one; qdrant and openwa do log here.
+        # mongod.conf) rather than this one; qdrant, openwa, and ngrok do
+        # log here.
         nohup $cmd >> "$logfile" 2>&1 &
     else
         nohup "$PYTHON_BIN" -m "$cmd" >> "$logfile" 2>&1 &
@@ -272,6 +312,13 @@ do_start() {
     # where no key file exists until OpenWA creates one during this same
     # run - the post-launch sync below still exists for exactly that case.
     sync_openwa_api_key
+
+    if [ "$NGROK_USABLE" -ne 1 ] && is_target "whatsapp_mcp"; then
+        echo "ngrok isn't installed or has no authtoken configured yet - WhatsApp messages won't reach Adiyan until you run:"
+        echo "  brew install ngrok && ngrok config add-authtoken <token from https://dashboard.ngrok.com>"
+        echo "then re-run this script."
+        echo
+    fi
 
     refresh_listening
     echo "Starting:"
@@ -419,6 +466,22 @@ asyncio.run(main())
                 echo
             fi
         fi
+    fi
+
+    # Re-registered every run, not just once - ngrok's free tier hands out
+    # a brand new random public URL on every restart, so a webhook
+    # registered against yesterday's URL is stale the moment ngrok
+    # relaunches. register_webhook.py is already idempotent (PUT-updates a
+    # webhook already pointed at the *same* URL instead of ever creating a
+    # duplicate), so running it unconditionally here on every start is
+    # always safe. Best-effort: a hiccup here (ngrok's tunnel not fully up
+    # yet, OpenWA not ready) just means WhatsApp messages won't arrive
+    # until the next start_all.sh run - not worth failing the whole start
+    # over, same reasoning as the session-creation block above.
+    if is_target "ngrok" && component_alive "4040" "ngrok http 8425 --log=stdout" \
+        && is_target "whatsapp_mcp" && component_alive "8425" "mesh.mcp.whatsapp.server"; then
+        echo
+        "$PYTHON_BIN" -m mesh.mcp.whatsapp.register_webhook || true
     fi
 }
 
