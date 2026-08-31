@@ -1,0 +1,343 @@
+<title>Adiyan Developer Guide</title>
+<style>
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --border: #dbdfe6;
+  --ink: #1a1d24;
+  --ink-dim: #5b6272;
+  --accent: #3454d1;
+  --accent-soft: #e8ecfd;
+  --good: #0f766e;
+  --good-soft: #e6f4f2;
+  --bad: #b3401f;
+  --bad-soft: #fbeae4;
+  --warn: #92620a;
+  --warn-soft: #fbf1de;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #13151a;
+    --surface: #1b1e26;
+    --surface-2: #242832;
+    --border: #333846;
+    --ink: #eef0f4;
+    --ink-dim: #9aa1b2;
+    --accent: #86a0ff;
+    --accent-soft: #22273c;
+    --good: #4fd1c5;
+    --good-soft: #16302d;
+    --bad: #ff8a65;
+    --bad-soft: #3a241d;
+    --warn: #e0b84f;
+    --warn-soft: #362c14;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #13151a;
+  --surface: #1b1e26;
+  --surface-2: #242832;
+  --border: #333846;
+  --ink: #eef0f4;
+  --ink-dim: #9aa1b2;
+  --accent: #86a0ff;
+  --accent-soft: #22273c;
+  --good: #4fd1c5;
+  --good-soft: #16302d;
+  --bad: #ff8a65;
+  --bad-soft: #3a241d;
+  --warn: #e0b84f;
+  --warn-soft: #362c14;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+code, pre, .mono {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+a { color: var(--accent); }
+
+.page { max-width: 880px; margin: 0 auto; padding: 2.5rem 1.5rem 6rem; }
+
+header.hero {
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+header.hero .eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 0.5rem; letter-spacing: -0.015em; text-wrap: balance; }
+header.hero p { color: var(--ink-dim); margin: 0; max-width: 62ch; font-size: 0.98rem; }
+
+nav.toc {
+  display: flex; flex-wrap: wrap; gap: 0.5rem 0.35rem;
+  margin: 1.25rem 0 0;
+}
+nav.toc a {
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.7rem;
+  border-radius: 99px;
+}
+nav.toc a:hover { color: var(--accent); border-color: var(--accent); }
+
+section { margin: 2.75rem 0; scroll-margin-top: 1rem; }
+h2 {
+  font-size: 1.25rem; font-weight: 800; margin: 0 0 1rem;
+  display: flex; align-items: baseline; gap: 0.6rem;
+}
+h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; }
+h3 { font-size: 1rem; font-weight: 700; margin: 1.5rem 0 0.6rem; }
+p { margin: 0 0 0.9rem; }
+.lede { color: var(--ink-dim); }
+
+code { background: var(--surface-2); padding: 0.12em 0.42em; border-radius: 4px; font-size: 0.88em; }
+pre {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.84rem; margin: 0.9rem 0;
+}
+pre code { background: none; padding: 0; }
+
+table { width: 100%; border-collapse: collapse; margin: 0.9rem 0; font-size: 0.88rem; }
+th, td { text-align: left; padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--ink-dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+td code { white-space: nowrap; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.1rem 1.3rem; margin: 1rem 0;
+}
+.callout {
+  border-radius: 10px; padding: 0.9rem 1.15rem; margin: 1.1rem 0; font-size: 0.9rem;
+}
+.callout.good { background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 40%, transparent); color: var(--ink); }
+.callout.bad { background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); color: var(--ink); }
+.callout.warn { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); color: var(--ink); }
+.callout b { display: block; margin-bottom: 0.3rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.callout.good b { color: var(--good); }
+.callout.bad b { color: var(--bad); }
+.callout.warn b { color: var(--warn); }
+
+ol.steps { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.7rem; }
+ol.steps li::marker { color: var(--accent); font-weight: 700; }
+
+.chip { display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.5rem; border-radius: 99px; }
+.chip.good { background: var(--good-soft); color: var(--good); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+
+figure { margin: 1rem 0 0; }
+figcaption { margin-top: 0.6rem; font-size: 0.83rem; color: var(--ink-dim); }
+.diagram-frame { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: 0.82rem; color: var(--ink-dim); }
+</style>
+
+<div class="page">
+  <header class="hero">
+    <div class="eyebrow">Adiyan · Platform Reference</div>
+    <h1>How permissions work, and how to add a new agent's</h1>
+    <p>
+      Every A2A skill call and every MCP tool call in this mesh goes through the same one-line question:
+      does the caller's token allow this exact key? This guide is the reference for that system — how it
+      works today, how to grant a new agent what it needs, and how to reach WhatsApp without touching any of
+      the plumbing directly.
+    </p>
+    <nav class="toc">
+      <a href="#tokens">1. Tokens &amp; tiers</a>
+      <a href="#check">2. How a call is checked</a>
+      <a href="#reference">3. Tier reference</a>
+      <a href="#new-tier">4. Adding a tier</a>
+      <a href="#whatsapp">5. Reaching WhatsApp</a>
+      <a href="#pitfall">6. The bypass pitfall</a>
+      <a href="#checklist">7. Checklist</a>
+    </nav>
+  </header>
+
+  <section id="tokens">
+    <h2><span class="num">1.</span> Tokens &amp; tiers</h2>
+    <p class="lede">Defined in <code>mesh/lib/permissions.py</code>, config in <code>mesh/lib/permissions_config.json</code>.</p>
+    <p>
+      A <b>token</b> is a short-lived signed JWT (1 hour TTL) carrying two claims: <code>sub</code> (who's
+      calling — a WhatsApp chat_id, or an internal agent id like <code>"scheduler"</code>) and
+      <code>tier</code> (what they're allowed to do). Minted once, right when identity is actually known,
+      then carried on every downstream call — an A2A call's metadata, or an MCP tool's Authorization header.
+    </p>
+    <pre><code>from mesh.lib import permissions
+
+token = permissions.mint_token(subject='scheduler', tier='service')</code></pre>
+    <p>
+      A <b>tier</b> is just a named entry in <code>permissions_config.json</code> with an <code>allow</code>
+      list of permission keys. Nothing else defines what a caller can do — no per-agent hardcoding, no
+      special-casing by <code>sub</code>. The token's <code>tier</code> claim is the entire decision.
+    </p>
+  </section>
+
+  <section id="check">
+    <h2><span class="num">2.</span> How a call is actually checked</h2>
+    <p>Every check reduces to one function:</p>
+    <pre><code>is_allowed(claims, permission_key) -> bool
+  # '*' in tier's allow list, or permission_key in it. That's the whole rule.</code></pre>
+    <p>The <code>permission_key</code> shape depends on what's being called:</p>
+    <table>
+      <tr><th>Call type</th><th>Key shape</th><th>Example</th></tr>
+      <tr><td>A2A skill (agent → agent)</td><td><code>&lt;agent_id&gt;.&lt;skill_id&gt;</code></td><td><code>scheduler.run_routine</code></td></tr>
+      <tr><td>MCP tool</td><td><code>mcp.&lt;server_name&gt;.&lt;tool_name&gt;</code></td><td><code>mcp.whatsapp.send_message</code></td></tr>
+    </table>
+    <p>
+      An MCP tool checks this with one line at the top of the function —
+      <code>permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.send_message')</code> — which raises
+      <code>PermissionDenied</code> (turned into a normal tool-error result by the MCP SDK) if the caller's
+      tier doesn't allow it. No token, an expired one, or a bad signature is treated exactly like an
+      unauthenticated stranger — never a special error path.
+    </p>
+  </section>
+
+  <section id="reference">
+    <h2><span class="num">3.</span> Tier reference</h2>
+    <table>
+      <tr><th>Tier</th><th>Who</th><th>Scope</th></tr>
+      <tr><td><code>owner</code></td><td>The linked WhatsApp number itself</td><td><code>*</code> — everything</td></tr>
+      <tr><td><code>standard</code></td><td>A newly registered client, by default</td><td>Everything a client could do before permission checks existed</td></tr>
+      <tr><td><code>service</code></td><td>Scheduler, journal, and other shared internal callers</td><td>Deliberately narrow — <b>does not</b> include <code>mcp.whatsapp.send_message</code> since the 2026-08-30 lockdown</td></tr>
+      <tr><td><code>peer</code></td><td>Another Adiyan instance borrowing spare compute</td><td>Exactly one key: <code>compute_share.run_inference</code></td></tr>
+      <tr><td><code>config_server_otp</code></td><td>config_server's dashboard login flow</td><td><code>get_own_phone</code> + <code>send_message</code> only</td></tr>
+      <tr><td><code>adiyan_reader_service</code></td><td>AdiyanReader's own outbound calls</td><td><code>memory.get_book_page</code> + <code>cron_trigger.register_trigger</code></td></tr>
+    </table>
+    <p class="lede">
+      Notice the pattern: every agent that needs to send WhatsApp gets <b>its own tier</b>, not a share of
+      <code>service</code>. That's not incidental — see §6.
+    </p>
+  </section>
+
+  <section id="new-tier">
+    <h2><span class="num">4.</span> Adding a new tier</h2>
+    <p>One JSON block in <code>mesh/lib/permissions_config.json</code>, under <code>"tiers"</code>:</p>
+    <pre><code>"my_agent_service": {
+  "description": "my_agent's own outbound calls - state exactly why it needs each key.",
+  "allow": [
+    "mcp.whatsapp.get_own_phone",
+    "mcp.whatsapp.send_message"
+  ]
+}</code></pre>
+    <ol class="steps">
+      <li><b>Name it <code>&lt;agent_id&gt;_service</code></b> — the convention every tier in §3 already follows, and what <code>AdiyanAgent</code> (§5) assumes without being told.</li>
+      <li><b>List only what you actually call.</b> Least privilege isn't a policy here, it's the whole design — a tier with one extra key is a tier that can do one more thing than anyone meant it to.</li>
+      <li><b>Never reuse <code>service</code>.</b> It's shared by everything that hasn't been carved out yet — adding to it widens what <i>every</i> caller of that tier can do, not just yours.</li>
+    </ol>
+  </section>
+
+  <section id="whatsapp">
+    <h2><span class="num">5.</span> Reaching WhatsApp as a new agent</h2>
+    <p>The entire integration point is one class, from <code>mesh/lib/agent_sdk.py</code>:</p>
+    <pre><code>from mesh.lib.agent_sdk import AdiyanAgent
+
+agent = AdiyanAgent('my_agent_id')
+await agent.notify_owner("some processed result")</code></pre>
+    <p>
+      <code>AdiyanAgent.notify_owner()</code> derives the tier name (<code>my_agent_id_service</code>),
+      mints the token, resolves the owner's own phone via <code>get_own_phone</code>, builds the
+      <code>chat_id</code>, and sends through the gated <code>send_message</code> tool — all internal.
+      No agent ever needs to know a tier, a token, or <code>whatsapp_mcp</code>'s URL exist. It returns
+      <code>False</code> (never raises) on any failure — no phone resolved, tier not allowed, OpenWA
+      unreachable — matching this mesh's rule that a failed notification disappears quietly rather than
+      surfacing as an unhandled exception.
+    </p>
+    <div class="card">
+      <h3 style="margin-top:0">The only two things you still do by hand</h3>
+      <ol class="steps">
+        <li>Add the <code>&lt;agent_id&gt;_service</code> tier block from §4 — an explicit, human-reviewed grant, never auto-created by code.</li>
+        <li>Call <code>agent.notify_owner(text)</code> wherever your agent needs to tell the owner something.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="pitfall">
+    <h2><span class="num">6.</span> The bypass pitfall — don't construct <code>OpenWAService</code> directly</h2>
+    <p>
+      <code>mesh/lib/utilities/whatsapp/openwa_service.py</code>'s <code>OpenWAService</code> class talks
+      straight to OpenWA's REST API using the real API key from the vault. It has <b>no idea permissions
+      exist</b> — no token, no tier, no check of any kind.
+    </p>
+    <div class="callout bad">
+      <b>Confirmed in this codebase today</b>
+      Three call sites construct <code>OpenWAService</code> directly instead of going through
+      <code>whatsapp_mcp</code>: <code>mesh/scheduler/skills/run_routine.py</code>,
+      <code>mesh/adiyan_reader/skills/read_next_page.py</code>, and
+      <code>mesh/adiyan_reader/skills/dispatch_questions.py</code>. Each one can send a WhatsApp message
+      regardless of what any tier in <code>permissions_config.json</code> says — the 2026-08-30 lockdown
+      that removed <code>send_message</code> from <code>service</code> doesn't actually restrict Scheduler,
+      because Scheduler's send call never passes through the gate that lockdown closed.
+    </div>
+    <p>
+      <b>The rule going forward:</b> the only file that should ever construct <code>OpenWAService</code> is
+      <code>mesh/mcp/whatsapp/server.py</code> itself — that's the one place <code>enforce_mcp_permission()</code>
+      runs before it's touched. Every other caller reaches WhatsApp through <code>whatsapp_mcp</code>'s MCP
+      tools (ideally via <code>AdiyanAgent</code>, §5), never around them.
+    </p>
+    <figure>
+      <div class="diagram-frame">
+        <svg viewBox="0 0 760 190" role="img" aria-label="Correct path: any agent calls whatsapp_mcp, which checks permission and only then reaches OpenWA. Wrong path: an agent constructs OpenWAService directly, skipping the permission check entirely.">
+          <defs>
+            <marker id="dg-ok" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--good)"/></marker>
+            <marker id="dg-bad" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="var(--bad)"/></marker>
+          </defs>
+          <g font-size="12.5">
+            <rect x="10" y="20" width="150" height="44" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.5"/>
+            <text x="85" y="47" text-anchor="middle" font-weight="600">Your agent</text>
+
+            <rect x="300" y="20" width="170" height="44" rx="8" fill="var(--good-soft)" stroke="var(--good)"/>
+            <text x="385" y="47" text-anchor="middle" font-weight="700">whatsapp_mcp</text>
+
+            <rect x="580" y="20" width="150" height="44" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+            <text x="655" y="47" text-anchor="middle" font-weight="600">OpenWA</text>
+
+            <path d="M160,42 L300,42" fill="none" stroke="var(--good)" stroke-width="2" marker-end="url(#dg-ok)"/>
+            <path d="M470,42 L580,42" fill="none" stroke="var(--good)" stroke-width="2" marker-end="url(#dg-ok)"/>
+            <text x="230" y="34" text-anchor="middle" font-size="10.5" fill="var(--good)">call_tool(token=)</text>
+            <text x="525" y="34" text-anchor="middle" font-size="10.5" fill="var(--good)">✓ checked</text>
+
+            <rect x="10" y="120" width="150" height="44" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+            <text x="85" y="147" text-anchor="middle" font-weight="600">Your agent</text>
+            <path d="M160,142 C400,142 400,142 580,55" fill="none" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#dg-bad)"/>
+            <text x="380" y="165" text-anchor="middle" font-size="10.5" fill="var(--bad)">OpenWAService(raw vault key) — never checked</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Same destination, two different roads — only one of them has a checkpoint on it.</figcaption>
+    </figure>
+  </section>
+
+  <section id="checklist">
+    <h2><span class="num">7.</span> Checklist: adding a new agent's WhatsApp capability</h2>
+    <ol class="steps">
+      <li>Pick your agent's id — the same string you'd use as <code>AGENT_ID</code> in its <code>constants.py</code>.</li>
+      <li>Add a <code>&lt;agent_id&gt;_service</code> tier to <code>permissions_config.json</code> (§4), listing only the permission keys you actually call.</li>
+      <li><code>from mesh.lib.agent_sdk import AdiyanAgent</code>, construct once with your agent id.</li>
+      <li>Call <code>await agent.notify_owner(text)</code> wherever you need to reach the owner. Check the return value if you want to know whether it actually sent — don't assume.</li>
+      <li>Never import or construct <code>OpenWAService</code> yourself (§6).</li>
+    </ol>
+  </section>
+
+  <footer>
+    Reflects the mesh as of the AdiyanReader-tier and AdiyanAgent-SDK work — the OpenWAService bypass in §6
+    is a known, not-yet-fixed gap, called out here so nobody builds a fourth instance of it.
+  </footer>
+</div>
