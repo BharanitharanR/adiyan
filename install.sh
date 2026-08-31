@@ -341,9 +341,33 @@ else
 fi
 
 step "Secrets"
-echo -e "${DIM}  This mesh stores secrets in the macOS Keychain, not a .env file. Set one with:${RESET}"
-echo -e "${DIM}    .venv/bin/python3 -m mesh.tools.set_secret PERMISSIONS_JWT_SECRET${RESET}"
-echo -e "${DIM}  See which known keys are already set: .venv/bin/python3 -m mesh.tools.set_secret --list${RESET}"
+# PERMISSIONS_JWT_SECRET is pure internal signing material for
+# mesh/lib/permissions.py's short-lived tokens - unlike
+# CONFIG_DASHBOARD_PASSWORD, nobody ever needs to know its value or type it
+# in anywhere, so there's no reason to make a human invent and enter one by
+# hand. Confirmed live this was a real gap: install.sh only ever *printed*
+# instructions for setting it, easy to miss in the wall of text at the end
+# of a run, and every agent silently fails its permission checks
+# ("PERMISSIONS_JWT_SECRET is not set in the vault") until it's set. Generated
+# once, automatically, here - stored the same OS-Keychain way a manually-set
+# secret would be, via the same secrets_vault.py the rest of this mesh reads
+# from, so there's no separate code path to keep in sync.
+if python3 -c "
+from mesh.lib.secrets_vault import get_secret
+import sys
+sys.exit(0 if get_secret('PERMISSIONS_JWT_SECRET') else 1)
+" 2>/dev/null; then
+    skip "PERMISSIONS_JWT_SECRET already set"
+else
+    python3 -c "
+import secrets
+from mesh.lib.secrets_vault import set_secret
+set_secret('PERMISSIONS_JWT_SECRET', secrets.token_urlsafe(48))
+"
+    ok "Generated PERMISSIONS_JWT_SECRET"
+fi
+echo -e "${DIM}  Secrets live in the macOS Keychain, not a .env file. See which known keys are set:${RESET}"
+echo -e "${DIM}    .venv/bin/python3 -m mesh.tools.set_secret --list${RESET}"
 
 echo -e "\n${GREEN}${BOLD}Setup complete.${RESET}"
 echo -e "Next: run ${BOLD}mesh/start_all.sh${RESET} when you're ready to start the mesh - this script deliberately doesn't start anything itself."
