@@ -324,6 +324,17 @@ asyncio.run(main())
             echo
             echo "WhatsApp isn't linked yet - opening the registration page..."
             open "http://localhost:8500/register" 2>/dev/null || true
+            # Printed once here, not just left in penwa/data/.api-key for
+            # someone to go find by hand - confirmed live this was the
+            # actual sticking point on a real first-time setup: the
+            # dashboard's own login screen just says "the key is invalid"
+            # with no hint where a real one comes from.
+            if [ -f "$REPO_ROOT/penwa/data/.api-key" ]; then
+                echo
+                echo "Dashboard login key (paste this into the screen that just opened):"
+                echo "  $(cat "$REPO_ROOT/penwa/data/.api-key")"
+                echo
+            fi
         fi
     fi
 }

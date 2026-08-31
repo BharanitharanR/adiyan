@@ -208,6 +208,13 @@ require('./penwa/node_modules/puppeteer').launch({headless: true})
 if [ -d "penwa/node_modules" ] && verify_puppeteer_browser; then
     skip "penwa/node_modules already present, Chrome launches"
 else
+    # Cleared before the first attempt too, not just after one fails - a
+    # stale, corrupted cache left behind by an earlier interrupted run
+    # (network drop, Ctrl-C, a killed terminal) sits there silently and
+    # can poison this very first attempt the exact same way it poisoned
+    # the one that created it. Safe either way: this is only ever a
+    # download cache, never anything with real data in it.
+    rm -rf "$HOME/.cache/puppeteer"
     # Up to two attempts: a plain retry first (handles a non-zero npm exit
     # code), then - if npm looked fine but the browser still won't launch -
     # a harder reset that clears both the download cache and node_modules,
