@@ -216,7 +216,7 @@ require('./penwa/node_modules/puppeteer').launch({
 # A previous run may have already fallen back to a real installed Chrome
 # (see the PUPPETEER_EXECUTABLE_PATH branch below) - checked first so
 # re-running install.sh doesn't redo that whole dance every time.
-CONFIGURED_CHROME="$(grep "^PUPPETEER_EXECUTABLE_PATH=" penwa/.env 2>/dev/null | tail -1 | cut -d= -f2-)"
+CONFIGURED_CHROME="$(grep "^PUPPETEER_EXECUTABLE_PATH=" penwa/.env 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 
 if [ -d "penwa/node_modules" ] && verify_puppeteer_browser "$CONFIGURED_CHROME"; then
     skip "penwa/node_modules already present, Chrome launches"
