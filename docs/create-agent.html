@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adiyan: Create an Agent</title>
+<meta name="description" content="Name your agent, download a real working skeleton, no install needed to try it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Mulish:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#ECE2CA;
+  --paper-2:#E0D2AC;
+  --ink:#241F14;
+  --ink-soft:rgba(36,31,20,.66);
+  --ink-faint:rgba(36,31,20,.4);
+  --accent:#8A6B32;
+  --line:rgba(36,31,20,.16);
+  --shadow-soft:0 1px 2px rgba(36,31,20,.07), 0 10px 28px -14px rgba(36,31,20,.28);
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D;
+  --paper-2:#272013;
+  --ink:#ECE2CA;
+  --ink-soft:rgba(236,226,202,.68);
+  --ink-faint:rgba(236,226,202,.42);
+  --accent:#D6AD5F;
+  --line:rgba(236,226,202,.16);
+  --shadow-soft:0 1px 2px rgba(0,0,0,.32), 0 14px 34px -16px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box;}
+html{background:var(--paper);}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Mulish', sans-serif;
+  min-height:100vh;
+}
+::selection{ background:var(--accent); color:var(--paper); }
+a{ color:var(--accent); }
+.wrap{
+  max-width:640px;
+  margin:0 auto;
+  padding:4rem 1.5rem 6rem;
+}
+.back{
+  display:inline-block;
+  font-size:.85rem;
+  font-weight:700;
+  text-decoration:none;
+  color:var(--ink-soft);
+  margin-bottom:2.5rem;
+}
+.back:hover{ color:var(--accent); }
+.eyebrow{
+  font-size:.8rem;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+  color:var(--accent);
+  font-weight:700;
+  margin:0 0 .8rem;
+}
+h1{
+  font-family:'Playfair Display', Georgia, serif;
+  font-weight:700;
+  font-size:clamp(2rem,5vw,2.7rem);
+  line-height:1.15;
+  margin:0 0 1rem;
+  text-wrap:balance;
+}
+h1 em{ color:var(--accent); font-style:italic; }
+.lede{
+  font-size:1.08rem;
+  line-height:1.6;
+  color:var(--ink-soft);
+  margin:0 0 2.4rem;
+  max-width:52ch;
+}
+.field-label{
+  display:block;
+  font-size:.85rem;
+  font-weight:700;
+  margin-bottom:.5rem;
+}
+.field-row{
+  display:flex;
+  gap:.7rem;
+  flex-wrap:wrap;
+}
+#agent-name{
+  flex:1;
+  min-width:200px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:1rem;
+  padding:.85rem 1rem;
+  border-radius:.5rem;
+  border:1.5px solid var(--line);
+  background:var(--paper-2);
+  color:var(--ink);
+}
+#agent-name:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+button#generate{
+  font-family:'Mulish',sans-serif;
+  font-weight:700;
+  font-size:.95rem;
+  color:var(--paper);
+  background:var(--ink);
+  border:none;
+  border-radius:.5rem;
+  padding:.85rem 1.6rem;
+  cursor:pointer;
+  box-shadow:var(--shadow-soft);
+}
+button#generate:hover{ background:var(--accent); }
+button#generate:disabled{ opacity:.5; cursor:default; }
+.hint{
+  font-size:.82rem;
+  color:var(--ink-faint);
+  margin-top:.6rem;
+}
+.hint.error{ color:#B5482F; }
+:root[data-theme="dark"] .hint.error{ color:#E8836B; }
+.result{
+  margin-top:2rem;
+  padding:1.3rem 1.5rem;
+  border-radius:.7rem;
+  background:var(--paper-2);
+  border:1px solid var(--line);
+  display:none;
+}
+.result.show{ display:block; }
+.result p{ margin:0 0 .6rem; font-size:.92rem; line-height:1.55; }
+.result code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  background:var(--ink);
+  color:var(--paper);
+  padding:.2rem .45rem;
+  border-radius:.3rem;
+  font-size:.85rem;
+}
+.file-list{
+  margin-top:2.5rem;
+  padding-top:1.8rem;
+  border-top:1px solid var(--line);
+}
+.file-list p.label{
+  font-size:.8rem;
+  text-transform:uppercase;
+  letter-spacing:.1em;
+  color:var(--ink-faint);
+  font-weight:700;
+  margin:0 0 .8rem;
+}
+.file-list ul{
+  margin:0;
+  padding:0;
+  list-style:none;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.85rem;
+  color:var(--ink-soft);
+  line-height:1.9;
+}
+.note{
+  margin-top:2.5rem;
+  font-size:.85rem;
+  color:var(--ink-faint);
+  line-height:1.6;
+  max-width:52ch;
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <a class="back" href="index.html">&larr; Back to Adiyan</a>
+  <p class="eyebrow">Create an agent</p>
+  <h1>Name it. <em>Download it.</em></h1>
+  <p class="lede">This generates the same skeleton as running <code style="font-family:ui-monospace,monospace;background:var(--paper-2);padding:.15rem .4rem;border-radius:.3rem;">python3 -m mesh.tools.bootstrap_agent</code> locally, done here in your browser instead. Nothing is uploaded anywhere. The zip is built on your own machine, right now, in this tab.</p>
+
+  <label class="field-label" for="agent-name">Agent name (snake_case)</label>
+  <div class="field-row">
+    <input type="text" id="agent-name" placeholder="weather_agent" autocomplete="off" spellcheck="false">
+    <button id="generate" type="button">Generate zip</button>
+  </div>
+  <p class="hint" id="hint">Lowercase letters, digits, and underscores. Must start with a letter.</p>
+
+  <div class="result" id="result">
+    <p id="result-text"></p>
+  </div>
+
+  <div class="file-list">
+    <p class="label">What's inside</p>
+    <ul>
+      <li>constants.py</li>
+      <li>agent_executor.py</li>
+      <li>server.py</li>
+      <li>skills_catalog.py</li>
+      <li>skills/roll_dice.py</li>
+      <li>runtime_config.json</li>
+      <li>seed_config.json</li>
+      <li>README.md</li>
+    </ul>
+  </div>
+
+  <p class="note">Unzip it into your Adiyan repo's <code style="font-family:ui-monospace,monospace;">mesh/</code> directory, then run it with <code style="font-family:ui-monospace,monospace;">python3 -m mesh.&lt;name&gt;.server</code>. It still has the example's dice-roll logic in it. Replace <code style="font-family:ui-monospace,monospace;">skills/roll_dice.py</code> and <code style="font-family:ui-monospace,monospace;">skills_catalog.py</code> with your own. The assigned port is picked from the name, not checked against what's actually running on your machine, so confirm it's free before starting the agent.</p>
+</div>
+
+<script>
+(function(){
+  // Theme: matches the main page's own light/dark preference if it was
+  // ever set there (same localStorage key, same beige-by-default rule).
+  try{
+    var saved = localStorage.getItem('adiyan-deck-theme');
+    document.documentElement.setAttribute('data-theme', saved === 'dark' ? 'dark' : 'light');
+  }catch(e){}
+})();
+
+// ---------- Template file contents (mirrors mesh/example_agent/ exactly) ----------
+var TEMPLATE_AGENT_ID = 'example_agent';
+var TEMPLATE_CLASS_PREFIX = 'ExampleAgent';
+var TEMPLATE_DISPLAY_NAME = 'Example Agent';
+
+var FILES = {
+'constants.py':
+`"""Example Agent's own identity constants.
+
+This whole agent exists as a reference implementation - see this
+directory's README.md for what plugging in a new agent actually involves,
+and what the harness gives you for free just by following this shape."""
+AGENT_ID = 'example_agent'
+HOST = '127.0.0.1'
+PORT = 8440
+AGENT_URL = f'http://{HOST}:{PORT}'
+`,
+
+'agent_executor.py':
+`"""
+Example Agent's AgentExecutor. Same design as every other agent under
+mesh/ - copied from mesh/journal/agent_executor.py, the smallest real one,
+and adapted for this agent's one skill.
+
+Everything in this file except the two lines that mention roll_dice by
+name is boilerplate every agent in this mesh shares verbatim: the A2A
+task lifecycle, the DataPart fast-path (a caller who already knows exactly
+which skill and params it wants skips the LLM routing entirely), the
+plain-language routing fallback, and the permission check. A new agent
+author copies this file and changes only what's marked below - they don't
+design any of it themselves."""
+from pathlib import Path
+from typing import Any, Dict
+
+from pydantic import BaseModel, Field
+
+from a2a.helpers import (
+    get_data_parts,
+    get_message_text,
+    new_data_part,
+    new_task_from_user_message,
+    new_text_message,
+)
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.server.tasks import TaskUpdater
+
+from mesh.example_agent.constants import AGENT_ID
+from mesh.example_agent.skills import roll_dice
+from mesh.example_agent.skills_catalog import get_skills
+from mesh.lib import config_sdk, permissions
+from mesh.lib.config import load_runtime_config
+from mesh.lib.skill_router import route
+
+AGENT_CODE_DIR = Path(__file__).parent
+
+
+# --- Change this: one extraction schema per skill this agent has ---
+class RollDiceParams(BaseModel):
+    sides: int = Field(default=6, description="How many sides the die has. Default to 6 if the caller didn't say.")
+
+
+EXTRACTION_SCHEMAS = {'roll_dice': RollDiceParams}
+# --- end of what changes per-skill ---
+
+
+class ExampleAgentExecutor(AgentExecutor):
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        if context.current_task:
+            task = context.current_task
+        else:
+            task = new_task_from_user_message(context.message)
+            await event_queue.enqueue_event(task)
+
+        updater = TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id)
+        await updater.start_work()
+
+        # Fast path: a caller (another agent, or a UI) that already knows
+        # exactly which skill and params it wants skips routing entirely -
+        # this is how agent-to-agent calls in this mesh work, not just
+        # human chat.
+        data_parts = get_data_parts(context.message.parts)
+        if data_parts:
+            payload = dict(data_parts[0])
+            skill_id = payload.pop('skill_id', None)
+            params: Dict[str, Any] = payload
+        else:
+            # Plain-language path: the same skill_router.route() every
+            # agent in this mesh uses, classifying against get_skills()'s
+            # descriptions (skills_catalog.py) and extracting params against
+            # EXTRACTION_SCHEMAS above. Nothing here is example-agent-
+            # specific - this whole block is copy-pasted unchanged.
+            text = get_message_text(context.message)
+            cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
+            skills = await get_skills()
+            try:
+                skill_id, ambiguous, params = await route(
+                    text, skills, EXTRACTION_SCHEMAS,
+                    classify_cfg=cfg['classify_skill'],
+                    extract_cfg=cfg['extract_parameters'],
+                )
+            except Exception as e:
+                await updater.failed(new_text_message(f'Could not process request: {e}'))
+                return
+            if skill_id is None and ambiguous:
+                options = ', '.join(ambiguous)
+                await updater.requires_input(
+                    new_text_message(f'Did you mean one of: {options}? Please clarify which one.')
+                )
+                return
+            if skill_id is None:
+                await updater.reject(new_text_message("None of my skills match that request."))
+                return
+
+        # --- Change this: dispatch to whichever skill_id this agent supports ---
+        if skill_id != 'roll_dice':
+            await updater.failed(new_text_message(f'Unknown skill_id: {skill_id}'))
+            return
+
+        # Permission check - every call into this mesh goes through the
+        # same permissions.is_allowed(), regardless of which agent it's
+        # calling. A brand-new agent gets real access control for free,
+        # just by including this one line.
+        claims = permissions.verify_token(context.metadata.get('token'))
+        if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):
+            await updater.reject(new_text_message('Not authorized for this.'))
+            return
+
+        try:
+            result = await roll_dice.run(**params)
+        except Exception as e:
+            await updater.failed(new_text_message(f'Could not roll the dice: {e}'))
+            return
+        # --- end of what changes per-skill ---
+
+        await updater.add_artifact(parts=[new_data_part(result)])
+        await updater.complete()
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError('Cancel not yet designed for this agent.')
+`,
+
+'server.py':
+`"""
+Example Agent - A2A server entrypoint. Same shape as every other agent's
+server.py (copied from mesh/journal/server.py, the smallest real one).
+
+Run from the repo root as \`python -m mesh.example_agent.server\`, then
+either register it with mesh.agent_registry so the orchestrator can route
+to it, or call it directly for testing:
+
+    curl -s http://127.0.0.1:8440/.well-known/agent-card.json
+
+Nothing in this file is example-agent-specific except the two \`Example\`
+names and the description string - a new agent's server.py is this file
+with its own AGENT_ID/name/skills swapped in.
+"""
+import asyncio
+from pathlib import Path
+
+from mesh.example_agent.agent_executor import ExampleAgentExecutor
+from mesh.example_agent.constants import AGENT_ID, HOST, PORT
+from mesh.example_agent.skills_catalog import get_skills
+from mesh.lib import config_sdk
+from mesh.lib.bootstrap import serve
+from mesh.lib.card import adiyan_card
+from mesh.lib.paths import tasks_db_path
+
+AGENT_CODE_DIR = Path(__file__).parent
+
+
+async def _load_startup_config() -> dict:
+    # Every key in seed_config.json goes into Mongo right now, not lazily
+    # the first time whatever branch happens to touch it - see
+    # mesh/lib/config_sdk.py's seed_from_file(). This is also what makes
+    # the descriptions in skills_catalog.py editable from the config
+    # dashboard afterward, without touching this file again.
+    await config_sdk.seed_from_file(AGENT_ID, AGENT_CODE_DIR)
+    host = await config_sdk.get_constant(
+        AGENT_ID, 'host', HOST,
+        description='Which network interface this agent binds to. Changing this needs a restart to take effect.',
+    )
+    port = await config_sdk.get_constant(
+        AGENT_ID, 'port', PORT,
+        description='Which port this agent listens on. Changing this needs a restart to take effect.',
+    )
+    description = await config_sdk.get_constant(
+        AGENT_ID, 'card_description',
+        'Reference example agent - rolls a die with a given number of sides.',
+        description='What this agent does, shown in its A2A agent card.',
+    )
+    skills = await get_skills()
+    return {'host': host, 'port': port, 'description': description, 'skills': skills}
+
+
+if __name__ == '__main__':
+    startup = asyncio.run(_load_startup_config())
+
+    agent_card = adiyan_card(
+        name='Example Agent',
+        description=startup['description'],
+        skills=startup['skills'],
+        host=startup['host'],
+        port=startup['port'],
+    )
+    serve(
+        agent_card=agent_card,
+        executor=ExampleAgentExecutor(),
+        host=startup['host'],
+        port=startup['port'],
+        tasks_db_path=tasks_db_path(AGENT_ID),
+        agent_id=AGENT_ID,
+        skills_refresher=get_skills,
+    )
+`,
+
+'skills_catalog.py':
+`"""Example Agent's AgentSkill catalog - same single-source-of-truth pattern
+as every other agent's skills_catalog.py (see mesh/journal/skills_catalog.py
+for the smallest real one this was copied from).
+
+description/examples are Mongo-backed via config_sdk, so they're editable
+from the config dashboard without a restart - the orchestrator picks up an
+edited description the next time it routes a message, since this whole
+function is rebuilt on every call rather than cached at import time.
+
+This is the one place the orchestrator actually reads to decide "does this
+conversation belong to Example Agent, or to someone else?" - the
+description below IS the routing logic, in plain English, not a
+regex or a keyword list."""
+from typing import Any, Dict, List
+
+from a2a.types import AgentSkill
+
+from mesh.example_agent.constants import AGENT_ID
+from mesh.lib import config_sdk
+
+_DEFAULT_DESCRIPTIONS: Dict[str, str] = {
+    'roll_dice': "Roll a die with a given number of sides and return the result.",
+}
+
+_DEFAULT_EXAMPLES: Dict[str, List[str]] = {
+    'roll_dice': [
+        'Roll a die',
+        'Roll a 20 sided die',
+        'Flip a coin',  # a coin is just a 2-sided die - the extractor maps this naturally
+    ],
+}
+
+_STRUCTURE: Dict[str, Dict[str, Any]] = {
+    'roll_dice': {
+        'name': 'Roll Dice', 'tags': ['example', 'random'],
+        'input_modes': ['text/plain'], 'output_modes': ['application/json'],
+    },
+}
+
+
+async def get_skills() -> List[AgentSkill]:
+    """Rebuilt on every call - config_sdk's own short-TTL cache keeps this
+    cheap while still picking up a dashboard edit within one cache window,
+    not only at process startup."""
+    skills = []
+    for skill_id, structure in _STRUCTURE.items():
+        description = await config_sdk.get_constant(
+            AGENT_ID, f'skill_{skill_id}_description', _DEFAULT_DESCRIPTIONS[skill_id],
+        )
+        examples = await config_sdk.get_constant(
+            AGENT_ID, f'skill_{skill_id}_examples', _DEFAULT_EXAMPLES[skill_id],
+        )
+        skills.append(AgentSkill(id=skill_id, description=description, examples=examples, **structure))
+    return skills
+`,
+
+'skills/roll_dice.py':
+`"""
+roll_dice's real body - the entire thing a new agent author has to write.
+No permission check, no A2A wiring, no config loading in here: all of that
+already happened before this function was ever called (see
+agent_executor.py). This is just the actual work.
+"""
+import random
+from typing import Any, Dict
+
+
+async def run(sides: int = 6) -> Dict[str, Any]:
+    if sides < 2:
+        raise ValueError('A die needs at least 2 sides.')
+    result = random.randint(1, sides)
+    return {'sides': sides, 'result': result}
+`,
+
+'runtime_config.json':
+`{
+  "stages": {
+    "classify_skill": {
+      "model": "qwen3:8b-16k",
+      "temperature": 0.3,
+      "timeout": 60
+    },
+    "extract_parameters": {
+      "model": "qwen3:8b-16k",
+      "temperature": 0.3,
+      "timeout": 60
+    }
+  }
+}
+`,
+
+'seed_config.json':
+`{
+  "constants": {}
+}
+`,
+
+'README.md':
+`# Example Agent
+
+A real, working agent that does almost nothing (rolls a die), kept
+deliberately trivial so what's boilerplate and what's actually new per
+agent is obvious at a glance.
+
+## Run it
+
+\`\`\`bash
+python -m mesh.example_agent.server
+\`\`\`
+
+Then either call it directly for testing:
+
+\`\`\`bash
+curl -s http://127.0.0.1:8440/.well-known/agent-card.json
+\`\`\`
+
+...or register it with \`mesh.agent_registry\` so the orchestrator can route
+conversations to it like any other agent.
+
+## What's still yours to write
+
+Just the logic in \`skills/roll_dice.py\`, and the plain-language
+description in \`skills_catalog.py\` that tells the orchestrator when to
+reach for it. That's genuinely the whole job.
+`
+};
+
+// ---------- Name transforms (mirrors mesh/tools/bootstrap_agent.py) ----------
+function pascalCase(snake){
+  return snake.split('_').map(function(p){ return p.charAt(0).toUpperCase() + p.slice(1); }).join('');
+}
+function titleCase(snake){
+  return snake.split('_').map(function(p){ return p.charAt(0).toUpperCase() + p.slice(1); }).join(' ');
+}
+// Deterministic from the name, not checked against any real running
+// machine - this page has no way to know what's actually bound on
+// yours. Meant to reduce collisions between two generated agents, not
+// to guarantee one. Confirm it's free before running the agent.
+function portFromName(name){
+  var hash = 0;
+  for(var i = 0; i < name.length; i++){
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  }
+  return 8450 + (Math.abs(hash) % 400);
+}
+
+function renderFiles(name){
+  var classPrefix = pascalCase(name);
+  var displayName = titleCase(name);
+  var port = portFromName(name);
+  var out = {};
+  Object.keys(FILES).forEach(function(path){
+    var text = FILES[path];
+    text = text.split(TEMPLATE_AGENT_ID).join(name);
+    text = text.split(TEMPLATE_CLASS_PREFIX).join(classPrefix);
+    text = text.split(TEMPLATE_DISPLAY_NAME).join(displayName);
+    text = text.split('PORT = 8440').join('PORT = ' + port);
+    text = text.split('127.0.0.1:8440').join('127.0.0.1:' + port);
+    out[name + '/' + path] = text;
+  });
+  return { files: out, port: port };
+}
+
+// ---------- Minimal ZIP writer (STORED method, no external library) ----------
+// Builds a real, valid .zip readable by Finder/Explorer/unzip - every
+// file kept uncompressed (method 0) so the format is a plain CRC32 +
+// local-header + central-directory structure, nothing more.
+var CRC_TABLE = (function(){
+  var table = [];
+  for(var n = 0; n < 256; n++){
+    var c = n;
+    for(var k = 0; k < 8; k++){
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function crc32(bytes){
+  var crc = 0xFFFFFFFF;
+  for(var i = 0; i < bytes.length; i++){
+    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function writeUint16(arr, offset, value){ arr[offset] = value & 0xFF; arr[offset+1] = (value >>> 8) & 0xFF; }
+function writeUint32(arr, offset, value){
+  arr[offset] = value & 0xFF; arr[offset+1] = (value >>> 8) & 0xFF;
+  arr[offset+2] = (value >>> 16) & 0xFF; arr[offset+3] = (value >>> 24) & 0xFF;
+}
+function buildZip(filesMap){
+  var encoder = new TextEncoder();
+  var localParts = [];
+  var centralParts = [];
+  var offset = 0;
+  var dosTime = 0, dosDate = (1 << 5) | 1; // fixed, harmless placeholder date/time
+
+  Object.keys(filesMap).forEach(function(path){
+    var nameBytes = encoder.encode(path);
+    var dataBytes = encoder.encode(filesMap[path]);
+    var crc = crc32(dataBytes);
+
+    var localHeader = new Uint8Array(30 + nameBytes.length);
+    writeUint32(localHeader, 0, 0x04034b50);
+    writeUint16(localHeader, 4, 20);
+    writeUint16(localHeader, 6, 0);
+    writeUint16(localHeader, 8, 0);
+    writeUint16(localHeader, 10, dosTime);
+    writeUint16(localHeader, 12, dosDate);
+    writeUint32(localHeader, 14, crc);
+    writeUint32(localHeader, 18, dataBytes.length);
+    writeUint32(localHeader, 22, dataBytes.length);
+    writeUint16(localHeader, 26, nameBytes.length);
+    writeUint16(localHeader, 28, 0);
+    localHeader.set(nameBytes, 30);
+
+    localParts.push(localHeader, dataBytes);
+
+    var centralHeader = new Uint8Array(46 + nameBytes.length);
+    writeUint32(centralHeader, 0, 0x02014b50);
+    writeUint16(centralHeader, 4, 20);
+    writeUint16(centralHeader, 6, 20);
+    writeUint16(centralHeader, 8, 0);
+    writeUint16(centralHeader, 10, 0);
+    writeUint16(centralHeader, 12, dosTime);
+    writeUint16(centralHeader, 14, dosDate);
+    writeUint32(centralHeader, 16, crc);
+    writeUint32(centralHeader, 20, dataBytes.length);
+    writeUint32(centralHeader, 24, dataBytes.length);
+    writeUint16(centralHeader, 28, nameBytes.length);
+    writeUint16(centralHeader, 30, 0);
+    writeUint16(centralHeader, 32, 0);
+    writeUint16(centralHeader, 34, 0);
+    writeUint16(centralHeader, 36, 0);
+    writeUint32(centralHeader, 38, 0);
+    writeUint32(centralHeader, 42, offset);
+    centralHeader.set(nameBytes, 46);
+    centralParts.push(centralHeader);
+
+    offset += localHeader.length + dataBytes.length;
+  });
+
+  var centralStart = offset;
+  var centralSize = centralParts.reduce(function(sum, p){ return sum + p.length; }, 0);
+
+  var eocd = new Uint8Array(22);
+  writeUint32(eocd, 0, 0x06054b50);
+  writeUint16(eocd, 4, 0);
+  writeUint16(eocd, 6, 0);
+  writeUint16(eocd, 8, centralParts.length);
+  writeUint16(eocd, 10, centralParts.length);
+  writeUint32(eocd, 12, centralSize);
+  writeUint32(eocd, 16, centralStart);
+  writeUint16(eocd, 20, 0);
+
+  return new Blob(localParts.concat(centralParts, [eocd]), { type: 'application/zip' });
+}
+
+// ---------- Wiring ----------
+var input = document.getElementById('agent-name');
+var btn = document.getElementById('generate');
+var hint = document.getElementById('hint');
+var result = document.getElementById('result');
+var resultText = document.getElementById('result-text');
+var NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+btn.addEventListener('click', function(){
+  var name = input.value.trim();
+  if(!NAME_PATTERN.test(name)){
+    hint.textContent = 'Lowercase letters, digits, and underscores only. Must start with a letter.';
+    hint.classList.add('error');
+    result.classList.remove('show');
+    return;
+  }
+  hint.classList.remove('error');
+  hint.textContent = 'Lowercase letters, digits, and underscores. Must start with a letter.';
+
+  var rendered = renderFiles(name);
+  var blob = buildZip(rendered.files);
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = name + '.zip';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+
+  resultText.innerHTML = 'Downloaded <code>' + name + '.zip</code>, on port <code>' + rendered.port + '</code>. Unzip it into <code>mesh/</code>, then run <code>python3 -m mesh.' + name + '.server</code>.';
+  result.classList.add('show');
+});
+
+input.addEventListener('keydown', function(e){
+  if(e.key === 'Enter') btn.click();
+});
+</script>
+</body>
+</html>
