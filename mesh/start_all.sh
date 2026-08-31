@@ -86,6 +86,22 @@ else
     PHOENIX_BIN="phoenix"
 fi
 
+# Regenerated every run, not committed as a static file - confirmed live:
+# mesh/qdrant/config.yaml had '/Users/bharani/.Adiyan/qdrant_storage'
+# checked into git, so qdrant failed with "Permission denied" trying to
+# create that exact path on every machine that isn't this one. Rust's own
+# config loader doesn't do tilde expansion, so this has to be a real
+# absolute path written out with the current user's actual $HOME, not a
+# committed value baked in for whoever happened to write the file.
+cat > "$REPO_ROOT/mesh/qdrant/config.yaml" <<EOF
+storage:
+  storage_path: $HOME/.Adiyan/qdrant_storage
+
+service:
+  http_port: 6339
+  grpc_port: 6340
+EOF
+
 ACTION="${1:-start}"
 shift 2>/dev/null || true
 TARGET_NAMES=("$@")
