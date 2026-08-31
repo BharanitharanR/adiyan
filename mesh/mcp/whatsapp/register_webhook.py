@@ -60,7 +60,7 @@ def main() -> None:
         # webhook_to_message for how the two are told apart - watermark
         # presence separates Adiyan's own echoed replies from genuine
         # owner-composed self-chat/self-phone messages).
-        'events': ['message.received'],
+        'events': ['message.received', 'message.sent'],
         'retryCount': 0,
     }
 
