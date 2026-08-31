@@ -235,6 +235,20 @@ launch_component() {
 }
 
 do_start() {
+    # OpenWA persists its dashboard API key to penwa/data/.api-key on first
+    # boot, but doesn't reliably create that directory itself first.
+    # Confirmed live on a real fresh clone: "pre-write chmod 0o600 failed
+    # for .../penwa/data/.api-key: ENOENT: no such file or directory" on
+    # every single restart - meaning OpenWA generated a brand new random
+    # key every time, with nothing on disk to persist the old one to. The
+    # sync step below (penwa/data/.api-key -> OPENWA_API_KEY in the vault)
+    # only runs `if [ -f ... ]`, so it silently never fired either. Every
+    # authenticated call this mesh makes into OpenWA 401'd forever as a
+    # result - indistinguishable, from a WhatsApp message's perspective,
+    # from the message never arriving at all. Created here, unconditionally,
+    # before OpenWA ever starts - a no-op if it already exists.
+    mkdir -p "$REPO_ROOT/penwa/data"
+
     refresh_listening
     echo "Starting:"
     for entry in "${COMPONENTS[@]}"; do
