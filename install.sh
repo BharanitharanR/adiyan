@@ -191,7 +191,19 @@ fi
 if [ -d "penwa/node_modules" ]; then
     skip "penwa/node_modules already present"
 else
-    npm --prefix penwa install
+    # One retry, clearing Puppeteer's own download cache first - confirmed
+    # live: 'npm install' failed with "The browser folder ... exists but
+    # the executable ... is missing", which is Puppeteer's chrome-headless-
+    # shell download having been interrupted (a network hiccup, not
+    # anything wrong with this repo) on a previous attempt, leaving a
+    # half-there folder that a fresh install won't overwrite on its own.
+    # The cache directory is just a download cache - safe to delete, it
+    # only costs a re-download.
+    if ! npm --prefix penwa install; then
+        echo -e "${DIM}  npm install failed - clearing Puppeteer's download cache and retrying once${RESET}"
+        rm -rf "$HOME/.cache/puppeteer"
+        npm --prefix penwa install
+    fi
     ok "penwa dependencies installed"
 fi
 
