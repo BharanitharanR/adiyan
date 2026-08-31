@@ -68,19 +68,28 @@ else
 fi
 
 PYTHON_BIN=""
+# Upper-bounded at 3.13, not open-ended "3.11+" - confirmed live: a
+# machine whose only python3 was 3.14 passed the old "minor >= 11" check,
+# started the install, and then failed deep inside pip with
+# "Could not find a version that satisfies the requirement
+# llama-index-vector-stores-qdrant>=0.10.0", since that package (and
+# several others in requirements.txt) haven't published anything
+# compatible with 3.14 yet. Caught here instead, with an actionable
+# message, rather than surfacing as an opaque pip resolution error two
+# steps later.
 for candidate in python3.11 python3.12 python3.13 python3; do
     if command -v "$candidate" >/dev/null 2>&1; then
         version="$("$candidate" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
         major="${version%%.*}"
         minor="${version##*.}"
-        if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ]; then
+        if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && [ "$minor" -le 13 ]; then
             PYTHON_BIN="$candidate"
             break
         fi
     fi
 done
 if [ -z "$PYTHON_BIN" ]; then
-    fail "Python 3.11+ not found - install with: brew install python@3.11"
+    fail "Python 3.11-3.13 not found (a newer or older python3 doesn't satisfy this repo's dependencies) - install with: brew install python@3.13"
 else
     ok "Python ($PYTHON_BIN, $("$PYTHON_BIN" --version 2>&1))"
 fi
