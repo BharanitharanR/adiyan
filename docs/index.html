@@ -205,6 +205,20 @@ h1,h2,h3{
   width:min(100%,360px);
   margin-inline:auto;
 }
+.diagram-figure{
+  margin:0;
+  color:var(--ink);
+  width:min(100%,560px);
+  margin-inline:auto;
+}
+.diagram-figure svg{ display:block; }
+.diagram-figure figcaption{
+  margin-top:.9rem;
+  font-size:.85rem;
+  color:var(--ink-faint);
+  text-align:center;
+  line-height:1.5;
+}
 .thread{
   display:flex;
   flex-direction:column;
@@ -563,24 +577,56 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">The idea</p>
       <h2 class="h2">Underneath, it's <em>a mesh, not one bot.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">Adiyan is the harness itself, not a single bot: a modular mesh where each agent does one job well, and an orchestrator routes every conversation to whichever one actually knows how to help. Memory works on two timescales, the recent thread so you're never re-explaining yourself, and a longer-term knowledge base it can search and cite back from, real retrieval, not a guess. AdiyanReader, the agent that reads a book back to you one page a night, isn't a separate product; it's built on this same harness, the same way any new agent would be. All of it self-hosted, coordinating on your own machine, not rented from someone else's cloud. The agent your clientele actually talks to reaches them through WhatsApp, the app they already have open: tailored to how your business talks, and built on a harness made to grow past just that.</p>
+      <p class="prose" style="margin-top:1.2rem;">Adiyan is the harness itself. Each agent does one job well. An orchestrator routes every conversation to whichever one knows how to help. All of it self-hosted, on your own machine.</p>
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">Self-hosted, not SaaS</span>
         <span class="chip">A mesh, not one bot</span>
         <span class="chip">Modular by design</span>
         <span class="chip">Short + long-term memory</span>
         <span class="chip">End-to-end encrypted, on WhatsApp</span>
-        <span class="chip">One phrase to join</span>
-        <span class="chip">One phrase to leave</span>
       </div>
     </div>
-    <div class="phone">
-      <div class="thread">
-        <div class="bubble bubble--sys">Today</div>
-        <div class="bubble bubble--out">Quick one before tomorrow's call.</div>
-        <div class="bubble bubble--out">how do I push back on this investor's terms without sounding difficult?</div>
-        <div class="bubble bubble--in">Start by naming the outcome you both actually want, out loud. That shifts it from "pushing back" to "solving a problem together." Then bring one specific alternative, not just an objection.<span class="tag">Adiyan · just now</span></div>
-      </div>
+    <div>
+      <figure class="diagram-figure">
+        <svg viewBox="0 0 640 400" role="img" aria-label="WhatsApp connects to Adiyan's orchestrator, which routes each conversation to the Memory, AdiyanReader, or Scheduler agent, all running inside one boundary on your own machine." style="width:100%;height:auto;">
+          <defs>
+            <marker id="dArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="Mulish, sans-serif">
+            <!-- your machine boundary -->
+            <rect x="140" y="20" width="480" height="360" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5" stroke-dasharray="5 6"/>
+            <text x="380" y="44" text-anchor="middle" font-size="13" letter-spacing=".08em" fill="currentColor" fill-opacity=".55">YOUR OWN MACHINE</text>
+
+            <!-- WhatsApp -->
+            <rect x="10" y="170" width="110" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="65" y="205" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">WhatsApp</text>
+
+            <line x1="120" y1="200" x2="192" y2="200" stroke="currentColor" stroke-width="2" marker-end="url(#dArrow)"/>
+
+            <!-- orchestrator -->
+            <rect x="196" y="165" width="150" height="70" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="271" y="196" text-anchor="middle" font-size="14" font-weight="700" fill="var(--paper)">Orchestrator</text>
+            <text x="271" y="216" text-anchor="middle" font-size="11" fill="var(--paper)" fill-opacity=".85">routes by meaning</text>
+
+            <!-- branches -->
+            <line x1="346" y1="185" x2="440" y2="70"  stroke="currentColor" stroke-width="2" marker-end="url(#dArrow)"/>
+            <line x1="346" y1="200" x2="440" y2="200" stroke="currentColor" stroke-width="2" marker-end="url(#dArrow)"/>
+            <line x1="346" y1="215" x2="440" y2="330" stroke="currentColor" stroke-width="2" marker-end="url(#dArrow)"/>
+
+            <rect x="444" y="40"  width="150" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="519" y="75" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor">Memory</text>
+
+            <rect x="444" y="170" width="150" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="519" y="205" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor">AdiyanReader</text>
+
+            <rect x="444" y="300" width="150" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="519" y="335" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor">Scheduler</text>
+          </g>
+        </svg>
+        <figcaption>One conversation in, routed to whichever agent actually knows how to help, all inside one boundary on your own machine.</figcaption>
+      </figure>
     </div>
   </div>
 </section>
@@ -590,15 +636,15 @@ h1,h2,h3{
   <p class="eyebrow">Tailored &amp; extensible</p>
   <h2 class="h2">Configured for you today. <em>Built to grow with you.</em></h2>
   <div class="control-list" style="margin-top:1rem;">
-    <div class="control-item"><span class="control-mark">i.</span><p><strong>Tailored to how your business talks, today.</strong> Adiyan's persona (its voice, its knowledge, the way it engages your clientele) is configured per business, not hardcoded. Change it without touching code, and it takes effect immediately. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Designed to extend further.</strong> Live web lookups, and, for the owner alone, private email and calendar access right from the same WhatsApp thread, are on the roadmap next. Never something a client's own conversation could reach. <span class="chip-soon" style="margin-left:.4em;">Coming soon</span></p></div>
-    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Managed from a browser tab, not a config file.</strong> A dashboard on your own machine lets you tune each agent's model, temperature, and behavior, watch which agents are online, and restart one on the spot, all without opening a terminal or touching code. It's a harness, not a single sealed bot: self-hosted, so what agent joins the mesh next is a decision you make from that same dashboard, not a plan a vendor sells back to you a feature at a time. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">iv.</span><p><strong>Set it once, and it runs itself.</strong> Tell Adiyan, in plain language, to check in with someone every week, send a reminder every night, or send a one-time note today. No code, no schedule to configure by hand. It figures out the timing and handles the sending. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">v.</span><p><strong>Every key locked down.</strong> Everything Adiyan needs to connect to the outside world is stored in your Mac's own encrypted credential vault, the same one that protects your saved passwords, never sitting in a plain text file on disk. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">vi.</span><p><strong>Recognizes a routine by what it means.</strong> Every recurring check-in is matched against your existing routines by meaning, not just by name, so "did I get to office" and "office check-in" are understood as close enough to be the same thing. Still a live area of work: two routines with genuinely different schedules but similar wording have slipped through as separate before, so today it's a safety net worth double-checking, not a guarantee. <span class="chip-soon" style="margin-left:.4em;">Maturing</span></p></div>
-    <div class="control-item"><span class="control-mark">vii.</span><p><strong>Instant, on your own words.</strong> Set a routine to fire the moment someone sends an exact phrase, like "reached office," "closed the deal", instead of waiting on a schedule. It can log the moment quietly or run the full routine right then. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
-    <div class="control-item"><span class="control-mark">viii.</span><p><strong>It'll start noticing things on its own.</strong> For the owner only: looking across real engagement: who's active, who's drifting, what routines are landing, and surfacing what it finds. An early version of this already runs; it's being tuned for judgment before it's allowed to draft a routine on your behalf. Every routine it proposes would stay switched off until you turn it on, and it'd never be allowed to target anyone but you. <span class="chip-soon" style="margin-left:.4em;">Early, tuning in progress</span></p></div>
-    <div class="control-item"><span class="control-mark">ix.</span><p><strong>It'll read to you, every night.</strong> Hand it a book and it reads it back, one page a night, as a real voice note. More on the next slide. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">i.</span><p><strong>Tailored to your business, today.</strong> Voice, knowledge, and behavior are configured per business, not hardcoded. Changes take effect immediately. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Designed to extend further.</strong> Live web lookups, and owner-only email and calendar access, are next on the roadmap. <span class="chip-soon" style="margin-left:.4em;">Coming soon</span></p></div>
+    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Managed from a browser tab.</strong> A dashboard on your machine tunes each agent, shows who's online, and restarts one on the spot. No terminal, no code. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">iv.</span><p><strong>Set it once, and it runs itself.</strong> Tell Adiyan a schedule in plain language. It figures out the timing and handles the sending. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">v.</span><p><strong>Every key locked down.</strong> Stored in your Mac's own encrypted credential vault, never in a plain text file. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">vi.</span><p><strong>Recognizes a routine by what it means.</strong> Not just by name. Still maturing: two similarly-worded but genuinely different routines have slipped through before. <span class="chip-soon" style="margin-left:.4em;">Maturing</span></p></div>
+    <div class="control-item"><span class="control-mark">vii.</span><p><strong>Instant, on your own words.</strong> A routine can fire the moment someone sends an exact phrase, not just on a schedule. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
+    <div class="control-item"><span class="control-mark">viii.</span><p><strong>Starts noticing things on its own.</strong> Owner-only: surfaces engagement patterns, and drafts a routine when it spots one worth acting on. Early, still being tuned. <span class="chip-soon" style="margin-left:.4em;">Early, tuning in progress</span></p></div>
+    <div class="control-item"><span class="control-mark">ix.</span><p><strong>Reads to you, every night.</strong> Hand it a book. More on the next slide. <span class="chip" style="margin-left:.4em;">Available now</span></p></div>
   </div>
 </section>
 
@@ -608,8 +654,38 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">Agent offerings</p>
       <h2 class="h2">Meet AdiyanReader. <em>One agent, built on this harness.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">Hand it a book, a PDF is enough, and it takes over from there. Every night, at the same time, the next page arrives as a real voice note, synthesized entirely on your own machine, not a recording pulled from somewhere else. The next morning, a couple of comprehension questions on what was actually read, so it's a habit, not just a file sitting there. Anyone it's reading to keeps their own place at their own pace; one person falling behind never holds up anyone else's.</p>
-      <p class="prose" style="margin-top:1rem;">Nothing about it is special-cased. It's an ordinary agent living in the same mesh as everything else, built the same way the next one will be.</p>
+      <p class="prose" style="margin-top:1.2rem;">Hand it a book. Every night, the next page arrives as a real voice note, synthesized on your own machine. The next morning, a comprehension question on what was actually read. Just an ordinary agent, built the same way the next one will be.</p>
+      <figure class="diagram-figure" style="margin-top:1.4rem;max-width:100%;">
+        <svg viewBox="0 0 560 130" role="img" aria-label="A book is split into pages, one page is read aloud as a voice note each night, and a comprehension question follows the next morning." style="width:100%;height:auto;">
+          <defs>
+            <marker id="rArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="Mulish, sans-serif" fill="currentColor">
+            <rect x="6" y="35" width="118" height="60" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="65" y="61" text-anchor="middle" font-size="13" font-weight="700">Your book</text>
+            <text x="65" y="78" text-anchor="middle" font-size="11" fill-opacity=".6">(PDF)</text>
+
+            <line x1="124" y1="65" x2="150" y2="65" stroke="currentColor" stroke-width="2" marker-end="url(#rArrow)"/>
+
+            <rect x="154" y="35" width="118" height="60" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="213" y="61" text-anchor="middle" font-size="13" font-weight="700">Split into</text>
+            <text x="213" y="78" text-anchor="middle" font-size="13" font-weight="700">pages</text>
+
+            <line x1="272" y1="65" x2="298" y2="65" stroke="currentColor" stroke-width="2" marker-end="url(#rArrow)"/>
+
+            <rect x="302" y="20" width="118" height="60" rx="9" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="361" y="46" text-anchor="middle" font-size="13" font-weight="700" fill="var(--paper)">Nightly voice</text>
+            <text x="361" y="63" text-anchor="middle" font-size="13" font-weight="700" fill="var(--paper)">note</text>
+
+            <line x1="420" y1="50" x2="446" y2="50" stroke="currentColor" stroke-width="2" marker-end="url(#rArrow)"/>
+            <rect x="450" y="20" width="104" height="60" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="502" y="46" text-anchor="middle" font-size="12" font-weight="700">Next-day</text>
+            <text x="502" y="63" text-anchor="middle" font-size="12" font-weight="700">question</text>
+          </g>
+        </svg>
+      </figure>
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">One page a night</span>
         <span class="chip">Real synthesized voice</span>
@@ -673,7 +749,11 @@ h1,h2,h3{
     result = random.randint(1, sides)
     return {'sides': sides, 'result': result}</code>
   </div>
-  <p class="prose" style="margin-top:1.4rem;max-width:56ch;">There is no permission check here, no A2A wiring, no routing logic. All of that runs before this function is ever called. The rest of the agent, its executor, its server entrypoint, its config, is the same handful of files every agent in this mesh shares. You copy them and rename them, you don't design them again. The repo's <code>mesh/example_agent/README.md</code> lists exactly what's boilerplate and what you get for free just by following the shape.</p>
+  <p class="prose" style="margin-top:1.4rem;max-width:56ch;">There is no permission check here, no A2A wiring, no routing logic. All of that runs before this function is ever called. One command generates the rest:</p>
+  <div class="command-box" style="max-width:64rem;">
+    <code>python3 -m mesh.tools.bootstrap_agent weather_agent</code>
+  </div>
+  <p class="prose" style="margin-top:1rem;max-width:56ch;">It copies the reference agent, renames it, and picks a free port. The repo's <code>mesh/example_agent/README.md</code> lists what's boilerplate and what you get for free.</p>
 </section>
 
 <!-- 04d : RESEARCH FOUNDATIONS -->
@@ -734,13 +814,49 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">Grounded, not guessing</p>
       <h2 class="h2">If it can't find the answer, <em>it says so.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">A specific, verifiable detail, a date, a document's contents, what a person actually said, is only ever answered from something a tool actually retrieved: your documents, your conversation history, a real lookup. Never invented to sound complete. When nothing relevant turns up, Adiyan says exactly that instead of confidently making something up, the same discipline behind any real retrieval-augmented system, held to even when the honest answer is less satisfying than a guess would be.</p>
+      <p class="prose" style="margin-top:1.2rem;">A specific detail is only ever answered from something a tool actually retrieved. Never invented to sound complete. When nothing relevant turns up, Adiyan says exactly that.</p>
+      <div class="bubble bubble--in" style="margin-top:1.4rem;max-width:100%;">"I don't have anything on that. I'm not going to guess at figures I can't verify."<span class="tag">Adiyan · just now</span></div>
     </div>
-    <div class="phone">
-      <div class="thread">
-        <div class="bubble bubble--out">What does the report say about the Q3 numbers?</div>
-        <div class="bubble bubble--in">I don't have anything on that. Nothing in your documents or our conversation mentions Q3 specifically, so I'm not going to guess at figures I can't verify.<span class="tag">Adiyan · just now</span></div>
-      </div>
+    <div>
+      <figure class="diagram-figure" style="max-width:100%;">
+        <svg viewBox="0 0 560 220" role="img" aria-label="A question goes through search, then a found-or-not-found check: found leads to a cited answer, not found leads to an honest admission instead of a guess." style="width:100%;height:auto;">
+          <defs>
+            <marker id="gArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="Mulish, sans-serif" fill="currentColor">
+            <rect x="6" y="80" width="110" height="60" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="61" y="106" text-anchor="middle" font-size="13" font-weight="700">Question</text>
+            <text x="61" y="123" text-anchor="middle" font-size="11" fill-opacity=".6">from you</text>
+
+            <line x1="116" y1="110" x2="142" y2="110" stroke="currentColor" stroke-width="2" marker-end="url(#gArrow)"/>
+
+            <rect x="146" y="80" width="120" height="60" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="206" y="106" text-anchor="middle" font-size="13" font-weight="700">Search tools</text>
+            <text x="206" y="123" text-anchor="middle" font-size="11" fill-opacity=".6">docs, memory</text>
+
+            <line x1="266" y1="110" x2="292" y2="110" stroke="currentColor" stroke-width="2" marker-end="url(#gArrow)"/>
+
+            <rect x="296" y="80" width="110" height="60" rx="30" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="351" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="var(--paper)">Found</text>
+            <text x="351" y="123" text-anchor="middle" font-size="12" font-weight="700" fill="var(--paper)">it?</text>
+
+            <line x1="406" y1="95" x2="440" y2="35" stroke="currentColor" stroke-width="2" marker-end="url(#gArrow)"/>
+            <text x="418" y="60" font-size="11" fill-opacity=".7">yes</text>
+            <line x1="406" y1="125" x2="440" y2="185" stroke="currentColor" stroke-width="2" marker-end="url(#gArrow)"/>
+            <text x="418" y="165" font-size="11" fill-opacity=".7">no</text>
+
+            <rect x="444" y="6" width="110" height="58" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="499" y="30" text-anchor="middle" font-size="12" font-weight="700">Answer,</text>
+            <text x="499" y="47" text-anchor="middle" font-size="12" font-weight="700">with citation</text>
+
+            <rect x="444" y="156" width="110" height="58" rx="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <text x="499" y="180" text-anchor="middle" font-size="12" font-weight="700">"I don't</text>
+            <text x="499" y="197" text-anchor="middle" font-size="12" font-weight="700">know," honestly</text>
+          </g>
+        </svg>
+      </figure>
     </div>
   </div>
 </section>
