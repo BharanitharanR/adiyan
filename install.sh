@@ -197,15 +197,28 @@ fi
 # bundle - node_modules and the top-level .app folder both looked
 # perfectly normal. Puppeteer's own launch() is the one check that
 # actually exercises the binary the way OpenWA will.
+# Optional $1: a specific Chrome binary to launch instead of Puppeteer's
+# own downloaded one - used by the real-Chrome fallback below, which
+# needs to verify that specific executable actually works before
+# committing to it, the same way the default path gets verified.
 verify_puppeteer_browser() {
+    local executable_path="${1:-}"
     node -e "
-require('./penwa/node_modules/puppeteer').launch({headless: true})
+require('./penwa/node_modules/puppeteer').launch({
+  headless: true,
+  ${executable_path:+executablePath: '$executable_path',}
+})
   .then(async b => { await b.close(); process.exit(0); })
   .catch(() => process.exit(1));
 " >/dev/null 2>&1
 }
 
-if [ -d "penwa/node_modules" ] && verify_puppeteer_browser; then
+# A previous run may have already fallen back to a real installed Chrome
+# (see the PUPPETEER_EXECUTABLE_PATH branch below) - checked first so
+# re-running install.sh doesn't redo that whole dance every time.
+CONFIGURED_CHROME="$(grep "^PUPPETEER_EXECUTABLE_PATH=" penwa/.env 2>/dev/null | tail -1 | cut -d= -f2-)"
+
+if [ -d "penwa/node_modules" ] && verify_puppeteer_browser "$CONFIGURED_CHROME"; then
     skip "penwa/node_modules already present, Chrome launches"
 else
     # Cleared before the first attempt too, not just after one fails - a
@@ -242,7 +255,27 @@ else
     if verify_puppeteer_browser; then
         ok "penwa dependencies installed, Chrome launches"
     else
-        fail "penwa's Chrome still won't launch after two clean-and-retry attempts - check the output above and https://pptr.dev/troubleshooting by hand"
+        # Confirmed live: on at least one real machine, none of the above
+        # ever fixed it - `find` showed Contents/Frameworks/ missing from
+        # the extracted .app entirely, on every single attempt, which
+        # rules out a one-off truncated download. That pattern points at
+        # something on the machine actively interfering with this one
+        # specific nested directory during extraction (security/antivirus
+        # software silently stripping an ad-hoc-signed nested framework is
+        # the known cause for this exact symptom on macOS), not Puppeteer
+        # or this repo. Rather than keep retrying a download that's
+        # already been shown not to work, fall back to a real, already-
+        # installed, properly-signed Chrome if one exists.
+        REAL_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if [ -x "$REAL_CHROME" ] && verify_puppeteer_browser "$REAL_CHROME"; then
+            echo -e "${DIM}  Puppeteer's own downloaded Chrome won't launch, but a real installed Chrome does - using that instead${RESET}"
+            if ! grep -q "^PUPPETEER_EXECUTABLE_PATH=" penwa/.env 2>/dev/null; then
+                echo "PUPPETEER_EXECUTABLE_PATH=$REAL_CHROME" >> penwa/.env
+            fi
+            ok "penwa dependencies installed, using your installed Chrome"
+        else
+            fail "penwa's Chrome still won't launch after two clean-and-retry attempts, and no usable installed Chrome was found to fall back to - check the output above and https://pptr.dev/troubleshooting by hand"
+        fi
     fi
 fi
 
