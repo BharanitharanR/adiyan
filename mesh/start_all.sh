@@ -195,6 +195,45 @@ component_alive() {
     fi
 }
 
+# Single launch site for a component, shared between the first attempt and
+# any down-component retries below, so the dispatch logic (which command
+# shape each component needs) can't drift between the two call sites.
+# is_retry=1 appends to the existing log instead of truncating it - losing
+# the first attempt's crash output right when it's most useful to see why
+# a component didn't come up is the wrong tradeoff for a fresh start.
+launch_component() {
+    local name="$1" cmd="$2" is_retry="${3:-0}"
+    local logfile="$LOG_DIR/$name.log"
+    if [ "$is_retry" = "1" ]; then
+        echo "--- retrying $name ($(date)) ---" >> "$logfile"
+    else
+        : > "$logfile"
+    fi
+    if [ "$name" = "phoenix" ]; then
+        nohup "$PHOENIX_BIN" serve >> "$logfile" 2>&1 &
+    elif [ "$name" = "mongo_mcp" ]; then
+        # cmd is deliberately just "mongodb-mcp-server --flags", not
+        # "npx -y mongodb-mcp-server@latest --flags" - confirmed live
+        # that npx/npm rewrite their own invocation internally (ps shows
+        # "npm exec mongodb-mcp-server@latest ..." for the wrapper and
+        # "node .../mongodb-mcp-server --flags" for the actual worker
+        # holding the port), so a cmd starting with "npx -y ...@latest"
+        # never appears verbatim in either real process and do_stop()'s
+        # pkill -f would silently fail to match anything. "npx -y" is
+        # prepended only here, at the actual launch site, while cmd
+        # itself stays exactly what pkill needs to find the real worker.
+        nohup npx -y $cmd >> "$logfile" 2>&1 &
+    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ]; then
+        # A raw binary/npm invocation, not a `python3 -m` module - mongod
+        # logs to its own configured path (systemLog.path in
+        # mongod.conf) rather than this one; qdrant and openwa do log here.
+        nohup $cmd >> "$logfile" 2>&1 &
+    else
+        nohup "$PYTHON_BIN" -m "$cmd" >> "$logfile" 2>&1 &
+    fi
+    echo "  [start] $name (pid $!) -> $logfile"
+}
+
 do_start() {
     refresh_listening
     echo "Starting:"
@@ -205,60 +244,72 @@ do_start() {
             echo "  [skip] $name already running"
             continue
         fi
-        if [ "$name" = "phoenix" ]; then
-            nohup "$PHOENIX_BIN" serve > "$LOG_DIR/$name.log" 2>&1 &
-        elif [ "$name" = "mongo_mcp" ]; then
-            # cmd is deliberately just "mongodb-mcp-server --flags", not
-            # "npx -y mongodb-mcp-server@latest --flags" - confirmed live
-            # that npx/npm rewrite their own invocation internally (ps shows
-            # "npm exec mongodb-mcp-server@latest ..." for the wrapper and
-            # "node .../mongodb-mcp-server --flags" for the actual worker
-            # holding the port), so a cmd starting with "npx -y ...@latest"
-            # never appears verbatim in either real process and do_stop()'s
-            # pkill -f would silently fail to match anything. "npx -y" is
-            # prepended only here, at the actual launch site, while cmd
-            # itself stays exactly what pkill needs to find the real worker.
-            nohup npx -y $cmd > "$LOG_DIR/$name.log" 2>&1 &
-        elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ]; then
-            # A raw binary/npm invocation, not a `python3 -m` module - mongod
-            # logs to its own configured path (systemLog.path in
-            # mongod.conf) rather than this one; qdrant and openwa do log here.
-            nohup $cmd > "$LOG_DIR/$name.log" 2>&1 &
-        else
-            nohup "$PYTHON_BIN" -m "$cmd" > "$LOG_DIR/$name.log" 2>&1 &
-        fi
-        echo "  [start] $name (pid $!) -> $LOG_DIR/$name.log"
+        launch_component "$name" "$cmd"
     done
 
-    echo
-    echo "Waiting for everything to come up..."
-    # 90 x 2s = 3 minutes, not the original 30s - confirmed live that's not
-    # generous enough: Scheduler Agent's own startup does a catch-up pass
-    # over any overdue job (see mesh/scheduler/server.py) before it starts
-    # listening at all, and each one composes its message via an LLM call -
-    # with Ollama's single-request concurrency, a few of those queued up
-    # can easily take longer than 30s. A component that's still down after
-    # this reports DOWN below either way - this only avoids a false alarm
-    # for something that's genuinely still booting, same "generous timeout"
-    # reasoning already applied to the A2A client's own default.
-    for i in $(seq 1 90); do
-        sleep 2
-        refresh_listening
-        still_down=0
+    # Up to 3 attempts total, not just 1 - confirmed live this mesh needs
+    # it: a component can crash-loop on a transient issue (Ollama still
+    # warming up, a port not yet released from a just-killed prior run,
+    # Mongo's data directory lock not yet cleared) and come up clean on a
+    # bare restart with nothing else changed. Only components still down
+    # at the end of an attempt get relaunched - anything already up is
+    # left alone, so a slow-but-healthy component never gets restarted
+    # out from under itself.
+    MAX_START_ATTEMPTS=3
+    for attempt in $(seq 1 "$MAX_START_ATTEMPTS"); do
+        echo
+        if [ "$attempt" -eq 1 ]; then
+            echo "Waiting for everything to come up..."
+        else
+            echo "Waiting for everything to come up... (attempt $attempt/$MAX_START_ATTEMPTS)"
+        fi
+        # 90 x 2s = 3 minutes, not the original 30s - confirmed live that's
+        # not generous enough: Scheduler Agent's own startup does a catch-up
+        # pass over any overdue job (see mesh/scheduler/server.py) before it
+        # starts listening at all, and each one composes its message via an
+        # LLM call - with Ollama's single-request concurrency, a few of
+        # those queued up can easily take longer than 30s. A component
+        # still down after this either gets retried below or reported DOWN
+        # at the very end - this per-attempt wait only avoids a false alarm
+        # for something that's genuinely still booting, same "generous
+        # timeout" reasoning already applied to the A2A client's own default.
+        for i in $(seq 1 90); do
+            sleep 2
+            refresh_listening
+            still_down=0
+            for entry in "${COMPONENTS[@]}"; do
+                IFS='|' read -r name port cmd <<< "$entry"
+                is_target "$name" || continue
+                component_alive "$port" "$cmd" || still_down=1
+            done
+            [ "$still_down" -eq 0 ] && break
+        done
+
+        down_names=()
         for entry in "${COMPONENTS[@]}"; do
             IFS='|' read -r name port cmd <<< "$entry"
             is_target "$name" || continue
-            component_alive "$port" "$cmd" || still_down=1
+            component_alive "$port" "$cmd" || down_names+=("$name")
         done
-        [ "$still_down" -eq 0 ] && break
+        [ "${#down_names[@]}" -eq 0 ] && break
+        [ "$attempt" -eq "$MAX_START_ATTEMPTS" ] && break
+
+        echo "  ${#down_names[@]} component(s) still down after attempt $attempt - retrying: ${down_names[*]}"
+        for entry in "${COMPONENTS[@]}"; do
+            IFS='|' read -r name port cmd <<< "$entry"
+            for down_name in "${down_names[@]}"; do
+                [ "$name" = "$down_name" ] && launch_component "$name" "$cmd" 1
+            done
+        done
     done
+
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
         is_target "$name" || continue
         if component_alive "$port" "$cmd"; then
             echo "  ok   :${port} ($name)"
         else
-            echo "  DOWN :${port} ($name)  (check $LOG_DIR/$name.log - may just need more time to boot)"
+            echo "  DOWN :${port} ($name)  (check $LOG_DIR/$name.log - tried $MAX_START_ATTEMPTS times, still not up)"
         fi
     done
 
