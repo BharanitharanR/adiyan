@@ -68,6 +68,24 @@ LOG_DIR="$HOME/.Adiyan/logs"
 mkdir -p "$LOG_DIR"
 cd "$REPO_ROOT"
 
+# Prefer install.sh's own venv over whatever bare python3/phoenix happen to
+# resolve to in the caller's shell - confirmed live to matter: on a fresh
+# terminal (no manual `source .venv/bin/activate` first), bare python3
+# resolved to the system interpreter, which has none of requirements.txt
+# installed, so every mesh.*.server component failed on import and came up
+# DOWN, while the non-Python components (mongodb, mongo_mcp, openwa) were
+# unaffected - the exact failure boundary this venv lookup closes.
+if [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
+    PYTHON_BIN="$REPO_ROOT/.venv/bin/python3"
+else
+    PYTHON_BIN="python3"
+fi
+if [ -x "$REPO_ROOT/.venv/bin/phoenix" ]; then
+    PHOENIX_BIN="$REPO_ROOT/.venv/bin/phoenix"
+else
+    PHOENIX_BIN="phoenix"
+fi
+
 ACTION="${1:-start}"
 shift 2>/dev/null || true
 TARGET_NAMES=("$@")
@@ -172,7 +190,7 @@ do_start() {
             continue
         fi
         if [ "$name" = "phoenix" ]; then
-            nohup phoenix serve > "$LOG_DIR/$name.log" 2>&1 &
+            nohup "$PHOENIX_BIN" serve > "$LOG_DIR/$name.log" 2>&1 &
         elif [ "$name" = "mongo_mcp" ]; then
             # cmd is deliberately just "mongodb-mcp-server --flags", not
             # "npx -y mongodb-mcp-server@latest --flags" - confirmed live
@@ -191,7 +209,7 @@ do_start() {
             # mongod.conf) rather than this one; qdrant and openwa do log here.
             nohup $cmd > "$LOG_DIR/$name.log" 2>&1 &
         else
-            nohup python3 -m "$cmd" > "$LOG_DIR/$name.log" 2>&1 &
+            nohup "$PYTHON_BIN" -m "$cmd" > "$LOG_DIR/$name.log" 2>&1 &
         fi
         echo "  [start] $name (pid $!) -> $LOG_DIR/$name.log"
     done
