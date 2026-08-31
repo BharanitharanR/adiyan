@@ -248,6 +248,14 @@ h1,h2,h3{
   color:var(--bubble-in-text);
   border-bottom-left-radius:4px;
 }
+.voice-bubble{ max-width:100%; }
+.voice-label{ margin:0 0 .5rem; font-size:.85rem; font-weight:700; }
+.voice-bubble audio{
+  width:100%;
+  max-width:280px;
+  display:block;
+  accent-color:var(--accent);
+}
 .bubble--sys{
   align-self:center;
   background:transparent;
@@ -792,7 +800,11 @@ h1,h2,h3{
     <div class="phone">
       <div class="thread">
         <div class="bubble bubble--sys">10:00 PM</div>
-        <div class="bubble bubble--in">🎙️ Page 14 of "The Almanack of Naval Ravikant" <span class="tag">Adiyan · voice note</span></div>
+        <div class="bubble bubble--in voice-bubble">
+          <p class="voice-label">🎙️ An actual page, sent for real</p>
+          <audio controls preload="none" src="adiyanreader-sample.m4a">Your browser can't play this audio.</audio>
+          <span class="tag">Adiyan · voice note</span>
+        </div>
         <div class="bubble bubble--sys">The next morning</div>
         <div class="bubble bubble--in">Quick check on last night's page: what did Naval say wealth actually buys you?<span class="tag">Adiyan · just now</span></div>
       </div>
