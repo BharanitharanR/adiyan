@@ -1,3 +1,24 @@
+# Confirmed missing from this file entirely on 2026-08-31: a fresh install
+# on a machine that had never run Adiyan before failed with
+# "ModuleNotFoundError: No module named 'a2a'" (then jwt, apscheduler,
+# uvicorn, one at a time as each got fixed by hand before the real scope
+# became clear). A full ast-based scan of every first-party import across
+# mesh/ against this file turned up ten packages relied on without ever
+# being listed here - every one of them was silently present already in
+# whoever's own environment happened to run this before now, since this
+# file was never actually exercised end to end on a genuinely clean
+# machine until this was caught.
+a2a-sdk>=1.1.2
+PyJWT>=2.13.0
+apscheduler>=3.11.0
+uvicorn>=0.41.0
+arize-phoenix>=20.3.0
+protobuf>=6.33.0
+sqlalchemy>=2.0.0
+aiosqlite>=0.22.0
+numpy>=2.2.0
+starlette>=1.6.0
+
 pydantic>=2.0
 python-dotenv>=1.0.0
 pika>=1.3.0
