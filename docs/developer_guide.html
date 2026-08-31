@@ -66,20 +66,21 @@ footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--bor
     <h1>Building a new Adiyan agent</h1>
     <p>
       This is the guide for someone adding a new agent to the mesh: how to create it, which files are
-      actually yours to edit, how to reach the platform's built-in capabilities (WhatsApp, the LLM, memory,
-      your own storage), and exactly what permission to add for each one.
+      actually yours to edit, and how to reach the platform's built-in capabilities — WhatsApp, the LLM,
+      memory, your own storage — through one SDK object, without ever touching a token, a tier name, or
+      <code>ChatOllama</code> directly.
     </p>
     <nav class="toc">
       <a href="#create">1. Create the agent</a>
       <a href="#files">2. Files you'll touch</a>
       <a href="#wiring">3. Port &amp; registration</a>
       <a href="#permissions">4. Permission engine</a>
-      <a href="#menu">5. Platform benefits menu</a>
-      <a href="#llm">6. Calling the LLM</a>
-      <a href="#memory">7. Memory: long &amp; short-term</a>
-      <a href="#db">8. Your own database</a>
-      <a href="#prompts">9. Configuring your prompts</a>
-      <a href="#whatsapp">10. Reaching WhatsApp</a>
+      <a href="#sdk">5. AdiyanAgent</a>
+      <a href="#menu">6. Platform benefits menu</a>
+      <a href="#llm">7. Calling the LLM</a>
+      <a href="#memory">8. Memory: long &amp; short-term</a>
+      <a href="#db">9. Your own database</a>
+      <a href="#prompts">10. Configuring your prompts</a>
       <a href="#pitfall">11. Don't do this</a>
     </nav>
   </header>
@@ -104,8 +105,8 @@ footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--bor
       <tr><td><code>constants.py</code></td><td><code>AGENT_ID</code>, <code>PORT</code>, and URLs of any other agent/MCP server you call.</td></tr>
       <tr><td><code>skills/*.py</code></td><td>Your actual logic. One async function per skill — <code>run(...)</code> that does the work.</td></tr>
       <tr><td><code>skills_catalog.py</code></td><td>The description text the Orchestrator's classifier reads to decide which agent handles which message. Written well, this is the only "routing config" you need.</td></tr>
-      <tr><td><code>seed_config.json</code></td><td>Default prompt templates and constants, seeded into Mongo on first boot (§9).</td></tr>
-      <tr><td><code>runtime_config.json</code></td><td>Default <code>{model, temperature, ...}</code> per LLM-calling stage (§6).</td></tr>
+      <tr><td><code>seed_config.json</code></td><td>Default prompt templates and constants, seeded into Mongo on first boot (§10).</td></tr>
+      <tr><td><code>runtime_config.json</code></td><td>Default <code>{model, temperature, ...}</code> per LLM-calling stage (§7).</td></tr>
       <tr><td><code>agent_executor.py</code>, <code>server.py</code></td><td>Boilerplate — copied as-is from the template in almost every real agent. You rarely edit these.</td></tr>
       <tr><td><code>mesh/lib/permissions_config.json</code></td><td>Not in your agent's own directory — a shared file. Add your tier here (§4).</td></tr>
     </table>
@@ -167,56 +168,101 @@ footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--bor
     "mcp.whatsapp.send_message"
   ]
 }</code></pre>
-    <p>Then mint against it wherever you call out: <code>permissions.mint_token('weather_agent', 'weather_agent_service')</code>. List only what you actually call — a tier with one extra key is a tier that can do one more thing than anyone meant it to.</p>
+    <p>List only what you actually call — a tier with one extra key is a tier that can do one more thing than anyone meant it to.</p>
+    <div class="callout warn">
+      <b>Where does the token actually get minted?</b>
+      Nowhere in your skill code. <code>permissions.mint_token(agent_id, tier)</code> exists, but every real
+      skill that called it directly, by hand, is exactly the pattern this guide steers away from — one more
+      thing for every skill author to get right, and one more place a tier name can drift out of sync with
+      what's actually in <code>permissions_config.json</code>. §5 is where minting actually happens: once,
+      inside <code>AdiyanAgent</code>, never in your code.
+    </div>
+  </section>
+
+  <section id="sdk">
+    <h2><span class="num">5.</span> AdiyanAgent — one object for everything</h2>
+    <p>
+      Construct it once, with just your agent id. Every method mints its own token internally, against your
+      <code>&lt;agent_id&gt;_service</code> tier from §4 — you never see a token, a tier name, or a
+      permission key in your own code, only the method call:
+    </p>
+    <pre><code>from mesh.lib.agent_sdk import AdiyanAgent
+
+agent = AdiyanAgent('weather_agent')
+
+await agent.notify_owner("Rain expected this afternoon.")
+result = await agent.search_knowledge_base("refund policy")
+await agent.schedule(job_id, invoke_at, target_agent_url, skill_id)
+reply = await agent.ask("Summarize this: " + text)</code></pre>
+    <p>
+      A named method exists for every platform capability in §6 — <code>search_knowledge_base</code>,
+      <code>share_knowledge_document</code>, <code>recall_contact_memory</code>,
+      <code>remember_interaction</code>, <code>schedule</code>. None of them take a URL or a raw skill-id
+      string; that's baked in. <code>call_agent(url, skill_id, params)</code> and
+      <code>call_tool(url, tool_name, args)</code> stay available underneath for anything not yet covered by
+      a named method — same token-minting, just without a name of its own yet.
+    </p>
+    <table>
+      <tr><th>Method</th><th>Replaces</th></tr>
+      <tr><td><code>notify_owner(text)</code></td><td>Minting a token yourself + resolving <code>get_own_phone</code> + calling <code>send_message</code> by hand.</td></tr>
+      <tr><td><code>search_knowledge_base</code> / <code>share_knowledge_document</code> / <code>recall_contact_memory</code> / <code>remember_interaction</code></td><td>Knowing Memory Agent's URL, the exact skill id, and its exact parameter names.</td></tr>
+      <tr><td><code>schedule(job_id, invoke_at, target_agent_url, skill_id)</code></td><td>Knowing cron_trigger's URL and its <code>register_trigger</code> tool's argument shape.</td></tr>
+      <tr><td><code>ask(prompt, ...)</code></td><td>Importing <code>ChatOllama</code> and constructing it yourself — see §7.</td></tr>
+    </table>
+    <div class="callout good">
+      <b>Why this is layered, not a shortcut</b>
+      This is the actual point of making it a class instead of four standalone functions: the platform can
+      add a new method later, change how minting works, swap which LLM provider <code>ask()</code> calls, or
+      add caching/retry underneath any of these — and every agent that already does
+      <code>AdiyanAgent(agent_id)</code> gets it automatically, with zero code changes on their end. Nobody
+      writing a skill needs to know any of that happened.
+    </div>
   </section>
 
   <section id="menu">
-    <h2><span class="num">5.</span> Platform benefits menu</h2>
-    <p class="lede">Want to... → add this permission key to your tier's <code>allow</code> list.</p>
+    <h2><span class="num">6.</span> Platform benefits menu</h2>
+    <p class="lede">Want to... → add this permission key to your tier (§4), then call it through <code>agent</code> (§5).</p>
     <table>
       <tr><th>Capability</th><th>Permission key(s)</th><th>How you call it</th></tr>
-      <tr><td>Message the owner on WhatsApp</td><td><code>mcp.whatsapp.get_own_phone</code>, <code>mcp.whatsapp.send_message</code></td><td><code>AdiyanAgent.notify_owner()</code> — §10</td></tr>
-      <tr><td>Search the uploaded knowledge base</td><td><code>memory.search_knowledge_base</code></td><td><code>call_agent(MEMORY_AGENT_URL, 'search_knowledge_base', ...)</code></td></tr>
-      <tr><td>Send back an original uploaded document</td><td><code>memory.share_knowledge_document</code></td><td><code>call_agent(MEMORY_AGENT_URL, 'share_knowledge_document', ...)</code></td></tr>
-      <tr><td>Read a contact's conversation history</td><td><code>memory.recall_contact_memory</code></td><td><code>call_agent(MEMORY_AGENT_URL, 'recall_contact_memory', ...)</code></td></tr>
-      <tr><td>Write to a contact's conversation history</td><td><code>memory.remember_interaction</code></td><td><code>call_agent(MEMORY_AGENT_URL, 'remember_interaction', ...)</code></td></tr>
-      <tr><td>Schedule recurring or one-shot work</td><td><code>mcp.cron_trigger.register_trigger</code></td><td><code>call_tool(cron_trigger_url, 'register_trigger', ...)</code></td></tr>
-      <tr><td>Read/write your own agent config</td><td>none — always allowed</td><td><code>config_sdk.get_constant</code> / <code>get_stage_config</code> (§9)</td></tr>
-      <tr><td>Your own private storage</td><td>none — filesystem, not a permission-checked call</td><td><code>mesh/lib/paths.py</code> (§8)</td></tr>
+      <tr><td>Message the owner on WhatsApp</td><td><code>mcp.whatsapp.get_own_phone</code>, <code>mcp.whatsapp.send_message</code></td><td><code>agent.notify_owner(text)</code></td></tr>
+      <tr><td>Search the uploaded knowledge base</td><td><code>memory.search_knowledge_base</code></td><td><code>agent.search_knowledge_base(query)</code></td></tr>
+      <tr><td>Send back an original uploaded document</td><td><code>memory.share_knowledge_document</code></td><td><code>agent.share_knowledge_document(query)</code></td></tr>
+      <tr><td>Read a contact's conversation history</td><td><code>memory.recall_contact_memory</code></td><td><code>agent.recall_contact_memory(contact_name, query)</code></td></tr>
+      <tr><td>Write to a contact's conversation history</td><td><code>memory.remember_interaction</code></td><td><code>agent.remember_interaction(contact_name, user_text, reply_text)</code></td></tr>
+      <tr><td>Schedule recurring or one-shot work</td><td><code>mcp.cron_trigger.register_trigger</code></td><td><code>agent.schedule(job_id, invoke_at, target_agent_url, skill_id)</code></td></tr>
+      <tr><td>Ask the local LLM anything</td><td>none — no permission key, every agent reaches it directly</td><td><code>agent.ask(prompt)</code></td></tr>
+      <tr><td>Read/write your own agent config</td><td>none — always allowed</td><td><code>config_sdk.get_constant</code> / <code>get_stage_config</code> (§10)</td></tr>
+      <tr><td>Your own private storage</td><td>none — filesystem, not a permission-checked call</td><td><code>mesh/lib/paths.py</code> (§9)</td></tr>
     </table>
   </section>
 
   <section id="llm">
-    <h2><span class="num">6.</span> Calling the underlying LLM</h2>
-    <p>
-      No permission key for this either — every agent talks to the same local Ollama instance directly.
-      The pattern every real skill in this mesh already follows (from <code>mesh/journal/skills/craft_reflection_prompt.py</code>):
-    </p>
-    <pre><code>from langchain_ollama import ChatOllama
-from pydantic import BaseModel
-from mesh.lib import config_sdk
+    <h2><span class="num">7.</span> Calling the underlying LLM</h2>
+    <p>No permission key needed, and no <code>ChatOllama</code> import either — <code>agent.ask()</code> handles both plain text and structured output:</p>
+    <pre><code>reply = await agent.ask("Summarize this: " + text)</code></pre>
+    <pre><code>from pydantic import BaseModel
 
 class MyResult(BaseModel):
     answer: str
 
-async def run(...):
-    cfg = await config_sdk.get_stage_config(
-        AGENT_ID, 'my_stage', {'model': 'qwen3:8b-16k', 'temperature': 0.4},
-    )
-    model = ChatOllama(
-        model=cfg['model'], base_url='http://localhost:11434', temperature=cfg['temperature'],
-    ).with_structured_output(MyResult)
-    result = await model.ainvoke(prompt)
-    return result.answer</code></pre>
+result = await agent.ask(
+    prompt, stage='my_stage', model='qwen3:8b-16k', temperature=0.4, schema=MyResult,
+)
+print(result.answer)</code></pre>
     <p>
-      <code>get_stage_config</code> is what makes the model/temperature dashboard-editable later without
-      touching code — see §9 for where its default (<code>runtime_config.json</code>) lives.
+      <code>stage</code> is a name you pick for this particular pipeline step (e.g.
+      <code>'craft_reply'</code>, <code>'classify_intent'</code>) — <code>ask()</code> resolves the real
+      model/temperature through <code>config_sdk.get_stage_config()</code> under the hood, seeded from the
+      <code>model</code>/<code>temperature</code> you pass the first time that stage ever runs. That's what
+      makes it dashboard-editable later without a code change — the same mechanism <code>runtime_config.json</code>
+      seeds for you (§10), just never touched directly.
     </p>
+    <p class="lede">Pass <code>schema</code> to get a parsed object back; omit it to get the model's plain-text reply as a <code>str</code>.</p>
   </section>
 
   <section id="memory">
-    <h2><span class="num">7.</span> Memory: long-term vs. short-term</h2>
-    <p>Both live behind Memory Agent, called the same way as any other agent (via <code>call_agent</code>) — the distinction is which skill:</p>
+    <h2><span class="num">8.</span> Memory: long-term vs. short-term</h2>
+    <p>Both live behind Memory Agent, reached through <code>agent</code>'s own named methods (§5/§6) — the distinction is which one:</p>
     <table>
       <tr><th></th><th>Skill</th><th>What it actually is</th></tr>
       <tr><td><b>Long-term</b> — the knowledge base</td><td><code>search_knowledge_base</code></td><td>Uploaded documents (PDFs, notes, ID cards) — global, not scoped to one person. Any fact that could plausibly be sitting in a document.</td></tr>
@@ -224,16 +270,13 @@ async def run(...):
       <tr><td><b>Short-term</b> — conversation memory</td><td><code>recall_contact_memory</code></td><td>Actual back-and-forth chat history with one specific person — moods, goals, things they told the agent directly. A raw read-back, not a fact lookup.</td></tr>
       <tr><td></td><td><code>remember_interaction</code></td><td>Writes a new entry to that same per-contact history.</td></tr>
     </table>
-    <pre><code>from mesh.lib.a2a_client import call_agent
-from mesh.lib import permissions
-
-token = permissions.mint_token(AGENT_ID, f'{AGENT_ID}_service')
-result = await call_agent(MEMORY_AGENT_URL, 'search_knowledge_base', {'query': text}, token=token)</code></pre>
-    <p class="lede">Requires <code>memory.search_knowledge_base</code> (or whichever skill you call) in your own tier's <code>allow</code> list — see §5.</p>
+    <pre><code>result = await agent.search_knowledge_base("refund policy")
+history = await agent.recall_contact_memory(contact_name, "what have they told us")</code></pre>
+    <p class="lede">Requires <code>memory.search_knowledge_base</code> (or whichever skill you call) in your own tier's <code>allow</code> list — see §4/§6.</p>
   </section>
 
   <section id="db">
-    <h2><span class="num">8.</span> Your own database</h2>
+    <h2><span class="num">9.</span> Your own database</h2>
     <p>No permission needed — this is local filesystem storage, not a gated call. <code>mesh/lib/paths.py</code> gives every agent the same conventions:</p>
     <table>
       <tr><th>Function</th><th>For</th></tr>
@@ -249,7 +292,7 @@ conn = sqlite3.connect(state_db_path(AGENT_ID))</code></pre>
   </section>
 
   <section id="prompts">
-    <h2><span class="num">9.</span> Configuring your own prompts</h2>
+    <h2><span class="num">10.</span> Configuring your own prompts</h2>
     <p><code>seed_config.json</code> holds your defaults, each with a <code>value</code> and a human-readable <code>description</code>:</p>
     <pre><code>{
   "my_prompt_template": {
@@ -265,22 +308,7 @@ conn = sqlite3.connect(state_db_path(AGENT_ID))</code></pre>
     <pre><code>value = await config_sdk.get_constant(
     AGENT_ID, 'my_prompt_template', seeded_default, description=seeded_description,
 )</code></pre>
-    <p class="lede"><code>runtime_config.json</code> is the same idea, specifically for <code>{model, temperature, ...}</code> stage configs — read with <code>get_stage_config</code> instead (§6).</p>
-  </section>
-
-  <section id="whatsapp">
-    <h2><span class="num">10.</span> Reaching WhatsApp</h2>
-    <p>One class, from <code>mesh/lib/agent_sdk.py</code>:</p>
-    <pre><code>from mesh.lib.agent_sdk import AdiyanAgent
-
-agent = AdiyanAgent('weather_agent')
-await agent.notify_owner("Rain expected this afternoon.")</code></pre>
-    <p>
-      <code>notify_owner</code> derives your <code>&lt;agent_id&gt;_service</code> tier, mints the token,
-      resolves the owner's own phone, and sends — all internal. Returns <code>False</code> on any failure
-      (never raises), matching this mesh's rule that a failed notification disappears quietly. The only
-      manual step is the tier entry from §4.
-    </p>
+    <p class="lede"><code>runtime_config.json</code> is the same idea, specifically for <code>{model, temperature, ...}</code> stage configs — this is what <code>agent.ask()</code>'s <code>stage</code> parameter reads through (§7).</p>
   </section>
 
   <section id="pitfall">
@@ -292,8 +320,9 @@ await agent.notify_owner("Rain expected this afternoon.")</code></pre>
       call sites already do this instead of going through <code>whatsapp_mcp</code>
       (<code>mesh/scheduler/skills/run_routine.py</code>, <code>mesh/adiyan_reader/skills/read_next_page.py</code>,
       <code>mesh/adiyan_reader/skills/dispatch_questions.py</code>) — each one can send a WhatsApp message
-      regardless of what any tier says. Don't build a fourth instance of it. Use <code>AdiyanAgent</code> (§10)
-      instead — it's the same destination, through the one path that's actually checked.
+      regardless of what any tier says. Don't build a fourth instance of it, and don't import
+      <code>ChatOllama</code> directly either, for the same reason: <code>agent.notify_owner()</code> and
+      <code>agent.ask()</code> (§5) are the one path that's actually checked and actually upgradeable later.
     </div>
   </section>
 
