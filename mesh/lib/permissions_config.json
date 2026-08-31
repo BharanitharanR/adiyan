@@ -32,6 +32,12 @@
         "mcp.agent_registry.list_agents"
       ]
     },
+    "peer": {
+      "description": "A different Adiyan user's instance, offloaded to for spare compute (see mesh/compute_share/). Scoped to exactly one skill - run_inference - which only ever sees a fully-built prompt, never a document, conversation, or credential. No other skill on any agent is reachable with this tier, by design: a peer proves nothing about identity beyond 'someone holding a short-lived compute_share token', so it gets the narrowest possible allow-list of any tier in this file.",
+      "allow": [
+        "compute_share.run_inference"
+      ]
+    },
     "standard": {
       "description": "Default tier for a newly registered client - everything a client could already do before permission checks existed.",
       "allow": [
