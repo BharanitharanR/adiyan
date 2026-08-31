@@ -75,7 +75,7 @@ async def run(phone_number: str, source_filename: str, voice: Optional[str] = No
 
     job = db.create_reading_job(conn, phone_number, source_filename, stored_voice)
 
-    token = permissions.mint_token(AGENT_ID, 'service')
+    token = permissions.mint_token(AGENT_ID, 'adiyan_reader_service')
     cron_trigger_url = await config_sdk.get_constant(
         AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
         description='URL of the cron_trigger MCP server that fires this agent\'s nightly reading and next-day quiz.',

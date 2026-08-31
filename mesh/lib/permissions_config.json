@@ -19,7 +19,6 @@
         "memory.remember_interaction",
         "memory.list_documents",
         "memory.ingest_book",
-        "memory.get_book_page",
         "adiyan_reader.start_reading",
         "adiyan_reader.read_next_page",
         "adiyan_reader.read_now",
@@ -30,6 +29,13 @@
         "mcp.whatsapp.get_own_phone",
         "mcp.agent_registry.register_agent",
         "mcp.agent_registry.list_agents"
+      ]
+    },
+    "adiyan_reader_service": {
+      "description": "AdiyanReader's own outbound calls (mesh/adiyan_reader/skills/start_reading.py, read_next_page.py) - fetching the next page to narrate and registering the next night's/next morning's one-shot cron_trigger fires. Its own tier, not 'service': memory.get_book_page has no caller outside AdiyanReader, so there's no reason for it to sit in the shared tier scheduler/journal/etc. also mint tokens against - narrower blast radius if this agent's token is ever misused, same reasoning as config_server_otp above. mcp.cron_trigger.register_trigger stays in 'service' too, since scheduler needs that one as well.",
+      "allow": [
+        "memory.get_book_page",
+        "mcp.cron_trigger.register_trigger"
       ]
     },
     "config_server_otp": {

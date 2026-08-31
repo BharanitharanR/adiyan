@@ -70,7 +70,7 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         return {'reading_job_id': reading_job_id, 'status': 'inactive', 'result_summary': 'Reading job not found or already stopped.'}
 
     next_page = job['current_page'] + 1
-    token = permissions.mint_token(AGENT_ID, 'service')
+    token = permissions.mint_token(AGENT_ID, 'adiyan_reader_service')
     page_result = await call_agent(MEMORY_AGENT_URL, 'get_book_page', {
         'source_filename': job['source_filename'], 'page_number': next_page,
     }, token=token)
