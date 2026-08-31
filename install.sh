@@ -207,6 +207,24 @@ else
     ok "penwa dependencies installed"
 fi
 
+# The dashboard is a separate npm project (penwa/dashboard/), not an npm
+# workspace of the root one - `npm --prefix penwa install` above never
+# touches it. Confirmed live: without this, Config Server's own /register
+# route (mesh/config_server/server.py) redirects correctly to OpenWA's
+# dashboard at http://localhost:2785, which then 404s on every path,
+# since there's no built UI to serve there at all - the exact dead end a
+# first-time WhatsApp linking flow cannot recover from on its own. `npm
+# start` itself doesn't need this (Nest compiles on the fly), so only the
+# dashboard half of `build:all` is actually required here, not a full
+# `nest build` too.
+if [ -d "penwa/dashboard/dist" ]; then
+    skip "penwa dashboard already built"
+else
+    npm --prefix penwa/dashboard install
+    npm --prefix penwa run dashboard:build
+    ok "penwa dashboard built"
+fi
+
 step "Ollama models"
 # Base models pulled from Ollama's own library. qwen3:8b-16k is not a
 # stock tag - it's this deployment's own 16k-context variant of qwen3:8b
