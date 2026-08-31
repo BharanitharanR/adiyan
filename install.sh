@@ -215,6 +215,14 @@ else
     # the one that created it. Safe either way: this is only ever a
     # download cache, never anything with real data in it.
     rm -rf "$HOME/.cache/puppeteer"
+    # Confirmed live: this step's own spinner gives no progress percentage
+    # and no size estimate while it silently pulls down a real, large
+    # (~200MB+) Chrome binary - on a slow connection that looks
+    # indistinguishable from hung, and Ctrl-C'ing out of it is exactly
+    # what leaves the corrupted half-downloaded folder this whole
+    # verify-and-retry block exists to catch in the first place. Said
+    # here, once, before the step that actually looks stuck.
+    echo -e "${DIM}  Downloading Chrome for WhatsApp automation (~200MB) - this can take a few minutes with no visible progress. Don't interrupt it.${RESET}"
     # Up to two attempts: a plain retry first (handles a non-zero npm exit
     # code), then - if npm looked fine but the browser still won't launch -
     # a harder reset that clears both the download cache and node_modules,
