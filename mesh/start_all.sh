@@ -262,13 +262,51 @@ do_start() {
         fi
     done
 
-    # First-time-only: open the WhatsApp linking page automatically, but
-    # only when there's actually a session to link - not on every restart
-    # once you're already connected. Silently skipped (not a failure) if
-    # config_server isn't up yet or the connection check itself can't run,
-    # since this is a convenience, not something worth failing the whole
-    # start over.
-    if is_target "config_server" && component_alive "8500" "mesh.config_server.server"; then
+    # OpenWA generates its own dashboard API key on first boot
+    # (penwa/data/.api-key) but nothing ever put it where this mesh's own
+    # OpenWAService looks for one (the secrets vault) - confirmed by
+    # reading openwa_service.py's own __init__ directly, not assumed.
+    # Every authenticated call this mesh makes into OpenWA, including the
+    # connection check right below, would silently fail auth on a
+    # genuinely fresh machine without this, indistinguishable from "not
+    # connected yet". Synced here, every run, since it's harmless to
+    # re-write the same value and the alternative is a stale key after a
+    # rotation.
+    if is_target "openwa" && [ -f "$REPO_ROOT/penwa/data/.api-key" ]; then
+        "$PYTHON_BIN" -c "
+from mesh.lib.secrets_vault import set_secret
+with open('$REPO_ROOT/penwa/data/.api-key') as f:
+    set_secret('OPENWA_API_KEY', f.read().strip())
+" 2>/dev/null || true
+    fi
+
+    # First-time-only: create the 'adiyan' session (every skill in this
+    # mesh that talks to WhatsApp assumes exactly this name - see
+    # OPENWA_SESSION_NAME throughout mesh/) and open the WhatsApp linking
+    # page automatically, but only when there's actually a session left
+    # to link - not on every restart once you're already connected.
+    # Silently skipped (not a failure) if config_server/openwa aren't up
+    # yet or either check can't run, since this is a convenience, not
+    # something worth failing the whole start over.
+    if is_target "config_server" && component_alive "8500" "mesh.config_server.server" \
+        && is_target "openwa" && component_alive "2785" "npm --prefix penwa start"; then
+        "$PYTHON_BIN" -c "
+import asyncio
+from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
+
+async def main():
+    svc = OpenWAService(base_url='http://localhost:2785', api_key='', session_name='adiyan')
+    try:
+        session_id = await svc._session_id_or_refresh()
+    except Exception:
+        session_id = None
+    if session_id is None:
+        async with svc._new_client() as client:
+            await client.post('/api/sessions', json={'name': 'adiyan'})
+
+asyncio.run(main())
+" 2>/dev/null || true
+
         already_connected="no"
         if connected_check="$("$PYTHON_BIN" -c "
 import asyncio

@@ -261,6 +261,12 @@ echo -e "${DIM}  See which known keys are already set: .venv/bin/python3 -m mesh
 
 echo -e "\n${GREEN}${BOLD}Setup complete.${RESET}"
 echo -e "Next: run ${BOLD}mesh/start_all.sh${RESET} when you're ready to start the mesh - this script deliberately doesn't start anything itself."
+echo -e "\n${DIM}Note: OpenWA generates its own dashboard login key the first time it actually starts (this script never starts"
+echo -e "anything, so it doesn't exist yet). Once mesh/start_all.sh has run, find it with:"
+echo -e "  cat penwa/data/.api-key"
+echo -e "That's what the dashboard's login screen (opened automatically for first-time WhatsApp linking) is asking for -"
+echo -e "confirmed live: without knowing to look here, that login screen just says \"the key is invalid\" with no hint"
+echo -e "where a real one comes from.${RESET}"
 echo -e "\n${DIM}Note: automated WhatsApp sends (scheduler, journal) are currently locked down in mesh/lib/permissions_config.json"
 echo -e "following a 2026-08-30 runaway-message incident. Your own live @Adiyan chat replies still work. See this script's"
 echo -e "header comment for what changed and what to check before re-enabling.${RESET}"
