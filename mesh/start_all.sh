@@ -234,20 +234,44 @@ launch_component() {
     echo "  [start] $name (pid $!) -> $logfile"
 }
 
+# penwa/data/.api-key -> OPENWA_API_KEY in the vault, whenever the file
+# exists (a silent no-op otherwise - nothing to sync yet on a genuinely
+# first-ever boot, before OpenWA has generated a key at all).
+sync_openwa_api_key() {
+    [ -f "$REPO_ROOT/penwa/data/.api-key" ] || return 0
+    "$PYTHON_BIN" -c "
+from mesh.lib.secrets_vault import set_secret
+with open('$REPO_ROOT/penwa/data/.api-key') as f:
+    set_secret('OPENWA_API_KEY', f.read().strip())
+" 2>/dev/null || true
+}
+
 do_start() {
     # OpenWA persists its dashboard API key to penwa/data/.api-key on first
     # boot, but doesn't reliably create that directory itself first.
     # Confirmed live on a real fresh clone: "pre-write chmod 0o600 failed
     # for .../penwa/data/.api-key: ENOENT: no such file or directory" on
     # every single restart - meaning OpenWA generated a brand new random
-    # key every time, with nothing on disk to persist the old one to. The
-    # sync step below (penwa/data/.api-key -> OPENWA_API_KEY in the vault)
-    # only runs `if [ -f ... ]`, so it silently never fired either. Every
-    # authenticated call this mesh makes into OpenWA 401'd forever as a
-    # result - indistinguishable, from a WhatsApp message's perspective,
-    # from the message never arriving at all. Created here, unconditionally,
-    # before OpenWA ever starts - a no-op if it already exists.
+    # key every time, with nothing on disk to persist the old one to.
+    # Created here, unconditionally, before OpenWA ever starts - a no-op
+    # if it already exists.
     mkdir -p "$REPO_ROOT/penwa/data"
+
+    # Synced here too, before anything launches, not just after everything
+    # is up (see the same call further down) - confirmed live this matters:
+    # whatsapp_mcp reads OPENWA_API_KEY from the vault at its own process
+    # startup, and it launches in the same batch as openwa itself, well
+    # before the post-launch sync runs. Once a key file already exists from
+    # a prior successful boot (the steady-state case, now that the
+    # directory persists across restarts), whatsapp_mcp needs the current
+    # value *before* it starts, or it 401s against OpenWA for the rest of
+    # this run - no different from the message never arriving at all, and
+    # nothing short of a second full restart fixes it, since the vault only
+    # gets the right value written to it once, at the very end. The only
+    # case this pre-launch call can't cover is a truly first-ever boot,
+    # where no key file exists until OpenWA creates one during this same
+    # run - the post-launch sync below still exists for exactly that case.
+    sync_openwa_api_key
 
     refresh_listening
     echo "Starting:"
@@ -327,22 +351,16 @@ do_start() {
         fi
     done
 
-    # OpenWA generates its own dashboard API key on first boot
-    # (penwa/data/.api-key) but nothing ever put it where this mesh's own
-    # OpenWAService looks for one (the secrets vault) - confirmed by
-    # reading openwa_service.py's own __init__ directly, not assumed.
-    # Every authenticated call this mesh makes into OpenWA, including the
-    # connection check right below, would silently fail auth on a
-    # genuinely fresh machine without this, indistinguishable from "not
-    # connected yet". Synced here, every run, since it's harmless to
-    # re-write the same value and the alternative is a stale key after a
-    # rotation.
-    if is_target "openwa" && [ -f "$REPO_ROOT/penwa/data/.api-key" ]; then
-        "$PYTHON_BIN" -c "
-from mesh.lib.secrets_vault import set_secret
-with open('$REPO_ROOT/penwa/data/.api-key') as f:
-    set_secret('OPENWA_API_KEY', f.read().strip())
-" 2>/dev/null || true
+    # Synced again here, now that OpenWA has actually had a chance to run -
+    # covers the genuinely-first-ever-boot case, where no key file existed
+    # yet for the pre-launch sync_openwa_api_key call above to pick up.
+    # Everything launched *after* this point (the connection check right
+    # below, and any future restart's pre-launch sync) sees the correct
+    # value; whatsapp_mcp itself, already started earlier in this same run,
+    # does not - see sync_openwa_api_key's own comment for why that's a
+    # one-restart-late gap this call can't close by itself.
+    if is_target "openwa"; then
+        sync_openwa_api_key
     fi
 
     # First-time-only: create the 'adiyan' session (every skill in this
