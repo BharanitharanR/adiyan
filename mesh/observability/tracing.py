@@ -15,11 +15,11 @@ manual span code is needed at each call site - LangChain/LangGraph calls are
 captured automatically once this has run.
 """
 import json
+import logging
 from pathlib import Path
 
-from phoenix.otel import register
-
 CONFIG_PATH = Path(__file__).parent / 'config.json'
+logger = logging.getLogger('Tracing')
 
 
 def setup_tracing(project_name: str):
@@ -29,12 +29,33 @@ def setup_tracing(project_name: str):
     spans are distinguishable from every other agent's in the shared
     collector, rather than all agents' traces blurring together under one
     name.
-    """
-    config = json.loads(CONFIG_PATH.read_text())
-    return register(
-        project_name=project_name,
-        endpoint=config['collector_endpoint'],
-        protocol=config.get('protocol'),
-        auto_instrument=True,
-        batch=config.get('batch', True),
-    )
+
+    None on any failure (phoenix.otel not installed/importable, a bad
+    collector endpoint, or - confirmed live - a real incompatibility
+    between a given arize-phoenix release and a given Python patch
+    version, e.g. a ValueError from its own dataclass definitions under
+    Python 3.11.15) - never raises. This is observability, explicitly
+    documented above as optional per-agent instrumentation, not core
+    functionality; every real caller (every agent's server.py) already
+    discards this return value, calling setup_tracing() purely for its
+    side effect. A tracing-only problem taking down the entire agent -
+    confirmed live: 7 of ~13 agents refused to start over exactly this -
+    is a worse outcome than losing traces for that run."""
+    try:
+        from phoenix.otel import register
+    except Exception as e:
+        logger.warning(f"Tracing disabled for {project_name!r} - phoenix.otel unavailable: {e}")
+        return None
+
+    try:
+        config = json.loads(CONFIG_PATH.read_text())
+        return register(
+            project_name=project_name,
+            endpoint=config['collector_endpoint'],
+            protocol=config.get('protocol'),
+            auto_instrument=True,
+            batch=config.get('batch', True),
+        )
+    except Exception as e:
+        logger.warning(f"Tracing disabled for {project_name!r} - register() failed: {e}")
+        return None
