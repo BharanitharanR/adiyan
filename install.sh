@@ -329,15 +329,41 @@ pull_if_missing "qwen3:8b"
 pull_if_missing "qwen3-vl:8b"
 pull_if_missing "nomic-embed-text"
 
-if ollama list | awk '{print $1}' | grep -qx "qwen3:8b-16k"; then
-    skip "qwen3:8b-16k already built"
-else
-    echo "Building qwen3:8b-16k (qwen3:8b with a 16384-token context window)..."
-    modelfile="$(mktemp)"
-    printf 'FROM qwen3:8b\nPARAMETER num_ctx 16384\n' > "$modelfile"
-    ollama create qwen3:8b-16k -f "$modelfile"
-    rm -f "$modelfile"
-    ok "Built qwen3:8b-16k"
+build_16k_variant() {
+    local base="$1"
+    local tag="${base}-16k"
+    if ollama list | awk '{print $1}' | grep -qx "$tag"; then
+        skip "$tag already built"
+    else
+        echo "Building $tag ($base with a 16384-token context window)..."
+        modelfile="$(mktemp)"
+        printf 'FROM %s\nPARAMETER num_ctx 16384\n' "$base" > "$modelfile"
+        ollama create "$tag" -f "$modelfile"
+        rm -f "$modelfile"
+        ok "Built $tag"
+    fi
+}
+build_16k_variant "qwen3:8b"
+
+# 8b's real weight footprint (~5GB, before the rest of this mesh's own
+# 13+ processes) is genuinely tight on an 8GB machine - confirmed live,
+# not theoretical: running the full mesh plus qwen3:8b concurrently
+# produced sustained memory pressure and visible CPU creep on a real
+# 8GB Mac. Auto-detected, not something anyone has to know to ask for -
+# a low-memory machine gets the 4b variant built and set as this
+# install's own default automatically; a machine with headroom is
+# untouched, no extra multi-GB download it didn't need.
+TOTAL_RAM_GB=$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))
+if [ "$TOTAL_RAM_GB" -le 8 ]; then
+    echo -e "${DIM}Detected ${TOTAL_RAM_GB}GB of RAM - also building the lighter qwen3:4b-16k variant, since 8b's real"
+    echo -e "weight footprint (~5GB) alongside this mesh's own dozen-plus processes showed real memory pressure on"
+    echo -e "hardware this size.${RESET}"
+    pull_if_missing "qwen3:4b"
+    build_16k_variant "qwen3:4b"
+    echo -e "${DIM}Not switched over automatically - every agent's actual model is a config_sdk setting (the same"
+    echo -e "one the dashboard edits), not a file this script should silently rewrite. Once mesh/start_all.sh has"
+    echo -e "run (MongoDB needs to be up), switch every agent onto it in one step:"
+    echo -e "  .venv/bin/python3 -m mesh.tools.set_default_model qwen3:4b-16k${RESET}"
 fi
 
 step "Secrets"
