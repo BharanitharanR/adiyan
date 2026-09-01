@@ -4,8 +4,9 @@ Peer-to-peer compute sharing between Adiyan users: if your own machine is
 busy, offload a single inference to someone else's Adiyan instance, get
 the result back, without exposing anything beyond the exact prompt being
 run. Platform infrastructure, not something an agent author touches
-directly - see `mesh/lib/agent_sdk.py`'s `AdiyanAgent.ask()`, the one
-caller.
+directly - `mesh/inference_router/` is the only caller, deciding whether
+a given `AdiyanAgent.ask()` call should land here at all (see its own
+`skills/complete.py`).
 
 ## The plan, and what's actually built so far
 

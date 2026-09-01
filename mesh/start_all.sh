@@ -142,8 +142,15 @@ COMPONENTS=(
     "config_server|8500|mesh.config_server.server"
     # Platform infrastructure, not something any agent author touches or
     # needs to know exists - mesh/lib/agent_sdk.py's ask() is the only
-    # caller, falling back here transparently when local Ollama is
-    # loaded. Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
+    # caller, for every plain-text LLM call. The actual "run this locally
+    # or offload to a peer" decision, including whether this machine is
+    # currently busy, lives entirely here - see mesh/inference_router/
+    # skills/complete.py.
+    "inference_router|8441|mesh.inference_router.server"
+    # Platform infrastructure, not something any agent author touches or
+    # needs to know exists - Inference Router (above) is the only caller,
+    # when it decides a call should go to a peer instead of running here
+    # locally. Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
     # override for a real cross-machine peer test) - see mesh/compute_share/
     # README.md and the Peer Exchange design for the full picture.
     "compute_share|8460|mesh.compute_share.server"

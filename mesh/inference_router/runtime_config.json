@@ -1,0 +1,14 @@
+{
+  "stages": {
+    "classify_skill": {
+      "model": "qwen3:8b-16k",
+      "temperature": 0.3,
+      "timeout": 60
+    },
+    "extract_parameters": {
+      "model": "qwen3:8b-16k",
+      "temperature": 0.3,
+      "timeout": 60
+    }
+  }
+}

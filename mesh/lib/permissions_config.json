@@ -64,8 +64,14 @@
         "mcp.whatsapp.send_message"
       ]
     },
-    "compute_share_client": {
-      "description": "The AdiyanAgent SDK's own internal identity (mesh/lib/agent_sdk.py's ask()) when it falls back to offloading a prompt to a peer's spare compute - never minted by, or visible to, whichever agent actually called agent.ask(). Deliberately its own platform-level tier rather than something added to every agent's own tier: offloading is a platform capability every agent gets by construction, not something each agent author has to know exists or request access to. Scoped to exactly compute_share.offload - nothing about routing an agent's LLM call needs any other permission.",
+    "platform_llm_client": {
+      "description": "mesh/lib/agent_sdk.py's ask() own fixed identity when it calls Inference Router's complete skill - never minted by, or visible to, whichever agent actually called agent.ask(). Deliberately its own platform-level tier rather than something added to every agent's own tier: routing an LLM call is a platform capability every agent gets by construction, not something each agent author has to know exists or request access to. Scoped to exactly inference_router.complete.",
+      "allow": [
+        "inference_router.complete"
+      ]
+    },
+    "inference_router_service": {
+      "description": "Inference Router's own identity (mesh/inference_router/skills/complete.py) when IT decides to offload a backed-up call to a peer - a second, separate hop from platform_llm_client above (ask() -> Inference Router -> compute_share), not the same credential reused twice. Scoped to exactly compute_share.offload - nothing about this decision needs any other permission.",
       "allow": [
         "compute_share.offload"
       ]
