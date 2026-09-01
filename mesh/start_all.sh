@@ -167,7 +167,17 @@ COMPONENTS=(
     # ngrok's own local admin API, always on that fixed port regardless of
     # which random public URL this run's tunnel gets - a stable thing for
     # component_alive to check, unlike the tunnel URL itself.
-    "ngrok|4040|ngrok http 8425 --log=stdout"
+    #
+    # https://localhost:8425, not bare 8425 - confirmed live, this is load-
+    # bearing: whatsapp_mcp serves HTTPS only (its own self-signed cert -
+    # see mesh/mcp/whatsapp/server.py's ensure_self_signed_cert), but a bare
+    # port number defaults ngrok to treating the local backend as plain
+    # HTTP. That mismatch didn't fail loudly or consistently - it produced
+    # intermittent "HTTP 503" webhook delivery failures on OpenWA's side,
+    # confirmed live on two separate machines, while some deliveries still
+    # slipped through. A direct side-by-side test against the same tunnel
+    # URL: bare `8425` -> 503, `https://localhost:8425` -> 200, every time.
+    "ngrok|4040|ngrok http https://localhost:8425 --log=stdout"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
@@ -492,7 +502,7 @@ asyncio.run(main())
     # yet, OpenWA not ready) just means WhatsApp messages won't arrive
     # until the next start_all.sh run - not worth failing the whole start
     # over, same reasoning as the session-creation block above.
-    if is_target "ngrok" && component_alive "4040" "ngrok http 8425 --log=stdout" \
+    if is_target "ngrok" && component_alive "4040" "ngrok http https://localhost:8425 --log=stdout" \
         && is_target "whatsapp_mcp" && component_alive "8425" "mesh.mcp.whatsapp.server"; then
         echo
         "$PYTHON_BIN" -m mesh.mcp.whatsapp.register_webhook || true
