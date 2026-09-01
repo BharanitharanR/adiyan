@@ -64,15 +64,32 @@ def main() -> None:
         'retryCount': 0,
     }
 
-    # Idempotent: PUT-update a webhook already pointed at this same URL
-    # instead of POSTing a duplicate - re-running this script (e.g. after
-    # changing `events`) must not leave two webhooks both firing.
+    # Idempotent by SESSION, not by exact URL - confirmed live this was a
+    # real bug, not just a style choice: ngrok's free tier hands out a
+    # brand new random URL every restart, so matching on exact URL never
+    # found the previous run's entry to update. Every restart just added
+    # ANOTHER webhook alongside the old one, which stayed registered
+    # forever, pointed at a now-dead tunnel, generating a permanent
+    # "webhook_delivery_failed" (HTTP 503, connection refused, whatever)
+    # on every single incoming message from then on - live and slower,
+    # while the current correct entry still succeeded. There should only
+    # ever be one real webhook for this session; anything else here is
+    # leftover from a prior tunnel.
     existing = httpx.get(endpoint, headers={'X-API-Key': api_key}, timeout=10).json()
-    match = next((w for w in existing if w['url'] == webhook_url), None)
+    exact_match = next((w for w in existing if w['url'] == webhook_url), None)
+    stale = [w for w in existing if w['url'] != webhook_url]
 
-    if match:
-        response = httpx.put(f"{endpoint}/{match['id']}", json=payload, headers={'X-API-Key': api_key}, timeout=10)
+    if exact_match:
+        response = httpx.put(f"{endpoint}/{exact_match['id']}", json=payload, headers={'X-API-Key': api_key}, timeout=10)
         verb = 'Updated'
+    elif stale:
+        # Reuse the first stale entry's id (rewrite it to the new URL)
+        # rather than creating yet another one - one webhook ID survives
+        # across every ngrok restart this way, instead of a new one
+        # accumulating each time.
+        reused = stale.pop(0)
+        response = httpx.put(f"{endpoint}/{reused['id']}", json=payload, headers={'X-API-Key': api_key}, timeout=10)
+        verb = 'Updated (reused a stale entry)'
     else:
         response = httpx.post(endpoint, json=payload, headers={'X-API-Key': api_key}, timeout=10)
         verb = 'Registered'
@@ -81,6 +98,17 @@ def main() -> None:
         print(f'{verb}: {OPENWA_SESSION_NAME!r} -> {webhook_url} (events: {payload["events"]})')
     else:
         print(f'{verb} failed ({response.status_code}): {response.text}')
+
+    # Anything left in `stale` past this point is a second (or third...)
+    # dead entry from an even earlier run - clean those up too, not just
+    # the one just reused, since a machine that's been restarted many
+    # times could have several.
+    for dead in stale:
+        delete_response = httpx.delete(f"{endpoint}/{dead['id']}", headers={'X-API-Key': api_key}, timeout=10)
+        if delete_response.status_code in (200, 204):
+            print(f"Removed stale webhook {dead['id']!r} -> {dead['url']}")
+        else:
+            print(f"Could not remove stale webhook {dead['id']!r} ({delete_response.status_code}): {delete_response.text}")
 
 
 if __name__ == '__main__':
