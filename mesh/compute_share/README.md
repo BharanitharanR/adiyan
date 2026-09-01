@@ -52,9 +52,15 @@ unbuilt.
   `cron_trigger` the same way `mesh/adiyan_reader/skills/read_next_page.py`
   re-registers its own nightly recurrence.
 - `offload` - "my machine is busy, find someone and route to them."
-  Picks the freshest-fitting known peer (`db.pick_peer()` skips anyone
-  not heard from recently), calls their `run_inference` over real A2A,
-  returns the completion plus who served it.
+  `db.pick_peers()` gives up to 3 live candidates (skips anyone not
+  heard from recently), and `offload` races all of them on
+  `check_availability` concurrently - real current load, not just
+  liveness - sending the actual prompt to whichever confirms free
+  first and cancelling the rest. Falls back to the freshest candidate if
+  none confirm free rather than giving up.
+- `check_availability` - a real in-flight counter in `run_inference.py`
+  itself, reported with no side effect - the signal `offload`'s race
+  actually needs, and liveness alone never provided.
 - `mesh/tools/compute_share_bootstrap.py` - `--mine` prints this
   instance's own bootstrap string; consuming someone else's seeds it as
   a known peer and kicks off the first gossip round immediately.
@@ -92,12 +98,18 @@ not a mock, not read off the code and assumed correct:
 4. **The actual point of all of it.** `AdiyanAgent.ask()`, with local
    Ollama deliberately pointed at an unreachable address and
    `community='communitySearch'` passed, returned a real completion
-   ('hello') - served by a second, separate compute_share process, not
-   a fallback string or a mock.
+   ('hello') - served by a second, separate process (via Inference
+   Router's own backed-up detection), not a fallback string or a mock.
 5. **The opt-in boundary holds.** The same forced-local-failure call
    *without* `community` raised the original local error directly - no
    silent fallback, no attempt to reach a peer, confirmed by inspecting
    which exception type came back, not assumed from reading the code.
+6. **The availability race actually avoids a busy peer.** One peer
+   occupied with a real in-flight Ollama call reported
+   `{'available': False}` via `check_availability`; `offload`'s race
+   against it and a second, free peer correctly skipped the busy one and
+   returned a completion served by the free one - not a coin flip that
+   happened to land right.
 
 ## What's still genuinely unsolved
 
