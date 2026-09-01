@@ -39,7 +39,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
 from mesh.compute_share.constants import AGENT_ID
-from mesh.compute_share.skills import announce_peer, gossip, offload, run_inference
+from mesh.compute_share.skills import announce_peer, check_availability, gossip, offload, run_inference
 from mesh.lib import permissions
 from mesh.lib.errors import describe_exception
 
@@ -48,9 +48,14 @@ SKILL_HANDLERS = {
     'announce_peer': announce_peer.run,
     'offload': offload.run,
     'gossip': gossip.run,
+    'check_availability': check_availability.run,
 }
 
-PUBLIC_SKILLS = {'run_inference', 'announce_peer'}
+# check_availability joins run_inference/announce_peer here for the same
+# reason: a peer racing several candidates (offload.py) needs an answer
+# before it could hold any credential this instance could verify anyway,
+# and there's nothing to leak - a boolean, nothing else.
+PUBLIC_SKILLS = {'run_inference', 'announce_peer', 'check_availability'}
 
 
 class ComputeShareAgentExecutor(AgentExecutor):

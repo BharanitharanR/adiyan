@@ -9,7 +9,7 @@ a brand new, unrelated peer instead of an update to a known one.
 
 last_seen_at is what makes gossip (mesh/compute_share/skills/
 announce_peer.py) mean something: a peer that announced once and went
-quiet an hour ago is worse than useless to route to - pick_peer()
+quiet an hour ago is worse than useless to route to - pick_peers()
 filters on this, not just insertion order. learned_from is bookkeeping,
 not used for routing - a peer's own first announce still overwrites it
 on re-announce (see upsert_peer), so it always answers "who actually
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS peers (
 """
 
 # How long a peer is trusted as "probably still alive" after its last
-# announce/heartbeat before pick_peer() stops offering it. Not a hard
+# announce/heartbeat before pick_peers() stops offering it. Not a hard
 # science for a POC - roughly 2x a several-minute heartbeat interval,
 # same reasoning as any other liveness timeout: long enough that one
 # missed heartbeat (a slow network blip) doesn't false-negative a real
@@ -120,17 +120,21 @@ def sample_peers(conn: sqlite3.Connection, exclude_instance_id: Optional[str] = 
     return [dict(row) for row in rows]
 
 
-def pick_peer(conn: sqlite3.Connection, fresh_within_seconds: int = DEFAULT_FRESHNESS_SECONDS) -> Optional[Dict[str, Any]]:
-    # Freshness first, round-robin second: only a peer heard from within
-    # fresh_within_seconds is even considered - one that's gone stale is
-    # skipped outright, not just deprioritized, since offering a
-    # guaranteed-dead peer is worse than offering none (offload.py
-    # already handles "no peer available" as a real, expected outcome).
-    # Among fresh peers, oldest-last-seen-first is still the crude
-    # round-robin the original POC used, so one peer doesn't take every
-    # request just for being top of an unordered scan.
+def pick_peers(
+    conn: sqlite3.Connection, count: int = 3, fresh_within_seconds: int = DEFAULT_FRESHNESS_SECONDS,
+) -> List[Dict[str, Any]]:
+    """Up to `count` candidates for offload.py's availability race - not
+    "the one right peer," since liveness (this function's own job) and
+    availability (check_availability.py's job, answered per-candidate at
+    request time) are different questions this function alone can't
+    answer. Freshness first: only a peer heard from within
+    fresh_within_seconds is even considered - one that's gone stale is
+    skipped outright, not just deprioritized, since a guaranteed-dead
+    peer isn't worth racing at all. Among fresh peers, oldest-last-seen-
+    first is still the crude round-robin the original POC used, so one
+    peer isn't in every race just for being top of an unordered scan."""
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=fresh_within_seconds)).isoformat()
-    row = conn.execute(
-        'SELECT * FROM peers WHERE last_seen_at >= ? ORDER BY last_seen_at ASC LIMIT 1', (cutoff,),
-    ).fetchone()
-    return dict(row) if row else None
+    rows = conn.execute(
+        'SELECT * FROM peers WHERE last_seen_at >= ? ORDER BY last_seen_at ASC LIMIT ?', (cutoff, count),
+    ).fetchall()
+    return [dict(row) for row in rows]

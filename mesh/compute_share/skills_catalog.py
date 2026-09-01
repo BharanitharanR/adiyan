@@ -33,6 +33,13 @@ _STRUCTURE: Dict[str, Dict[str, Any]] = {
         'input_modes': ['text/plain'], 'output_modes': ['application/json'],
         'examples': ['Run a gossip round'],
     },
+    'check_availability': {
+        'name': 'Check Availability',
+        'description': "Report whether this instance can take a run_inference call right now, with no side effect - what offload.py races several candidates on before sending real work to whichever answers free first.",
+        'tags': ['compute-share', 'internal'],
+        'input_modes': ['text/plain'], 'output_modes': ['application/json'],
+        'examples': ['Are you free to take a request right now?'],
+    },
 }
 
 

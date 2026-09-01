@@ -58,7 +58,7 @@ async def _announce_to(conn, peer: Dict[str, Any], model: str) -> None:
         })
     except Exception:
         # A peer that's gone quiet or unreachable this round isn't a
-        # failure worth surfacing - db.pick_peer()'s own freshness filter
+        # failure worth surfacing - db.pick_peers()'s own freshness filter
         # is what actually stops a dead peer from being routed to;
         # gossip just doesn't get to refresh that one entry this time,
         # and it ages out on its own if it stays unreachable.
