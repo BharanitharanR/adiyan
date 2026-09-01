@@ -205,6 +205,7 @@ reply = await agent.ask("Summarize this: " + text)</code></pre>
     <table>
       <tr><th>Method</th><th>Replaces</th></tr>
       <tr><td><code>notify_owner(text)</code></td><td>Minting a token yourself + resolving <code>get_own_phone</code> + calling <code>send_message</code> by hand.</td></tr>
+      <tr><td><code>resolve_chat_id(phone)</code> / <code>send_message_to(chat_id, text)</code> / <code>send_voice_to(chat_id, audio)</code></td><td>Messaging someone <i>other</i> than the owner — a direct <code>OpenWAService</code> construction, before this existed (§11).</td></tr>
       <tr><td><code>search_knowledge_base</code> / <code>share_knowledge_document</code> / <code>recall_contact_memory</code> / <code>remember_interaction</code></td><td>Knowing Memory Agent's URL, the exact skill id, and its exact parameter names.</td></tr>
       <tr><td><code>schedule(job_id, invoke_at, target_agent_url, skill_id)</code></td><td>Knowing cron_trigger's URL and its <code>register_trigger</code> tool's argument shape.</td></tr>
       <tr><td><code>ask(prompt, ...)</code></td><td>Importing <code>ChatOllama</code> and constructing it yourself — see §7.</td></tr>
@@ -225,6 +226,8 @@ reply = await agent.ask("Summarize this: " + text)</code></pre>
     <table>
       <tr><th>Capability</th><th>Permission key(s)</th><th>How you call it</th></tr>
       <tr><td>Message the owner on WhatsApp</td><td><code>mcp.whatsapp.get_own_phone</code>, <code>mcp.whatsapp.send_message</code></td><td><code>agent.notify_owner(text)</code></td></tr>
+      <tr><td>Message someone else on WhatsApp (a client, a job's registered number)</td><td><code>mcp.whatsapp.resolve_chat_id</code>, <code>mcp.whatsapp.send_message</code></td><td><code>chat_id = await agent.resolve_chat_id(phone)</code><br><code>await agent.send_message_to(chat_id, text)</code></td></tr>
+      <tr><td>Send a WhatsApp voice note</td><td><code>mcp.whatsapp.send_voice</code></td><td><code>agent.send_voice_to(chat_id, audio_bytes)</code></td></tr>
       <tr><td>Search the uploaded knowledge base</td><td><code>memory.search_knowledge_base</code></td><td><code>agent.search_knowledge_base(query)</code></td></tr>
       <tr><td>Send back an original uploaded document</td><td><code>memory.share_knowledge_document</code></td><td><code>agent.share_knowledge_document(query)</code></td></tr>
       <tr><td>Read a contact's conversation history</td><td><code>memory.recall_contact_memory</code></td><td><code>agent.recall_contact_memory(contact_name, query)</code></td></tr>
@@ -313,19 +316,25 @@ conn = sqlite3.connect(state_db_path(AGENT_ID))</code></pre>
 
   <section id="pitfall">
     <h2><span class="num">11.</span> Don't construct <code>OpenWAService</code> yourself</h2>
-    <div class="callout bad">
-      <b>Known gap — two call sites left</b>
+    <p>
       <code>mesh/lib/utilities/whatsapp/openwa_service.py</code>'s <code>OpenWAService</code> talks straight
-      to OpenWA's REST API with the raw vault key — no token, no tier, no permission check at all.
-      <code>mesh/adiyan_reader/skills/read_next_page.py</code> and <code>dispatch_questions.py</code> still
-      do this — each can send a WhatsApp message regardless of what any tier says. (Scheduler's
-      <code>run_routine.py</code> used to as well; it's migrated onto <code>agent.notify_owner()</code>
-      now.) AdiyanReader can't follow yet: it needs <code>send_voice</code> and <code>resolve_chat_id</code>
-      for an arbitrary phone number, neither of which <code>whatsapp_mcp</code> exposes as a gated tool
-      today. Don't build a third instance of the bypass, and don't import <code>ChatOllama</code> directly
-      either, for the same reason: <code>agent.notify_owner()</code> and
-      <code>agent.ask()</code> (§5) are the one path that's actually checked and actually upgradeable later.
-    </div>
+      to OpenWA's REST API with the raw vault key — no token, no tier, no permission check at all. Every
+      caller that used to construct it directly (Scheduler's <code>run_routine.py</code>, AdiyanReader's
+      <code>read_next_page.py</code> and <code>dispatch_questions.py</code>) has since moved onto
+      <code>AdiyanAgent</code> — don't build a new instance of the bypass.
+    </p>
+    <p>Messaging someone <i>other</i> than the owner (AdiyanReader's actual case — a reading job's registered phone number) is a three-step shape, not a single call like <code>notify_owner</code>:</p>
+    <pre><code>chat_id = await agent.resolve_chat_id(phone_number)
+if chat_id is not None:
+    await agent.send_message_to(chat_id, text)
+    await agent.send_voice_to(chat_id, audio_bytes)</code></pre>
+    <p class="lede">
+      Requires <code>mcp.whatsapp.resolve_chat_id</code>, <code>mcp.whatsapp.send_message</code>, and/or
+      <code>mcp.whatsapp.send_voice</code> in your tier, depending on which you call — see
+      <code>adiyan_reader_service</code> for the exact shape. Same rule as everywhere else in this guide:
+      don't import <code>ChatOllama</code> directly either, for the same reason — <code>agent.ask()</code>
+      (§5) is the one path that's actually checked and actually upgradeable later.
+    </p>
   </section>
 
   <footer>
