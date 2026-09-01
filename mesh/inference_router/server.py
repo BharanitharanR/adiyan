@@ -2,9 +2,11 @@
 Inference Router - A2A server entrypoint. Same shape as every other agent's
 server.py (copied from mesh/journal/server.py, the smallest real one).
 
-Run from the repo root as `python -m mesh.inference_router.server` - it
-self-registers with mesh.agent_registry automatically via serve(), same
-as every other agent. Test directly:
+Run from the repo root as `python -m mesh.inference_router.server`. Does
+NOT self-register with mesh.agent_registry (register_with_agent_registry=
+False below) - internal platform plumbing reached only via mesh/lib/
+agent_sdk.py's ask(), never a valid destination for Orchestrator's
+router.py to pick from raw user text. Test directly:
 
     curl -s http://127.0.0.1:8441/.well-known/agent-card.json
 
@@ -68,4 +70,9 @@ if __name__ == '__main__':
         tasks_db_path=tasks_db_path(AGENT_ID),
         agent_id=AGENT_ID,
         skills_refresher=get_skills,
+        # Internal platform plumbing, reached only via mesh/lib/agent_sdk.py's
+        # ask() (fixed INFERENCE_ROUTER_URL), never a valid destination for
+        # Orchestrator's router.py to pick from raw user text. See
+        # bootstrap.build_app()'s own docstring.
+        register_with_agent_registry=False,
     )

@@ -45,4 +45,11 @@ if __name__ == '__main__':
         tasks_db_path=tasks_db_path(STORAGE_ID),
         agent_id=AGENT_ID,
         skills_refresher=get_skills,
+        # Never a destination Orchestrator's router.py should pick for raw
+        # user text - only ever reached via a fixed URL from another
+        # agent's own code (mesh/lib/agent_sdk.py's ask()). See
+        # bootstrap.build_app()'s own docstring for the live bug this
+        # closes: run_inference's description alone was enough to win a
+        # routing decision for an ordinary WhatsApp message.
+        register_with_agent_registry=False,
     )

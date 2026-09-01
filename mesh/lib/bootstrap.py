@@ -152,6 +152,7 @@ def build_app(
     tasks_db_path: Path,
     agent_id: str,
     skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
+    register_with_agent_registry: bool = True,
 ) -> Starlette:
     """Everything serve() needs before starting the two background threads
     and calling uvicorn.run() - split into its own function so
@@ -178,7 +179,29 @@ def build_app(
     forever. Only worth passing once an agent's skills_catalog.py actually
     resolves live config (vertical-aware or not) - an agent whose skills
     never change after startup gets nothing from this beyond one extra
-    async call per card fetch, so it stays optional rather than automatic."""
+    async call per card fetch, so it stays optional rather than automatic.
+
+    register_with_agent_registry: False for an agent that must never be a
+    destination Orchestrator's router.py can pick for raw user text -
+    compute_share and inference_router are the two real cases: both are
+    only ever reached by another agent's code calling their fixed URL
+    directly (mesh/lib/agent_sdk.py's ask(), inference_router's own
+    _run_on_peer), never by a human's free text landing on one of their
+    skills. Confirmed live as a real bug, not a hypothetical: compute_share's
+    run_inference skill description ('Run a single LLM completion for a
+    fully-built prompt...') reads to router.py's classify() like a generic
+    catch-all, and won a routing decision for an ordinary WhatsApp message
+    that had nothing to do with compute sharing - compute_share correctly
+    rejected it ('only accepts pre-resolved calls'), and Orchestrator's
+    silent-on-failure design then dropped the reply on the floor with no
+    explanation anywhere. The fix is structural, not a name-based exclusion
+    list in router.py: an agent that should never be user-routable simply
+    never registers, so it can never appear in the pool classify() chooses
+    from in the first place. Skips both the one-time self-registration
+    thread in serve() below AND the vertical-change re-registration task in
+    _lifespan (which would otherwise register it anyway on the next vertical
+    change) - registry_client.start_auto_refresh() (this agent reading the
+    registry, not writing to it) is unaffected either way."""
     engine = create_async_engine(f'sqlite+aiosqlite:///{tasks_db_path}')
     task_store = DatabaseTaskStore(engine=engine, create_table=True)
 
@@ -205,9 +228,12 @@ def build_app(
         # below. Runs regardless of skills_refresher - re-registering is
         # harmless (and cheap - a single MCP call) even for an agent whose
         # card never changes.
-        task = asyncio.create_task(_poll_vertical_and_reregister(agent_id, f'http://{host}:{port}'))
+        task = None
+        if register_with_agent_registry:
+            task = asyncio.create_task(_poll_vertical_and_reregister(agent_id, f'http://{host}:{port}'))
         yield
-        task.cancel()
+        if task is not None:
+            task.cancel()
 
     routes = []
     routes.extend(create_agent_card_routes(agent_card, card_modifier=card_modifier))
@@ -224,17 +250,29 @@ def serve(
     tasks_db_path: Path,
     agent_id: str,
     skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
+    register_with_agent_registry: bool = True,
 ) -> None:
     """Blocks, running the agent's A2A server. See build_app()'s own
     docstring for what it builds and why that part is split out; this
     function is just that plus the two background threads (real side
     effects - a registry registration, a periodic MCP poll - deliberately
-    not run by the smoke test) and the actual uvicorn.run() call."""
-    app = build_app(agent_card, executor, host, port, tasks_db_path, agent_id, skills_refresher)
+    not run by the smoke test) and the actual uvicorn.run() call.
 
-    threading.Thread(
-        target=_register_with_retry, args=(agent_id, f'http://{host}:{port}'), daemon=True,
-    ).start()
+    register_with_agent_registry: see build_app()'s own docstring - passed
+    straight through so both the one-time registration below and the
+    vertical-change re-registration inside build_app() agree on whether
+    this agent should ever be discoverable by Orchestrator's router.py."""
+    app = build_app(
+        agent_card, executor, host, port, tasks_db_path, agent_id, skills_refresher,
+        register_with_agent_registry=register_with_agent_registry,
+    )
+
+    if register_with_agent_registry:
+        threading.Thread(
+            target=_register_with_retry, args=(agent_id, f'http://{host}:{port}'), daemon=True,
+        ).start()
+    else:
+        logger.info(f"{agent_id!r} is not registering with the agent registry - internal-only, not user-routable.")
 
     # Every agent gets a live-ish view of the registry for free, whether or
     # not it happens to call registry_client.get_cached_agents() itself -
