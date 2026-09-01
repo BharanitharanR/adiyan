@@ -10,17 +10,17 @@ from real retrieved snippets, never guessed at when snippets are empty.
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from mesh.journal.constants import AGENT_ID, MEMORY_AGENT_URL
 from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config, load_seed_config
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
-OLLAMA_URL = 'http://localhost:11434'
 _SEED = load_seed_config(AGENT_CODE_DIR)
+_agent = AdiyanAgent(AGENT_ID)
 
 
 def _seeded(key: str) -> Dict[str, Any]:
@@ -32,9 +32,6 @@ class ReflectionPrompt(BaseModel):
 
 
 async def _craft_personalized(theme: Optional[str], snippets: list, cfg: Dict[str, Any]) -> str:
-    model = ChatOllama(
-        model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
-    ).with_structured_output(ReflectionPrompt)
     seeded = _seeded('craft_personalized_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'craft_personalized_prompt_template', seeded['value'], description=seeded['description'],
@@ -47,14 +44,13 @@ async def _craft_personalized(theme: Optional[str], snippets: list, cfg: Dict[st
         prompt = template.format(**fmt_kwargs)
     except Exception:
         prompt = seeded['value'].format(**fmt_kwargs)
-    result = await model.ainvoke(prompt)
+    result = await _agent.ask(
+        prompt, stage='craft_personalized', model=cfg['model'], temperature=cfg['temperature'], schema=ReflectionPrompt,
+    )
     return result.question
 
 
 async def _craft_generic(theme: Optional[str], cfg: Dict[str, Any]) -> str:
-    model = ChatOllama(
-        model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
-    ).with_structured_output(ReflectionPrompt)
     seeded = _seeded('craft_generic_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'craft_generic_prompt_template', seeded['value'], description=seeded['description'],
@@ -64,7 +60,9 @@ async def _craft_generic(theme: Optional[str], cfg: Dict[str, Any]) -> str:
         prompt = template.format(**fmt_kwargs)
     except Exception:
         prompt = seeded['value'].format(**fmt_kwargs)
-    result = await model.ainvoke(prompt)
+    result = await _agent.ask(
+        prompt, stage='craft_generic', model=cfg['model'], temperature=cfg['temperature'], schema=ReflectionPrompt,
+    )
     return result.question
 
 

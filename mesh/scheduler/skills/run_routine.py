@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from croniter import croniter
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from mesh.journal.constants import AGENT_URL as JOURNAL_AGENT_URL
@@ -34,7 +33,7 @@ from mesh.lib.skill_router import classify
 from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
-from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, OLLAMA_URL, _seeded
+from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, _seeded
 
 # One instance, module-level - AGENT_ID never changes at runtime, and
 # every method mints its own token internally against 'scheduler_service'
@@ -76,9 +75,6 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> Optional[st
     here is deliberate, the same principle as never sending raw error text:
     a job with nothing concrete to report shouldn't manufacture fake warmth
     to fill the gap."""
-    model = ChatOllama(
-        model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
-    ).with_structured_output(GenericMessage)
     seeded = _seeded('compose_generic_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'compose_generic_prompt_template', seeded['value'], description=seeded['description'],
@@ -87,7 +83,9 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> Optional[st
         prompt = template.format(description=description)
     except Exception:
         prompt = seeded['value'].format(description=description)
-    result = await model.ainvoke(prompt)
+    result = await _agent.ask(
+        prompt, stage='compose_generic', model=cfg['model'], temperature=cfg['temperature'], schema=GenericMessage,
+    )
     if _looks_like_unfilled_template(result.text):
         return None
     return result.text

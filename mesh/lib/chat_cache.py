@@ -32,16 +32,17 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.lib import config_sdk
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
 
 # Shared platform prompt, same pseudo agent_id convention as
 # skill_router.py/tool_resolution.py/vision.py - relevance filtering is the
 # same decision regardless of which agent's conversation this cache belongs to.
 _SHARED_AGENT_ID = '_chat_cache'
+_agent = AdiyanAgent(_SHARED_AGENT_ID)
 _SEED = load_seed_config(Path(__file__).parent)
 
 
@@ -162,11 +163,9 @@ async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str
     except Exception:
         prompt = seeded['value'].format(**fmt_kwargs)
     try:
-        model = ChatOllama(
-            model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'),
-            temperature=cfg['temperature'],
-        ).with_structured_output(_RelevantTurns)
-        result = await model.ainvoke(prompt)
+        result = await _agent.ask(
+            prompt, stage='relevance_filter', model=cfg['model'], temperature=cfg['temperature'], schema=_RelevantTurns,
+        )
         keep = sorted({i for i in result.relevant_indices if 0 <= i < len(turns)})
     except Exception as e:
         logger.warning(f'format_recent_turns: relevance filter failed, using full window: {e}')

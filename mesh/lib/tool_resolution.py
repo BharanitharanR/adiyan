@@ -23,10 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.lib import config_sdk, mcp_registry
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
 from mesh.lib.errors import describe_exception
 
@@ -38,6 +38,7 @@ logger = logging.getLogger('ToolResolution')
 # same structure regardless of which agent's ReAct loop called
 # resolve_and_execute(), so this isn't per-agent either.
 _SHARED_AGENT_ID = '_tool_resolution'
+_agent = AdiyanAgent(_SHARED_AGENT_ID)
 _SEED = load_seed_config(Path(__file__).parent)
 
 
@@ -106,9 +107,6 @@ async def select_groups(question: str, groups: List[ToolGroup], cfg: Dict[str, A
     didn't name are dropped, not just reordered."""
     if not groups:
         return []
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg['temperature'],
-    ).with_structured_output(_GroupSelection)
     listing = '\n'.join(f'- {g.name}: {g.description}' for g in groups)
     seeded = _seeded('select_groups_prompt_template')
     template = await config_sdk.get_constant(
@@ -119,7 +117,9 @@ async def select_groups(question: str, groups: List[ToolGroup], cfg: Dict[str, A
     except Exception:
         prompt = seeded['value'].format(question=question, listing=listing)
     try:
-        selection = await model.ainvoke(prompt)
+        selection = await _agent.ask(
+            prompt, stage='select_groups', model=cfg['model'], temperature=cfg['temperature'], schema=_GroupSelection,
+        )
     except Exception as e:
         logger.warning(f'select_groups failed: {describe_exception(e)}')
         return []
@@ -174,9 +174,6 @@ async def select_tool_call(
     candidates = [t for t in group.tools if t['name'] not in exclude]
     if not candidates:
         return None
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg['temperature'],
-    ).with_structured_output(_ToolSelection)
     # Schema included, not just name+description - confirmed live: without
     # it, the model guessed plausible-sounding argument names ('query'
     # instead of the real 'filter', a made-up 'collection' value) that
@@ -234,7 +231,9 @@ async def select_tool_call(
     # attempt with retry budget still unused.
     for _ in range(2):
         try:
-            selection = await model.ainvoke(prompt)
+            selection = await _agent.ask(
+                prompt, stage='select_tool_call', model=cfg['model'], temperature=cfg['temperature'], schema=_ToolSelection,
+            )
         except Exception as e:
             logger.warning(f'select_tool_call failed for group {group.name!r}: {e}')
             return None

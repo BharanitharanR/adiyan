@@ -36,18 +36,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.analysis.constants import AGENT_ID, MEMORY_AGENT_URL
 from mesh.lib import config_sdk, permissions, tool_resolution
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config, load_seed_config
 from mesh.lib.errors import describe_exception
 from mesh.lib.registry_client import list_agents
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger('AnalyzeDocument')
+
+_agent = AdiyanAgent(AGENT_ID)
 
 # This agent's own constant/prompt-template defaults, declared in
 # seed_config.json rather than hardcoded here - see mesh/lib/config_sdk.py's
@@ -320,9 +322,6 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
 
 
 async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg: Dict[str, Any], strict: bool):
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg['temperature'],
-    ).bind_tools(tools)
     grounding_rule = (
         "If you genuinely find nothing relevant after checking the reasonable "
         "places - including an ordinary general-knowledge question (diet/"
@@ -352,16 +351,15 @@ async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg
         prompt = seeded['value'].format(
             instruction=instruction, scratchpad=scratchpad_json, grounding_rule=grounding_rule,
         )
-    return await model.ainvoke(prompt)
+    return await _agent.ask(
+        prompt, stage='decide_next_step', model=cfg['model'], temperature=cfg['temperature'], tools=tools,
+    )
 
 
 async def _compact(instruction: str, scratchpad: Scratchpad, tool_name: str, observation: str, cfg: Dict[str, Any]) -> Scratchpad:
     """Folds one new observation into an updated scratchpad - merged, not
     appended. This is the step that keeps the decide-step's own input
     bounded: it never sees raw tool output, only this compact result."""
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=0.2,
-    ).with_structured_output(Scratchpad)
     seeded = _seeded('compact_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'compact_prompt_template', seeded['value'], description=seeded['description'],
@@ -375,7 +373,7 @@ async def _compact(instruction: str, scratchpad: Scratchpad, tool_name: str, obs
             instruction=instruction, scratchpad=scratchpad_json, tool_name=tool_name, observation=observation,
         )
     try:
-        return await model.ainvoke(prompt)
+        return await _agent.ask(prompt, stage='compact', model=cfg['model'], temperature=0.2, schema=Scratchpad)
     except Exception as e:
         logger.warning(f'Compaction failed, keeping prior scratchpad unchanged: {e}')
         return scratchpad
@@ -384,9 +382,6 @@ async def _compact(instruction: str, scratchpad: Scratchpad, tool_name: str, obs
 async def _final_answer(instruction: str, scratchpad: Scratchpad, cfg: Dict[str, Any], strict: bool) -> str:
     """Reached the step cap without finish() being called - forces a real
     answer from whatever the scratchpad holds, rather than erroring out."""
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=0.3,
-    ).with_structured_output(_FinalAnswer)
     grounding_rule = (
         "If the scratchpad has nothing relevant - including for an ordinary "
         "general-knowledge question (diet/nutrition advice, packing tips, how "
@@ -412,7 +407,7 @@ async def _final_answer(instruction: str, scratchpad: Scratchpad, cfg: Dict[str,
         prompt = seeded['value'].format(
             instruction=instruction, scratchpad=scratchpad_json, grounding_rule=grounding_rule,
         )
-    result = await model.ainvoke(prompt)
+    result = await _agent.ask(prompt, stage='final_answer', model=cfg['model'], temperature=0.3, schema=_FinalAnswer)
     return result.answer
 
 

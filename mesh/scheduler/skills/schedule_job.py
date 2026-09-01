@@ -18,17 +18,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from croniter import croniter
-from langchain_ollama import ChatOllama
 from llama_index.embeddings.ollama import OllamaEmbedding
 from pydantic import BaseModel
 
 from mesh.lib import config_sdk, permissions
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config, load_seed_config
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 
+# Embeddings only, not a completion - ask() has no embedding capability, so
+# OllamaEmbedding stays a direct call, same reasoning as everywhere else in
+# this migration that a raw model call surviving isn't an oversight.
 OLLAMA_URL = 'http://localhost:11434'
 EMBED_MODEL = 'nomic-embed-text'
 
@@ -36,6 +39,8 @@ EMBED_MODEL = 'nomic-embed-text'
 # confused with ~/.Adiyan/agents/scheduler/ (runtime data - see mesh/lib/paths.py).
 AGENT_CODE_DIR = Path(__file__).parent.parent
 _SEED = load_seed_config(AGENT_CODE_DIR)
+
+_agent = AdiyanAgent(AGENT_ID)
 
 
 def _seeded(key: str) -> Dict[str, Any]:
@@ -62,8 +67,6 @@ async def _resolve_schedule(description: str) -> str:
     cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'resolve_schedule', load_runtime_config(AGENT_CODE_DIR)['resolve_schedule'],
     )
-    model = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
-    structured = model.with_structured_output(ResolvedSchedule)
     seeded = _seeded('resolve_schedule_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'resolve_schedule_prompt_template', seeded['value'], description=seeded['description'],
@@ -72,7 +75,9 @@ async def _resolve_schedule(description: str) -> str:
         prompt = template.format(description=description)
     except Exception:
         prompt = seeded['value'].format(description=description)
-    result = structured.invoke(prompt)
+    result = await _agent.ask(
+        prompt, stage='resolve_schedule', model=cfg['model'], temperature=cfg['temperature'], schema=ResolvedSchedule,
+    )
     return result.cron_expression
 
 

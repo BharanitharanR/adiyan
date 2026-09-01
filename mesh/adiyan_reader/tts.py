@@ -42,7 +42,10 @@ import httpx
 
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.lib import config_sdk
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
+
+_agent = AdiyanAgent(AGENT_ID)
 
 _SEED = load_seed_config(Path(__file__).parent)
 
@@ -149,8 +152,6 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
     at all."""
     cleaned = clean_for_speech(text)
     try:
-        from langchain_ollama import ChatOllama
-        model = ChatOllama(model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg.get('temperature', 0.3))
         seeded = _seeded('rewrite_for_speech_prompt_template')
         template = await config_sdk.get_constant(
             AGENT_ID, 'rewrite_for_speech_prompt_template', seeded['value'], description=seeded['description'],
@@ -159,8 +160,9 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
             prompt = template.format(cleaned=cleaned)
         except Exception:
             prompt = seeded['value'].format(cleaned=cleaned)
-        result = await model.ainvoke(prompt)
-        rewritten = (result.content or '').strip()
+        rewritten = (await _agent.ask(
+            prompt, stage='rewrite_for_speech', model=cfg['model'], temperature=cfg.get('temperature', 0.3),
+        ) or '').strip()
         return rewritten or cleaned
     except Exception as e:
         logger.warning(f'rewrite_for_speech failed, falling back to raw cleaned text: {e}')

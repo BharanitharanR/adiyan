@@ -18,11 +18,10 @@ wired in.
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
-from langchain_core.messages import HumanMessage
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from mesh.lib import config_sdk
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
 
 VISION_MODEL = 'qwen3-vl:8b'
@@ -33,6 +32,7 @@ TEMPERATURE = 0.2
 # agent_id convention - vision classification is genuinely the same
 # decision regardless of which agent's flow the image arrived through.
 _SHARED_AGENT_ID = '_vision'
+_agent = AdiyanAgent(_SHARED_AGENT_ID)
 _SEED = load_seed_config(Path(__file__).parent)
 
 
@@ -47,26 +47,19 @@ class _PurposeChoice(BaseModel):
     purpose: ImagePurpose
 
 
-def _image_message(prompt: str, image_b64: str, mimetype: str) -> HumanMessage:
-    return HumanMessage(content=[
-        {'type': 'text', 'text': prompt},
-        {'type': 'image_url', 'image_url': f'data:{mimetype};base64,{image_b64}'},
-    ])
-
-
 async def classify_image(image_b64: str, mimetype: str) -> ImagePurpose:
     """The routing decision itself - what should happen with this image.
     Kept separate from describe_contact_image() the same way skill_router's
     classify()/extract() stay separate: narrowing the follow-up prompt to
     just the decided purpose beats one do-everything prompt."""
-    model = ChatOllama(
-        model=VISION_MODEL, base_url=OLLAMA_URL, temperature=TEMPERATURE,
-    ).with_structured_output(_PurposeChoice)
     seeded = _seeded('vision_classify_prompt')
     prompt = await config_sdk.get_constant(
         _SHARED_AGENT_ID, 'vision_classify_prompt', seeded['value'], description=seeded['description'],
     )
-    choice = await model.ainvoke([_image_message(prompt, image_b64, mimetype)])
+    choice = await _agent.ask(
+        prompt, stage='classify_image', model=VISION_MODEL, temperature=TEMPERATURE,
+        schema=_PurposeChoice, image_b64=image_b64, image_mimetype=mimetype,
+    )
     return choice.purpose
 
 
@@ -77,13 +70,14 @@ async def describe_contact_image(image_b64: str, mimetype: str) -> Optional[str]
     short imperative sentence ready to feed straight into the same
     add_named_contact classify/extract stage a typed admin command goes
     through."""
-    model = ChatOllama(model=VISION_MODEL, base_url=OLLAMA_URL, temperature=TEMPERATURE)
     seeded = _seeded('vision_caption_prompt')
     prompt = await config_sdk.get_constant(
         _SHARED_AGENT_ID, 'vision_caption_prompt', seeded['value'], description=seeded['description'],
     )
-    result = await model.ainvoke([_image_message(prompt, image_b64, mimetype)])
-    caption = (result.content or '').strip()
+    caption = (await _agent.ask(
+        prompt, stage='describe_contact_image', model=VISION_MODEL, temperature=TEMPERATURE,
+        image_b64=image_b64, image_mimetype=mimetype,
+    ) or '').strip()
     if not caption or caption.upper() == 'NONE':
         return None
     return caption

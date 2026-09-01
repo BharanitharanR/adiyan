@@ -103,7 +103,8 @@ class AdiyanAgent:
     async def ask(
         self, prompt: str, *, stage: str = 'default', model: str = 'qwen3:8b-16k',
         temperature: float = 0.4, schema: Optional[Type[BaseModel]] = None,
-        community: Optional[str] = None,
+        tools: Optional[list] = None, image_b64: Optional[str] = None,
+        image_mimetype: Optional[str] = None, community: Optional[str] = None,
     ) -> Any:
         """Calls the mesh's LLM. No permission key needed - every agent
         reaches it the same way, same as config/storage access.
@@ -154,7 +155,48 @@ class AdiyanAgent:
         accident: pass the literal string 'communitySearch' to opt in.
         Omitted (the default): local-only, always - Inference Router
         never even considers a peer for this call, and a local failure
-        raises normally, exactly as if compute_share didn't exist."""
+        raises normally, exactly as if compute_share didn't exist.
+
+        tools: a list of langchain @tool-decorated callables to bind for
+        this call - the model returns tool-call decisions
+        (response.tool_calls) instead of plain text; the caller executes
+        whichever tool was chosen itself and continues its own loop, same
+        shape every ReAct-style caller already used directly against
+        ChatOllama.bind_tools() before this existed. Always local, never
+        offloadable, regardless of `community`, for the same reason as
+        schema: a live Python tool object can't cross an A2A call to
+        another process, so a peer has no way to even see what tools were
+        offered, let alone honor a tool-call contract against them. Mutually
+        exclusive with `schema` - pass one or neither, not both.
+
+        image_b64/image_mimetype: attach one image (vision input) to this
+        call - pass both together or neither. Always local, never
+        offloadable, regardless of `community`: a bigger trust jump than
+        text alone (a user's actual uploaded photo, not just a prompt
+        string), and combines with `schema` if both are given (a
+        structured read of an image), but never with `tools`."""
+        if image_b64 is not None:
+            from langchain_core.messages import HumanMessage
+            cfg = await config_sdk.get_stage_config(
+                self.agent_id, stage, {'model': model, 'temperature': temperature},
+            )
+            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
+            message = HumanMessage(content=[
+                {'type': 'text', 'text': prompt},
+                {'type': 'image_url', 'image_url': f'data:{image_mimetype};base64,{image_b64}'},
+            ])
+            if schema is not None:
+                return await llm.with_structured_output(schema).ainvoke([message])
+            result = await llm.ainvoke([message])
+            return result.content
+
+        if tools is not None:
+            cfg = await config_sdk.get_stage_config(
+                self.agent_id, stage, {'model': model, 'temperature': temperature},
+            )
+            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature']).bind_tools(tools)
+            return await llm.ainvoke(prompt)
+
         if schema is not None:
             cfg = await config_sdk.get_stage_config(
                 self.agent_id, stage, {'model': model, 'temperature': temperature},

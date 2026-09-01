@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from croniter import croniter
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.adiyan_reader import db, tts
@@ -52,9 +51,6 @@ class ComprehensionQuestions(BaseModel):
 
 
 async def _generate_questions(page_text: str, cfg: Dict[str, Any], count: int) -> List[str]:
-    model = ChatOllama(
-        model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'],
-    ).with_structured_output(ComprehensionQuestions)
     seeded = _seeded('generate_questions_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'generate_questions_prompt_template', seeded['value'], description=seeded['description'],
@@ -64,7 +60,9 @@ async def _generate_questions(page_text: str, cfg: Dict[str, Any], count: int) -
         prompt = template.format(**fmt_kwargs)
     except Exception:
         prompt = seeded['value'].format(**fmt_kwargs)
-    result = await model.ainvoke(prompt)
+    result = await _agent.ask(
+        prompt, stage='generate_questions', model=cfg['model'], temperature=cfg['temperature'], schema=ComprehensionQuestions,
+    )
     return result.questions[:count]
 
 

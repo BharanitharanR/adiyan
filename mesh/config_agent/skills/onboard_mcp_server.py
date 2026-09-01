@@ -27,17 +27,18 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from mesh.config_agent.constants import AGENT_ID
 from mesh.lib import config_sdk, mcp_registry
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
 
 logger = logging.getLogger('OnboardMCPServer')
 
 INSPECTOR_TIMEOUT_SECONDS = 30
 _SEED = load_seed_config(Path(__file__).parent.parent)
+_agent = AdiyanAgent(AGENT_ID)
 
 
 def _seeded(key: str) -> Dict[str, Any]:
@@ -114,9 +115,6 @@ async def run(
     cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'describe_group', {'model': 'qwen3:8b-16k', 'temperature': 0.3, 'timeout': 60},
     )
-    model = ChatOllama(
-        model=cfg['model'], base_url=cfg.get('base_url', 'http://localhost:11434'), temperature=cfg['temperature'],
-    ).with_structured_output(_ClusteringResult)
     listing = '\n'.join(f"- {t['name']}: {t['description']}" for t in tools)
     seeded = _seeded('onboard_cluster_prompt_template')
     template = await config_sdk.get_constant(
@@ -127,7 +125,9 @@ async def run(
     except Exception:
         prompt = seeded['value'].format(raw_description=raw_description, listing=listing)
     try:
-        clustered = await model.ainvoke(prompt)
+        clustered = await _agent.ask(
+            prompt, stage='describe_group', model=cfg['model'], temperature=cfg['temperature'], schema=_ClusteringResult,
+        )
     except Exception as e:
         logger.warning(f'describe_group LLM call failed, falling back to one group: {e}')
         clustered = _ClusteringResult(groups=[_GroupCluster(
