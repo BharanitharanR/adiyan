@@ -11,8 +11,9 @@ Run two instances from the repo root, in separate terminals:
 
 See README.md for the full walkthrough.
 """
+from mesh.compute_share import availability
 from mesh.compute_share.agent_executor import ComputeShareAgentExecutor
-from mesh.compute_share.constants import AGENT_ID, DISPLAY_NAME, HOST, PORT, STORAGE_ID
+from mesh.compute_share.constants import AGENT_ID, AVAILABILITY_PORT, DISPLAY_NAME, HOST, PORT, STORAGE_ID
 from mesh.compute_share.skills_catalog import get_skills
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
@@ -21,6 +22,13 @@ from mesh.lib.paths import tasks_db_path
 if __name__ == '__main__':
     import asyncio
     skills = asyncio.run(get_skills())
+
+    # Started before serve() (which blocks) - its own thread, its own
+    # socket, so it's already answering by the time anyone could possibly
+    # ask, and stays independent of whatever the main A2A server below
+    # does from here on. See availability.py's own docstring for why this
+    # needs to be genuinely separate, not just started early.
+    availability.start_server(HOST, AVAILABILITY_PORT)
 
     agent_card = adiyan_card(
         name=f'Compute Share ({DISPLAY_NAME})',

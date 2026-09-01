@@ -44,6 +44,16 @@ PUBLIC_URL = os.environ.get('COMPUTE_SHARE_PUBLIC_URL', AGENT_URL)
 
 OLLAMA_URL = os.environ.get('COMPUTE_SHARE_OLLAMA_URL', 'http://localhost:11434')
 
+# mesh/compute_share/availability.py's own tiny HTTP listener - a
+# separate thread and socket from the main A2A server above, so an
+# availability check never queues up behind whatever the main server is
+# doing handling a real inference call. Derived from PORT by a fixed
+# offset, not carried explicitly in peer records - a known
+# simplification, not a structural limit: a real deployment behind a NAT/
+# tunnel mapping that doesn't preserve this exact offset would need the
+# gossip protocol to carry this port explicitly instead of assuming it.
+AVAILABILITY_PORT = int(os.environ.get('COMPUTE_SHARE_AVAILABILITY_PORT', str(PORT + 1)))
+
 # Where this instance's own state.db/tasks.db live on disk - separate from
 # AGENT_ID on purpose. In a real deployment every user's Adiyan lives on
 # its own machine under its own ~/.Adiyan, so this distinction wouldn't

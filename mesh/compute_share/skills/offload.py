@@ -2,25 +2,35 @@
 offload's real body - "my machine is full, find someone and route to
 them." db.pick_peers() only answers liveness ("heard from recently"),
 never current load - so this races a handful of live candidates on
-check_availability first, and sends the real prompt to whichever one
-answers "free" first. First-to-confirm wins; the rest are cancelled,
-never billed for real work they didn't end up doing.
+their availability.py listener first, and sends the real prompt to
+whichever one answers "free" first. First-to-confirm wins; the rest are
+cancelled, never billed for real work they didn't end up doing.
+
+The availability probe hits each peer's raw availability.py HTTP
+listener directly (a plain GET to <their host>:AVAILABILITY_PORT), not
+the A2A check_availability skill - the whole point of that listener
+running on its own thread (see availability.py's own docstring) is that
+a peer's answer is never delayed by whatever their main A2A server is
+doing, and routing through A2A here would reintroduce exactly that.
 
 No token minted for the winning run_inference call, on purpose - a
 genuinely different person's Adiyan install signs its own tokens with
 its own PERMISSIONS_JWT_SECRET, which this instance has no way to
 verify at all, so a token here would be theater, not a real credential.
-The trust boundary is what run_inference/check_availability expose (see
-their own docstrings and mesh/compute_share/agent_executor.py's
-PUBLIC_SKILLS), not who's calling them - matching the deliberate,
-documented design choice in README.md (no peer authentication, the same
-stance BitTorrent takes: verify content, not identity).
+The trust boundary is what run_inference exposes (see its own docstring
+and mesh/compute_share/agent_executor.py's PUBLIC_SKILLS), not who's
+calling it - matching the deliberate, documented design choice in
+README.md (no peer authentication, the same stance BitTorrent takes:
+verify content, not identity).
 """
 import asyncio
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+import httpx
 
 from mesh.compute_share import db
-from mesh.compute_share.constants import STORAGE_ID
+from mesh.compute_share.constants import AVAILABILITY_PORT, STORAGE_ID
 from mesh.lib.a2a_client import call_agent
 from mesh.lib.paths import state_db_path
 
@@ -31,15 +41,34 @@ from mesh.lib.paths import state_db_path
 # pinging half the known network.
 RACE_CANDIDATES = 3
 
+# How long to wait on one peer's availability check before treating it
+# as unreachable - this is a race against other candidates, not a call
+# worth waiting a normal request timeout on.
+AVAILABILITY_CHECK_TIMEOUT_SECONDS = 3.0
+
 
 class NoPeerAvailableError(Exception):
     pass
 
 
+def _availability_url(peer_url: str) -> str:
+    # See constants.AVAILABILITY_PORT's own comment - derived by a fixed
+    # offset from the peer's main port, not carried explicitly in the
+    # peer record. A known simplification: a peer running behind a NAT/
+    # tunnel mapping that doesn't preserve this exact offset won't be
+    # reachable on this specific check (it just loses every race, same
+    # as being unreachable outright - not a correctness bug, a coverage
+    # gap for that one peer).
+    parsed = urlparse(peer_url)
+    return f'{parsed.scheme}://{parsed.hostname}:{AVAILABILITY_PORT}/available'
+
+
 async def _check_one(peer: Dict[str, Any]) -> bool:
     try:
-        result = await call_agent(peer['peer_url'], 'check_availability', {})
-        return bool(result.get('available'))
+        async with httpx.AsyncClient(timeout=AVAILABILITY_CHECK_TIMEOUT_SECONDS) as client:
+            response = await client.get(_availability_url(peer['peer_url']))
+            response.raise_for_status()
+            return bool(response.json().get('available'))
     except Exception:
         # Unreachable counts as "not available," not an error worth
         # surfacing - a peer that's gone offline since its last gossip
