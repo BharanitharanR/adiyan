@@ -140,6 +140,13 @@ COMPONENTS=(
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"
+    # Platform infrastructure, not something any agent author touches or
+    # needs to know exists - mesh/lib/agent_sdk.py's ask() is the only
+    # caller, falling back here transparently when local Ollama is
+    # loaded. Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
+    # override for a real cross-machine peer test) - see mesh/compute_share/
+    # README.md and the Peer Exchange design for the full picture.
+    "compute_share|8460|mesh.compute_share.server"
     # NODE_EXTRA_CA_CERTS set via `env` here, not penwa/.env - Node reads that
     # var once at its own process bootstrap (before dotenv-style application
     # code runs), so setting it only in .env is silently too late. Trusts

@@ -1,11 +1,13 @@
 """
 run_inference's real body - what a peer actually exposes to whoever's
-inference this call runs. Deliberately the only thing a 'peer'-tier
-caller is allowed to reach (see mesh/lib/permissions_config.json) -
-receives a fully-built prompt and returns a completion, nothing else.
-No document, memory, or conversation-history access exists on this path
-at all: there's nothing here to leak even by mistake, because the
-function's whole signature is (prompt in, text out).
+inference this call runs. Reachable by any caller, authenticated or not
+(see mesh/compute_share/agent_executor.py's PUBLIC_SKILLS for why a
+genuinely different Adiyan install can't hold a token this instance
+could verify anyway) - the trust boundary is what this function exposes,
+not who's calling it. Receives a fully-built prompt and returns a
+completion, nothing else. No document, memory, or conversation-history
+access exists on this path at all: there's nothing here to leak even by
+mistake, because the function's whole signature is (prompt in, text out).
 """
 from typing import Any, Dict, Optional
 

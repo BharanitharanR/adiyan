@@ -1,22 +1,24 @@
 """
 offload's real body - "my machine is full, find someone and route to
-them." Picks the least-recently-announced known peer, calls their
-run_inference skill over real A2A with a token scoped to exactly that one
-skill, and returns the completion plus which peer actually served it.
+them." Picks the freshest-fitting known peer (db.pick_peer() skips
+anyone not heard from recently - see its own docstring), calls their
+run_inference skill over real A2A, and returns the completion plus
+which peer actually served it.
 
-The scoped token is the whole trust boundary in this POC: it's minted
-fresh for this one call, at the 'peer' tier, which mesh/lib/
-permissions_config.json only allows onto compute_share.run_inference -
-nothing else this agent (or any other) exposes. A malicious or just
-buggy caller holding this exact token cannot reach any other skill with
-it, on this agent or any other, confirmed by the live rejection test in
-README.md rather than assumed from reading the config.
+No token minted for that call, on purpose - a genuinely different
+person's Adiyan install signs its own tokens with its own
+PERMISSIONS_JWT_SECRET, which this instance has no way to verify at
+all, so a token here would be theater, not a real credential. The trust
+boundary is what run_inference exposes (see its own docstring and
+mesh/compute_share/agent_executor.py's PUBLIC_SKILLS), not who's
+calling it - matching the deliberate, documented design choice in
+README.md (no peer authentication, the same stance BitTorrent takes:
+verify content, not identity).
 """
 from typing import Any, Dict, Optional
 
 from mesh.compute_share import db
 from mesh.compute_share.constants import STORAGE_ID
-from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
 from mesh.lib.paths import state_db_path
 
@@ -31,12 +33,11 @@ async def run(prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
     if peer is None:
         raise NoPeerAvailableError('No peer has announced availability - nothing to offload to.')
 
-    token = permissions.mint_token('compute_share', 'peer')
     params: Dict[str, Any] = {'prompt': prompt}
     if model or peer.get('model'):
         params['model'] = model or peer['model']
 
-    result = await call_agent(peer['peer_url'], 'run_inference', params, token=token)
+    result = await call_agent(peer['peer_url'], 'run_inference', params)
     return {
         'completion': result.get('completion'),
         'served_by': peer['peer_url'],

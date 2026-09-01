@@ -26,6 +26,13 @@ _STRUCTURE: Dict[str, Dict[str, Any]] = {
         'input_modes': ['text/plain'], 'output_modes': ['application/json'],
         'examples': ['Offload this prompt to a peer'],
     },
+    'gossip': {
+        'name': 'Gossip',
+        'description': 'Re-announce to a few known peers, exchange address books, and self-recur for the next round. Internal upkeep, not something a caller asks for directly.',
+        'tags': ['compute-share', 'internal'],
+        'input_modes': ['text/plain'], 'output_modes': ['application/json'],
+        'examples': ['Run a gossip round'],
+    },
 }
 
 

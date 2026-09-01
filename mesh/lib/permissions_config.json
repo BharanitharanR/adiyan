@@ -27,7 +27,8 @@
         "mcp.cron_trigger.remove_trigger",
         "mcp.whatsapp.get_own_phone",
         "mcp.agent_registry.register_agent",
-        "mcp.agent_registry.list_agents"
+        "mcp.agent_registry.list_agents",
+        "compute_share.gossip"
       ]
     },
     "adiyan_reader_service": {
@@ -63,10 +64,10 @@
         "mcp.whatsapp.send_message"
       ]
     },
-    "peer": {
-      "description": "A different Adiyan user's instance, offloaded to for spare compute (see mesh/compute_share/). Scoped to exactly one skill - run_inference - which only ever sees a fully-built prompt, never a document, conversation, or credential. No other skill on any agent is reachable with this tier, by design: a peer proves nothing about identity beyond 'someone holding a short-lived compute_share token', so it gets the narrowest possible allow-list of any tier in this file.",
+    "compute_share_client": {
+      "description": "The AdiyanAgent SDK's own internal identity (mesh/lib/agent_sdk.py's ask()) when it falls back to offloading a prompt to a peer's spare compute - never minted by, or visible to, whichever agent actually called agent.ask(). Deliberately its own platform-level tier rather than something added to every agent's own tier: offloading is a platform capability every agent gets by construction, not something each agent author has to know exists or request access to. Scoped to exactly compute_share.offload - nothing about routing an agent's LLM call needs any other permission.",
       "allow": [
-        "compute_share.run_inference"
+        "compute_share.offload"
       ]
     },
     "standard": {

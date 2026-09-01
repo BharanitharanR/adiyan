@@ -32,6 +32,7 @@ mesh/lib/permissions_config.json (see TIER_SUFFIX below for the exact
 name) - that's a deliberate, explicit, human-reviewed grant, not
 something this class auto-creates at runtime.
 """
+import asyncio
 import base64
 from typing import Any, Dict, Optional, Type
 
@@ -61,6 +62,21 @@ OLLAMA_URL = 'http://localhost:11434'
 # URL for a well-known platform service they didn't build.
 MEMORY_AGENT_URL = 'http://127.0.0.1:8423'
 CRON_TRIGGER_URL = 'http://127.0.0.1:8421/mcp'
+COMPUTE_SHARE_URL = 'http://127.0.0.1:8460'
+
+# ask()'s entire opt-in to compute_share's peer network - see that
+# method's own docstring for why this is a literal magic string, not a
+# boolean. Centralized here (not inlined at the one comparison site) so
+# it reads as a real, named constant a caller can import and reference,
+# not a string that has to be typed exactly right from memory.
+COMMUNITY_SEARCH_MAGIC = 'communitySearch'
+
+# How long ask() waits on local Ollama before treating it as "busy
+# enough to consider a peer" - not a measured number, a starting point:
+# long enough that a normal local call never trips it, short enough that
+# a genuinely stuck local queue doesn't leave a caller waiting
+# indefinitely before the community fallback even gets a chance.
+LOCAL_ASK_TIMEOUT_SECONDS = 30
 
 
 class AdiyanAgent:
@@ -98,6 +114,7 @@ class AdiyanAgent:
     async def ask(
         self, prompt: str, *, stage: str = 'default', model: str = 'qwen3:8b-16k',
         temperature: float = 0.4, schema: Optional[Type[BaseModel]] = None,
+        community: Optional[str] = None,
     ) -> Any:
         """Calls the mesh's LLM. No permission key needed - every agent
         reaches it the same way, same as config/storage access.
@@ -107,11 +124,11 @@ class AdiyanAgent:
         meant to absorb a future backend change without touching a single
         caller: routing some/all calls to Claude or Gemini, or to another
         Adiyan peer's spare compute via mesh/compute_share/ (already a
-        real, working POC - see run_inference there) when this machine's
-        own Ollama is loaded or a bigger model is needed than it can run.
-        That decision belongs entirely inside this one method's body -
-        every agent that calls agent.ask(prompt) today needs zero code
-        changes on that day.
+        real, working peer-exchange network - see run_inference/offload
+        there) when this machine's own Ollama is loaded or a bigger model
+        is needed than it can run. That decision belongs entirely inside
+        this one method's body - every agent that calls agent.ask(prompt)
+        today needs zero code changes on that day.
 
         stage/model/temperature: `stage` is a per-agent, per-pipeline-step
         name (e.g. 'craft_reply', 'classify_intent') - resolved through
@@ -127,16 +144,48 @@ class AdiyanAgent:
         omitted, the model's plain text reply is returned as a str.
         Never raises for a bad response shape when schema is given -
         langchain's own with_structured_output() retries/repairs that
-        internally; this method doesn't add a second layer of retry."""
+        internally; this method doesn't add a second layer of retry.
+
+        community: the ENTIRE opt-in to compute_share's peer-sharing
+        network. Whatever prompt you build IS what leaves this machine if
+        this falls back to a peer - see mesh/compute_share/README.md's own
+        trust-boundary section. This is deliberately not a boolean a
+        careless `True` could flip by accident: pass the literal string
+        'communitySearch' to opt in for this one call. Omitted (the
+        default): local-only, always - a local failure or timeout raises
+        normally, with no attempt to reach a peer, exactly as before this
+        parameter existed. Only ever applies to plain-text calls
+        (schema=None) - a peer's raw completion can't honor a structured-
+        output contract the way local with_structured_output() does, so a
+        schema call never falls back regardless of this parameter."""
         cfg = await config_sdk.get_stage_config(
             self.agent_id, stage, {'model': model, 'temperature': temperature},
         )
+        try:
+            return await asyncio.wait_for(self._ask_local(prompt, cfg, schema), timeout=LOCAL_ASK_TIMEOUT_SECONDS)
+        except Exception:
+            if community != COMMUNITY_SEARCH_MAGIC or schema is not None:
+                raise
+            return await self._ask_community(prompt, cfg['model'])
+
+    async def _ask_local(self, prompt: str, cfg: Dict[str, Any], schema: Optional[Type[BaseModel]]) -> Any:
         llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
         if schema is not None:
             structured = llm.with_structured_output(schema)
             return await structured.ainvoke(prompt)
         result = await llm.ainvoke(prompt)
         return result.content
+
+    async def _ask_community(self, prompt: str, model: str) -> str:
+        # A fixed platform identity, not self.agent_id/self._tier - this
+        # is the whole point of the 'compute_share_client' tier's own
+        # description: offloading is a capability the platform grants by
+        # construction, not something threaded through every agent's own
+        # permission grant. Whichever agent called ask() never mints this
+        # token itself and never sees compute_share exist.
+        token = permissions.mint_token('adiyan_platform', 'compute_share_client')
+        result = await _call_agent(COMPUTE_SHARE_URL, 'offload', {'prompt': prompt, 'model': model}, token=token)
+        return result.get('completion')
 
     async def search_knowledge_base(self, query: str, top_k: int = 3) -> Dict[str, Any]:
         """Long-term memory: searches documents the owner has uploaded

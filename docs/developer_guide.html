@@ -261,6 +261,22 @@ print(result.answer)</code></pre>
       seeds for you (§10), just never touched directly.
     </p>
     <p class="lede">Pass <code>schema</code> to get a parsed object back; omit it to get the model's plain-text reply as a <code>str</code>.</p>
+    <h3>When local is busy: the community fallback</h3>
+    <p>
+      If your machine's own model is loaded or unreachable, <code>ask()</code> can fall back to another
+      willing Adiyan user's spare compute — <a href="https://claude.ai/code/artifact/f3ee0c23-a2f1-487f-acc2-520e2398d530" target="_blank" rel="noopener">peer-exchange compute sharing</a>, built on the same trust
+      stance BitTorrent takes (verify content, not identity). This is opt-in per call, on purpose — whatever
+      prompt you build is what leaves your machine if this falls back, so it's never silent or automatic:
+    </p>
+    <pre><code>reply = await agent.ask("Classify this message's intent", community='communitySearch')</code></pre>
+    <p class="lede">
+      Omit <code>community</code> (the default): local-only, always — a local failure or timeout raises
+      normally, no attempt to reach anyone else. Only pass <code>'communitySearch'</code> for prompts that
+      are genuinely fine for a stranger's machine to see — never for anything with private context (a
+      document, conversation history) folded into the prompt text. Only applies to plain-text calls;
+      a call with <code>schema</code> set never falls back, since a peer's raw completion can't honor a
+      structured-output contract.
+    </p>
   </section>
 
   <section id="memory">
