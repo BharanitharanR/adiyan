@@ -101,6 +101,35 @@ async def send_image(
 
 
 @mcp.tool()
+async def resolve_chat_id(phone: str, ctx: Context) -> Dict[str, Any]:
+    """Resolves a phone number to its real WhatsApp chat id - not simply
+    f'{phone}@c.us', since some contacts are addressed via WhatsApp's
+    newer @lid scheme instead, with a lid number that bears no relation
+    to the phone number at all. See OpenWAService.resolve_chat_id's own
+    docstring for the full mechanism (including the already-a-JID
+    short-circuit for a contact whose only known identifier is a lid).
+    {'chat_id': None} if OpenWA has no match - never raises for "not
+    found", since an unresolvable number is an expected outcome for a
+    caller to check, not a server error."""
+    permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.resolve_chat_id')
+    chat_id = await _openwa.resolve_chat_id(phone)
+    return {'chat_id': chat_id}
+
+
+@mcp.tool()
+async def send_voice(chat_id: str, content_b64: str, ctx: Context, mimetype: str = 'audio/ogg; codecs=opus') -> Dict[str, Any]:
+    """Sends audio (base64-encoded) to chat_id as a real WhatsApp voice
+    note (PTT - mic bubble + waveform), not a plain audio-file
+    attachment - see OpenWAService.send_voice's own docstring for the
+    Opus/OGG encoding requirement. Same failure contract as
+    send_message - raises, doesn't swallow, delivery failures."""
+    permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.send_voice')
+    content = base64.b64decode(content_b64)
+    result = await _openwa.send_voice(chat_id, content, mimetype=mimetype)
+    return {'sent': True, 'result': result}
+
+
+@mcp.tool()
 async def get_own_phone(ctx: Context) -> Dict[str, Any]:
     """The linked account's own phone number - lets a caller (Orchestrator's
     rules engine) recognize the owner without Orchestrator ever touching

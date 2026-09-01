@@ -26,16 +26,21 @@ from pydantic import BaseModel, Field
 from mesh.adiyan_reader import db, tts
 from mesh.lib.config import load_seed_config
 from mesh.adiyan_reader.constants import (
-    AGENT_ID, AGENT_URL, CRON_TRIGGER_URL, MEMORY_AGENT_URL, OLLAMA_URL, OPENWA_SESSION_NAME, OPENWA_URL,
+    AGENT_ID, AGENT_URL, CRON_TRIGGER_URL, MEMORY_AGENT_URL, OLLAMA_URL,
 )
 from mesh.lib import config_sdk, permissions
-from mesh.lib.a2a_client import call_agent
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
-from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
 _SEED = load_seed_config(AGENT_CODE_DIR)
+# One instance, module-level - every method mints its own token internally
+# against 'adiyan_reader_service' (mesh/lib/permissions_config.json).
+# Replaces a direct OpenWAService() construction that bypassed
+# whatsapp_mcp's permission check entirely - see the Developer Guide's
+# pitfall section.
+_agent = AdiyanAgent(AGENT_ID)
 
 
 def _seeded(key: str) -> Dict[str, Any]:
@@ -70,19 +75,17 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         return {'reading_job_id': reading_job_id, 'status': 'inactive', 'result_summary': 'Reading job not found or already stopped.'}
 
     next_page = job['current_page'] + 1
-    token = permissions.mint_token(AGENT_ID, 'adiyan_reader_service')
-    page_result = await call_agent(MEMORY_AGENT_URL, 'get_book_page', {
+    page_result = await _agent.call_agent(MEMORY_AGENT_URL, 'get_book_page', {
         'source_filename': job['source_filename'], 'page_number': next_page,
-    }, token=token)
+    })
 
-    openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
-    chat_id = await openwa.resolve_chat_id(job['phone_number'])
+    chat_id = await _agent.resolve_chat_id(job['phone_number'])
     if chat_id is None:
         return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': f"Could not resolve WhatsApp chat for {job['phone_number']}."}
 
     if not page_result.get('found'):
         db.deactivate_reading_job(conn, reading_job_id)
-        await openwa.send_message(chat_id, f"We've finished reading {job['source_filename']} together - every page has been read out. 📖")
+        await _agent.send_message_to(chat_id, f"We've finished reading {job['source_filename']} together - every page has been read out. 📖")
         return {'reading_job_id': reading_job_id, 'status': 'completed', 'result_summary': 'Book finished, reading job deactivated.'}
 
     page_text = page_result['text']
@@ -141,8 +144,8 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
     # the page, sent right before the audio, is the only way to tell the
     # listener what they're about to hear before they hear it.
     title = job['source_filename'].split('/', 1)[-1].rsplit('.', 1)[0].replace('_', ' ')
-    await openwa.send_message(chat_id, f'📖 {title} — page {next_page}')
-    await openwa.send_voice(chat_id, audio)
+    await _agent.send_message_to(chat_id, f'📖 {title} — page {next_page}')
+    await _agent.send_voice_to(chat_id, audio)
     db.advance_page(conn, reading_job_id, next_page)
 
     question_cfg = await config_sdk.load_stage_configs(
@@ -161,6 +164,13 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
     dispatch_at = croniter(f'0 {int(quiz_hour)} * * *', datetime.now(timezone.utc) + timedelta(minutes=1)).get_next(datetime).isoformat()
     db.add_questions(conn, reading_job_id, next_page, questions, dispatch_at)
 
+    # Not migrated onto agent.schedule() - cron_trigger_url is resolved
+    # per-agent via config_sdk here (dashboard-overridable), a real feature
+    # AdiyanAgent.schedule() doesn't yet replicate (it hardcodes
+    # CRON_TRIGGER_URL). Migrating this blind would silently drop that
+    # override capability - see mesh/scheduler/skills/run_routine.py's own
+    # recurrence block for the same reasoning.
+    token = permissions.mint_token(AGENT_ID, 'adiyan_reader_service')
     cron_trigger_url = await config_sdk.get_constant(
         AGENT_ID, 'cron_trigger_url', CRON_TRIGGER_URL,
         description='URL of the cron_trigger MCP server that fires this agent\'s nightly reading and next-day quiz.',

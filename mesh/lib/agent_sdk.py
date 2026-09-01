@@ -32,6 +32,7 @@ mesh/lib/permissions_config.json (see TIER_SUFFIX below for the exact
 name) - that's a deliberate, explicit, human-reviewed grant, not
 something this class auto-creates at runtime.
 """
+import base64
 from typing import Any, Dict, Optional, Type
 
 from langchain_ollama import ChatOllama
@@ -40,7 +41,7 @@ from pydantic import BaseModel
 from mesh.lib import config_sdk, permissions
 from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
-from mesh.lib.utilities.whatsapp.notify_owner import notify_owner as _notify_owner
+from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
 
 # The tier-naming convention every *_service tier added tonight already
 # follows (adiyan_reader_service, and this file's own docstring example) -
@@ -197,3 +198,33 @@ class AdiyanAgent:
         'mcp.whatsapp.get_own_phone' and 'mcp.whatsapp.send_message' - see
         adiyan_reader_service for the exact shape to copy."""
         return await _notify_owner(self.agent_id, self._tier, text)
+
+    async def resolve_chat_id(self, phone: str) -> Optional[str]:
+        """Resolves an arbitrary phone number to its real WhatsApp chat id
+        - use this (not notify_owner) when messaging someone other than
+        the owner, e.g. a specific client a job is registered against.
+        Not simply f'{phone}@c.us' - some contacts are addressed via
+        WhatsApp's newer @lid scheme instead, with a lid number
+        unrelated to the phone number; the actual resolution happens
+        server-side against the live session. Returns None if OpenWA has
+        no match. Requires 'mcp.whatsapp.resolve_chat_id' in your tier."""
+        result = await self.call_tool(WHATSAPP_MCP_URL, 'resolve_chat_id', {'phone': phone})
+        return result.get('chat_id')
+
+    async def send_message_to(self, chat_id: str, text: str) -> Dict[str, Any]:
+        """Sends `text` to an already-resolved chat_id (see
+        resolve_chat_id). Use notify_owner instead if the destination is
+        the owner - it resolves the phone for you in one call. Requires
+        'mcp.whatsapp.send_message' in your tier."""
+        return await self.call_tool(WHATSAPP_MCP_URL, 'send_message', {'chat_id': chat_id, 'text': text})
+
+    async def send_voice_to(self, chat_id: str, audio: bytes, mimetype: str = 'audio/ogg; codecs=opus') -> Dict[str, Any]:
+        """Sends `audio` to an already-resolved chat_id as a real WhatsApp
+        voice note (PTT), not a file attachment. `audio` must be
+        Opus-encoded OGG bytes - OpenWA's own docs note plain WAV/PCM
+        doesn't reliably render the PTT waveform UI. Requires
+        'mcp.whatsapp.send_voice' in your tier."""
+        content_b64 = base64.b64encode(audio).decode('ascii')
+        return await self.call_tool(
+            WHATSAPP_MCP_URL, 'send_voice', {'chat_id': chat_id, 'content_b64': content_b64, 'mimetype': mimetype},
+        )
