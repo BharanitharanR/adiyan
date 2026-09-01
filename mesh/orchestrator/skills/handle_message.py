@@ -26,6 +26,7 @@ agent that wants to hand back a file just needs to return
 """
 import base64
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -520,6 +521,25 @@ async def run(
     # client's own message, most owner messages).
     text = rules_engine.strip_adiyan_mention(text)
 
+    # POC: a sender can opt this one message into compute_share's
+    # peer-sharing network (mesh/lib/agent_sdk.py's ask() `community`
+    # param) by including a trigger word anywhere in their own text - the
+    # WORD itself is configurable (dashboard-editable via config_sdk, not
+    # hardcoded 'communitySearch' here), but what it maps to internally is
+    # always the fixed sentinel ask()/Inference Router actually check for.
+    # Stripped from `text` before routing/classification for the same
+    # reason the @Adiyan mention is above - it's a signal about how to
+    # answer, not part of the question itself, and left in it's just noise
+    # for the skill classifier and downstream agents to ignore.
+    trigger_word = await config_sdk.get_constant(
+        AGENT_ID, 'community_search_trigger_word', 'communitySearch',
+        description="Word a sender includes anywhere in their message to opt this one reply into compute_share's peer-sharing network.",
+    )
+    community = None
+    if trigger_word and trigger_word.lower() in text.lower():
+        text = re.sub(re.escape(trigger_word), '', text, flags=re.IGNORECASE).strip()
+        community = 'communitySearch'
+
     pending_document = None
     pending_image = None
     # True only for a genuine routed conversation exchange (the else branch
@@ -576,7 +596,7 @@ async def run(
                 elif analysis.get('content_b64'):
                     pending_document = analysis
                     caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'])
+                    reply = await humanize(text, caption_source, cfg['humanize'], community=community)
                 else:
                     reply = analysis.get('result') or ingest_reply
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
@@ -635,7 +655,7 @@ async def run(
                     if result.get('content_b64'):
                         pending_document = result
                         caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                        reply = await humanize(text, caption_source, cfg['humanize'])
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community)
                     elif result.get('result'):
                         # Confirmed live: skipping humanize() here (unlike
                         # every other branch in this function) let Analysis
@@ -645,7 +665,7 @@ async def run(
                         # a vegetarian...") rather than a natural reply, the
                         # one branch in this whole function that skipped
                         # the humanize step everything else already gets.
-                        reply = await humanize(text, result, cfg['humanize'])
+                        reply = await humanize(text, result, cfg['humanize'], community=community)
                     else:
                         reply = "Sorry, I'm not sure how to help with that yet."
             else:
@@ -660,9 +680,9 @@ async def run(
                     # to restate.
                     pending_document = result
                     caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'])
+                    reply = await humanize(text, caption_source, cfg['humanize'], community=community)
                 else:
-                    reply = await humanize(text, result, cfg['humanize'])
+                    reply = await humanize(text, result, cfg['humanize'], community=community)
         except Exception as e:
             # Confirmed live: this used to reply with the raw exception text
             # ("Did you mean one of: recall_contact_memory,

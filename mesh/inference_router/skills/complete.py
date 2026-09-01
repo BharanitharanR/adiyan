@@ -82,5 +82,22 @@ async def run(
     # or the peer attempt above failed - run it locally regardless. Being
     # busy or having no peer available is never a reason to refuse to
     # answer; it's only ever a reason to prefer someone else if allowed to.
-    completion = await _run_local(prompt, cfg['model'], cfg['temperature'])
-    return {'completion': completion, 'served_by': 'local'}
+    try:
+        completion = await _run_local(prompt, cfg['model'], cfg['temperature'])
+        return {'completion': completion, 'served_by': 'local'}
+    except ConnectionError:
+        # Ollama itself isn't reachable at all (confirmed live on an 8GB
+        # Mac after a forced shutdown mid-generation) - a stronger signal
+        # than "busy": there is no local answer possible right now, period.
+        # Try a peer regardless of `community`, same as the already-busy
+        # path above does when opted in - being offline is never a reason
+        # to refuse to answer if someone else genuinely can. Real trust-
+        # boundary note (see mesh/compute_share/README.md): this is the one
+        # path where a prompt can leave this machine WITHOUT the caller
+        # having opted in via the community sentinel - accepted here as a
+        # deliberate resilience tradeoff for the POC, not an oversight.
+        logger.warning(f'{caller_agent_id!r}: local Ollama unreachable, trying a peer as a fallback')
+        completion = await _run_on_peer(prompt, cfg['model'])
+        if completion is None:
+            raise
+        return {'completion': completion, 'served_by': 'peer_after_local_offline'}
