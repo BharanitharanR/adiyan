@@ -8,7 +8,6 @@
       "description": "Internal machine-to-machine callers with no WhatsApp identity behind them - cron_trigger firing a scheduled job, one agent calling another as part of composing a reply. Deliberately not '*': scoped to exactly what today's internal flows need.",
       "allow": [
         "scheduler.run_routine",
-        "journal.craft_reflection_prompt",
         "memory.recall_contact_memory",
         "memory.search_knowledge_base",
         "memory.share_knowledge_document",
@@ -36,6 +35,14 @@
       "allow": [
         "memory.get_book_page",
         "mcp.cron_trigger.register_trigger"
+      ]
+    },
+    "scheduler_service": {
+      "description": "Scheduler's own outbound calls from mesh/scheduler/skills/run_routine.py - crafting a reflection prompt via Journal Agent, and sending the composed reminder to the owner's own WhatsApp. Deliberately its own tier, not 'service': journal.craft_reflection_prompt has no caller outside Scheduler, so it doesn't belong in the shared tier other agents also mint tokens against. mcp.whatsapp.get_own_phone/send_message are a DELIBERATE, conscious re-grant here - the 2026-08-30 lockdown removed WhatsApp send from 'service' specifically to stop Scheduler's automated sends after a runaway-message incident whose root cause (something in penwa, not this codebase) was never fully isolated. Re-added here, scoped to Scheduler alone via AdiyanAgent (mesh/lib/agent_sdk.py) rather than the raw OpenWAService bypass run_routine.py used before, which sent regardless of what this file said. If the incident's root cause resurfaces, remove this tier's WhatsApp keys, not 'service's - 'service' never had them back in the first place.",
+      "allow": [
+        "journal.craft_reflection_prompt",
+        "mcp.whatsapp.get_own_phone",
+        "mcp.whatsapp.send_message"
       ]
     },
     "config_server_otp": {

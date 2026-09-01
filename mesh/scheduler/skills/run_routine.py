@@ -5,10 +5,10 @@ Resolves which job (by job_id if the caller already knows it - e.g.
 cron_trigger's fire call - or by name_or_phrase via the same embedding
 infrastructure schedule_job.py uses for dedup, here used for lookup
 instead), decides whether this job's content should be delegated to Journal
-Agent, composes the message, sends it via
-mesh/lib/utilities/whatsapp/openwa_service.py, and re-registers the job's
-next occurrence with cron_trigger - Scheduler Agent owns recurrence, not
-cron_trigger.
+Agent, composes the message, sends it via AdiyanAgent.notify_owner()
+(mesh/lib/agent_sdk.py - the permission-checked path, not a direct
+OpenWAService call), and re-registers the job's next occurrence with
+cron_trigger - Scheduler Agent owns recurrence, not cron_trigger.
 
 The Journal-or-generic decision reuses skill_router.classify() against
 Journal Agent's own AgentSkill, exactly the mechanism a real registry would
@@ -26,19 +26,23 @@ from pydantic import BaseModel
 from mesh.journal.constants import AGENT_URL as JOURNAL_AGENT_URL
 from mesh.journal.skills_catalog import get_skills as get_journal_skills
 from mesh.lib import config_sdk, permissions
-from mesh.lib.a2a_client import call_agent
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.skill_router import classify
-from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
 from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
 from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, OLLAMA_URL, _seeded
 
-OPENWA_URL = 'http://localhost:2785'
-OPENWA_SESSION_NAME = 'adiyan'
+# One instance, module-level - AGENT_ID never changes at runtime, and
+# every method mints its own token internally against 'scheduler_service'
+# (mesh/lib/permissions_config.json), never something this file does by
+# hand anymore. See that tier's own description for why WhatsApp send is
+# deliberately re-granted here, scoped to Scheduler alone, rather than
+# left off entirely or reopened on the shared 'service' tier.
+_agent = AdiyanAgent(AGENT_ID)
 
 
 class GenericMessage(BaseModel):
@@ -92,14 +96,10 @@ async def _compose_generic(description: str, cfg: Dict[str, Any]) -> Optional[st
 async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
     if await _wants_journal(job['description'], cfg['select_composer']):
         try:
-            # Service token - run_routine fires on a schedule (no WhatsApp
-            # caller in the loop at all here) or was already authorized via
-            # cron_trigger's own service-token call into this skill.
-            token = permissions.mint_token('scheduler', 'service')
-            result = await call_agent(JOURNAL_AGENT_URL, 'craft_reflection_prompt', {
+            result = await _agent.call_agent(JOURNAL_AGENT_URL, 'craft_reflection_prompt', {
                 'contact_name': job['target'],
                 'theme': None,
-            }, token=token)
+            })
             question = result.get('question')
             if question:
                 return question
@@ -127,12 +127,16 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
 
     sent = False
     if message_text is not None:
-        openwa = OpenWAService(base_url=OPENWA_URL, api_key='', session_name=OPENWA_SESSION_NAME)
-        chat_id = await openwa.get_own_chat_id()
-        if chat_id is None:
-            raise RuntimeError('Could not resolve the owner\'s own WhatsApp chat - is WhatsApp connected?')
-        await openwa.send_message(chat_id, message_text)
-        sent = True
+        # agent.notify_owner() never raises - a failure here (owner's phone
+        # unresolvable, WhatsApp not connected) now falls through to the
+        # same silent 'skipped' outcome as message_text being None below,
+        # rather than the RuntimeError this used to raise. That's a
+        # deliberate change, not an oversight: never surfacing a raw
+        # failure over WhatsApp already applies everywhere else in this
+        # mesh (see mesh/lib/utilities/whatsapp/notify_owner.py's own
+        # docstring) - a job that couldn't send this time re-registers
+        # below and gets another chance next time regardless.
+        sent = await _agent.notify_owner(message_text)
     # message_text is None: _compose_generic couldn't produce anything
     # grounded in the job's actual description (see
     # _looks_like_unfilled_template) - staying silent here rather than
@@ -167,9 +171,20 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
         'params': {'job_id': job['id']},
     }, token=token)
 
+    if message_text is None:
+        status = 'skipped_no_content'
+    elif sent:
+        status = 'completed'
+    else:
+        # There was real content, but agent.notify_owner() returned False -
+        # a different case from "nothing to say", worth distinguishing in
+        # the result so this doesn't read as the message having been a
+        # generic no-op when it was actually a send failure.
+        status = 'send_failed'
+
     return {
         'job_id': job['id'],
         'routine_name': job['name'],
-        'status': 'completed' if sent else 'skipped_no_content',
+        'status': status,
         'result_summary': message_text,
     }
