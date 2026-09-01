@@ -683,11 +683,15 @@ async def run(
         return {'chat_id': chat_id, 'reply': None, 'delivered': False}
 
     try:
-        # A service token, not the sender's own tier - delivering a reply
-        # (including a rejection to a stranger who has no tier at all) is
-        # Orchestrator's own action, not something authorized by whoever
-        # triggered this run.
-        delivery_token = permissions.mint_token('orchestrator', 'service')
+        # Orchestrator's own dedicated tier, not the shared 'service' one -
+        # delivering a reply (including a rejection to a stranger who has
+        # no tier at all) is Orchestrator's own action, not something
+        # authorized by whoever triggered this run. Confirmed live this
+        # matters: 'service' lost mcp.whatsapp.send_message in the
+        # 2026-08-30 lockdown, which silently broke every single reply
+        # this sends - including to the owner's own self-chat - until
+        # orchestrator_delivery was carved out specifically for this call.
+        delivery_token = permissions.mint_token('orchestrator', 'orchestrator_delivery')
         if pending_image is not None:
             await call_tool(whatsapp_mcp_url, 'send_image', {
                 'chat_id': chat_id,

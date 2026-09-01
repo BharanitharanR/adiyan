@@ -48,6 +48,14 @@
         "mcp.whatsapp.send_message"
       ]
     },
+    "orchestrator_delivery": {
+      "description": "Orchestrator's own reply-delivery action (mesh/orchestrator/skills/handle_message.py's delivery_token) - sending whatever reply/image/document was already composed, back to whoever's chat triggered this run. Deliberately its own tier, not 'service': confirmed live on 2026-09-01 that reusing 'service' here silently broke EVERY reply Orchestrator ever sends, including a reply to the owner's own self-chat, from the moment the 2026-08-30 lockdown removed WhatsApp send from 'service' - this action was never actually automated/timer-driven the way Scheduler's sends were, it only ever fires once per inbound message already received and processed, so it was never the risk the lockdown was written for. Scoped to exactly the three send tools handle_message.py's delivery step calls - not get_own_phone (that stays on the separate 'service' token minted for is_owner() checks) and not memory.remember_interaction (a separate token, separate purpose, in the same file).",
+      "allow": [
+        "mcp.whatsapp.send_message",
+        "mcp.whatsapp.send_document",
+        "mcp.whatsapp.send_image"
+      ]
+    },
     "config_server_otp": {
       "description": "config_server's own OTP-login flow (mesh/config_server/otp.py) sending a dashboard login code to the owner's own WhatsApp. Deliberately its own tier, not 'service': one message per human-initiated login attempt, not an automated/recurring job, so it shouldn't be reopened or closed by whatever policy scheduler/journal's automated sends need.",
       "allow": [
