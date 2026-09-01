@@ -314,14 +314,16 @@ conn = sqlite3.connect(state_db_path(AGENT_ID))</code></pre>
   <section id="pitfall">
     <h2><span class="num">11.</span> Don't construct <code>OpenWAService</code> yourself</h2>
     <div class="callout bad">
-      <b>Known gap in this codebase today</b>
+      <b>Known gap — two call sites left</b>
       <code>mesh/lib/utilities/whatsapp/openwa_service.py</code>'s <code>OpenWAService</code> talks straight
-      to OpenWA's REST API with the raw vault key — no token, no tier, no permission check at all. Three
-      call sites already do this instead of going through <code>whatsapp_mcp</code>
-      (<code>mesh/scheduler/skills/run_routine.py</code>, <code>mesh/adiyan_reader/skills/read_next_page.py</code>,
-      <code>mesh/adiyan_reader/skills/dispatch_questions.py</code>) — each one can send a WhatsApp message
-      regardless of what any tier says. Don't build a fourth instance of it, and don't import
-      <code>ChatOllama</code> directly either, for the same reason: <code>agent.notify_owner()</code> and
+      to OpenWA's REST API with the raw vault key — no token, no tier, no permission check at all.
+      <code>mesh/adiyan_reader/skills/read_next_page.py</code> and <code>dispatch_questions.py</code> still
+      do this — each can send a WhatsApp message regardless of what any tier says. (Scheduler's
+      <code>run_routine.py</code> used to as well; it's migrated onto <code>agent.notify_owner()</code>
+      now.) AdiyanReader can't follow yet: it needs <code>send_voice</code> and <code>resolve_chat_id</code>
+      for an arbitrary phone number, neither of which <code>whatsapp_mcp</code> exposes as a gated tool
+      today. Don't build a third instance of the bypass, and don't import <code>ChatOllama</code> directly
+      either, for the same reason: <code>agent.notify_owner()</code> and
       <code>agent.ask()</code> (§5) are the one path that's actually checked and actually upgradeable later.
     </div>
   </section>
