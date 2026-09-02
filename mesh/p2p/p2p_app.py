@@ -93,6 +93,13 @@ async def start_worker_endpoint(port: int, capabilities: List[str]):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Bind to 0.0.0.0 to listen across all interfaces (including Tailscale)
     sock.bind(("0.0.0.0", port))
+    # Required for loop.sock_recvfrom() below - confirmed live this was
+    # missing and was the real bug: a blocking-mode socket's recv can
+    # starve the whole event loop, so the heartbeat task (scheduled via
+    # create_task just below) never actually got a turn to run at all -
+    # the worker printed its own startup line but never announced,
+    # invisibly, with no error anywhere.
+    sock.setblocking(False)
 
     # Start the background registration thread to check in with Render
     asyncio.create_task(start_heartbeat_announcer(port, capabilities))
@@ -146,6 +153,7 @@ async def discover_and_dispatch(target_model: str, prompt_text: str, timeout: fl
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", 0))
+        sock.setblocking(False)  # required for loop.sock_recvfrom() below - see start_worker_endpoint's own comment
         payload = LLMRequestSchema(task_id="task_p2p_777", prompt=prompt_text).model_dump_json().encode('utf-8')
         sock.sendto(payload, (worker_ip, worker_port))
 
