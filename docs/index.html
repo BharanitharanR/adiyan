@@ -1,7 +1,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Adiyan is a self-hosted AI agent harness: a mesh of cooperating agents running on your own machine. Its flagship agent lives inside WhatsApp as your business assistant, no technical setup, no dashboard to learn.">
-<title>Adiyan: Self-Hosted AI Agent Harness</title>
+<meta name="description" content="Adiyan is a peer-to-peer, fully distributed AI agent harness: a mesh of cooperating agents running on your own machine, able to lend and borrow spare compute with other Adiyans when it helps. Its flagship agent lives inside WhatsApp as your business assistant, no technical setup, no dashboard to learn.">
+<title>Adiyan: Peer-to-Peer AI Agent Harness</title>
 <style>
 
 /* ============ fonts ============ */
@@ -629,6 +629,7 @@ h1,h2,h3{
     <a href="#s1">Home</a>
     <a href="#s2">Why</a>
     <a href="#s3">How it works</a>
+    <a href="#s3b">Community</a>
     <a href="#s4">Capabilities</a>
     <a href="#s4e">Create agent</a>
     <a href="#s5">Routines</a>
@@ -645,7 +646,7 @@ h1,h2,h3{
     <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
   </button>
 </header>
-<div class="counter"><b id="cnum">01</b> / 19</div>
+<div class="counter"><b id="cnum">01</b> / 20</div>
 
 <main class="deck">
 
@@ -655,7 +656,7 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">The platform</p>
       <h1 class="h-hero">Meet <em>Adiyan.</em></h1>
-      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is a self-hosted AI agent harness. It lives inside WhatsApp as your business assistant, on your own machine, on your terms.</p>
+      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is a peer-to-peer, fully distributed AI agent harness. It lives inside WhatsApp as your business assistant, on your own machine, on your terms - and on a community's worth of spare compute when yours needs a hand.</p>
     </div>
     <div class="phone">
       <div class="thread" id="hero-thread">
@@ -685,6 +686,7 @@ h1,h2,h3{
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">Self-hosted, not SaaS</span>
         <span class="chip">A mesh, not one bot</span>
+        <span class="chip">Peer-to-peer, not siloed</span>
         <span class="chip">Modular by design</span>
         <span class="chip">Short + long-term memory</span>
         <span class="chip">End-to-end encrypted, on WhatsApp</span>
@@ -732,6 +734,27 @@ h1,h2,h3{
         <figcaption>One conversation in, routed to whichever agent actually knows how to help, all inside one boundary on your own machine.</figcaption>
       </figure>
     </div>
+  </div>
+</section>
+
+<!-- 03b : PEER-TO-PEER / COMMUNITY -->
+<section class="slide" id="s3b">
+  <p class="eyebrow">Not just self-hosted</p>
+  <h2 class="h2">Adiyan is <em>a community, not a customer base.</em></h2>
+  <div class="grid-split" style="grid-template-columns:1.3fr .7fr;">
+    <p class="prose">Every Adiyan runs on someone's own machine - and any two Adiyans can choose to help each other. When yours is busy, or just too small to keep up, it can ask a peer's Adiyan to answer instead, then hand you back the reply as if it had done the work itself. No cloud bill standing between you and an answer, no company renting you back your own compute, no token limit some provider gets to set for you. We help each other reach the same goal: everybody's Adiyan, answering.</p>
+    <p class="pull">No computing is too small to belong.</p>
+  </div>
+  <div class="tag-row" style="margin-top:1.6rem;">
+    <span class="chip">No cloud cost</span>
+    <span class="chip">No token limit to answer to</span>
+    <span class="chip">No machine too small to take part</span>
+    <span class="chip">Opt-in, every time</span>
+  </div>
+  <div class="control-list" style="margin-top:1.6rem;">
+    <div class="control-item"><span class="control-mark">i.</span><p><strong>Sharing is mutual, not a marketplace.</strong> Nobody's renting compute from anybody. Whoever has spare capacity right now lends it to whoever needs it right now - and returns the favor later, the same way a neighbor does.</p></div>
+    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Your prompt, your call.</strong> A peer only ever sees the one message you explicitly hand off for that reply - never your documents, never your memory, nothing else about you.</p></div>
+    <div class="control-item"><span class="control-mark">iii.</span><p><strong>The oldest laptop still gets a seat.</strong> A machine too modest to run its own model can still ask the community - being small was never a reason to be left out.</p></div>
   </div>
 </section>
 
@@ -1025,15 +1048,15 @@ h1,h2,h3{
 <!-- 09 : LOCAL / DATA NEVER LEAVES -->
 <section class="slide" id="s9">
   <p class="eyebrow">Self-hosted, by design</p>
-  <h2 class="h2">Nothing leaves the building. <em>Not even to us.</em></h2>
+  <h2 class="h2">Nothing leaves the building. <em>Unless you say so.</em></h2>
   <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
     <div>
-      <p class="prose" style="margin-top:.2rem;">Adiyan runs entirely on infrastructure you control. There's no cloud option to reach for in the first place.</p>
+      <p class="prose" style="margin-top:.2rem;">Adiyan runs entirely on infrastructure you control. There's no cloud company holding your data, no vendor to take on faith - and if you ever ask a peer for a hand, that choice is yours, message by message, never assumed.</p>
     </div>
     <div class="control-list">
-      <div class="control-item"><span class="control-mark">i.</span><p><strong>The AI runs locally.</strong> The model that writes every reply lives on your own machine.</p></div>
-      <div class="control-item"><span class="control-mark">ii.</span><p><strong>Memory stays put.</strong> Never mirrored to a third-party database.</p></div>
-      <div class="control-item"><span class="control-mark">iii.</span><p><strong>No vendor privacy policy to take on faith.</strong> There's no outside party holding your data.</p></div>
+      <div class="control-item"><span class="control-mark">i.</span><p><strong>The AI runs locally, by default.</strong> The model that writes every reply lives on your own machine, unless you explicitly hand one message to a peer.</p></div>
+      <div class="control-item"><span class="control-mark">ii.</span><p><strong>Memory stays put.</strong> Never mirrored to a third-party database, never part of what a peer sees.</p></div>
+      <div class="control-item"><span class="control-mark">iii.</span><p><strong>No vendor privacy policy to take on faith.</strong> There's no outside company holding your data - only people running the same software you are.</p></div>
       <div class="control-item"><span class="control-mark">iv.</span><p><strong>End-to-end protected.</strong> WhatsApp's own encryption covers the whole path.</p></div>
     </div>
   </div>
