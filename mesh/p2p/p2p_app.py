@@ -171,7 +171,12 @@ async def discover_and_dispatch(target_model: str, prompt_text: str, timeout: fl
 # --- CLIENT CALL ROUTINE (CLI-facing wrapper around discover_and_dispatch) ---
 async def query_and_dispatch_task(target_model: str, prompt_text: str):
     print(f"[Client] Interrogating Render registry for active workers supporting: {target_model}")
-    result = await discover_and_dispatch(target_model, prompt_text, timeout=5.0)
+    # 90s, not discover_and_dispatch()'s own 30s default - a real prompt's
+    # generation time can genuinely exceed 30s (confirmed live, well over
+    # a minute on a loaded machine), and this is the CLI's own one-shot
+    # wait, not the mesh's internal offload path (which has its own
+    # timeout tuned separately in inference_router/skills/complete.py).
+    result = await discover_and_dispatch(target_model, prompt_text, timeout=90.0)
     if result is None:
         print("[Client] No active P2P workers found, or the task failed - see any error above.")
         return
@@ -186,7 +191,8 @@ async def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  Run as Worker Server: python p2p_app.py serve 9999")
-        print("  Run as Client Caller: python p2p_app.py run_task qwen2.5-7b")
+        print("  Run as Client Caller:  python p2p_app.py run_task qwen2.5-7b \"your prompt here\"")
+        print("                         (prompt defaults to a canned test string if omitted)")
         return
 
     action = sys.argv[1]
@@ -196,7 +202,8 @@ async def main():
         await start_worker_endpoint(port, capabilities=["qwen2.5-7b", "llama3"])
     elif action == "run_task":
         model = sys.argv[2]
-        await query_and_dispatch_task(model, "Extract data schema fields.")
+        prompt_text = sys.argv[3] if len(sys.argv) > 3 else "Extract data schema fields."
+        await query_and_dispatch_task(model, prompt_text)
 
 if __name__ == "__main__":
     # Ensure you have your requirements met: pip install pydantic
