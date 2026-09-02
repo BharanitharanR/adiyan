@@ -27,6 +27,7 @@ exactly what "backed up" means here.
 import logging
 from typing import Any, Dict, Optional
 
+import httpx
 from langchain_ollama import ChatOllama
 
 from mesh.inference_router.constants import OLLAMA_URL, P2P_URL
@@ -93,7 +94,7 @@ async def run(
     try:
         completion = await _run_local(prompt, cfg['model'], cfg['temperature'])
         return {'completion': completion, 'served_by': 'local'}
-    except ConnectionError:
+    except (ConnectionError, httpx.ConnectError) as e:
         # Ollama itself isn't reachable at all (confirmed live on an 8GB
         # Mac after a forced shutdown mid-generation) - a stronger signal
         # than "busy": there is no local answer possible right now, period.
@@ -104,7 +105,21 @@ async def run(
         # path where a prompt can leave this machine WITHOUT the caller
         # having opted in via the community sentinel - accepted here as a
         # deliberate resilience tradeoff for the POC, not an oversight.
-        logger.warning(f'{caller_agent_id!r}: local Ollama unreachable, trying a peer as a fallback')
+        #
+        # httpx.ConnectError, not just the builtin ConnectionError: real
+        # bug, confirmed live - the `ollama` package's own client only
+        # converts httpx.ConnectError into a plain ConnectionError inside
+        # its non-streaming _request_raw() path. langchain_ollama's async
+        # chat call goes through the STREAMING path instead
+        # (_achat_stream_with_aggregation -> self._client.stream(...)),
+        # which never does that conversion - confirmed by reproducing the
+        # exact traceback live, `httpx.ConnectError` propagating all the
+        # way up uncaught. Only catching ConnectionError here meant this
+        # whole except block silently never fired, on any machine, any
+        # time Ollama was actually down - the "try a peer" fallback (and
+        # the identical exception this whole night spent chasing why
+        # _run_on_peer/p2p never once triggered) never ran at all.
+        logger.warning(f'{caller_agent_id!r}: local Ollama unreachable ({e!r}), trying a peer as a fallback')
         completion = await _run_on_peer(prompt, cfg['model'])
         if completion is None:
             raise
