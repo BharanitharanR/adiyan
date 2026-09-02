@@ -13,6 +13,7 @@ get_own_chat_id tool (Orchestrator still doesn't know WhatsApp's API
 directly, only that this tool exists), not stored in the clients table at
 all.
 """
+import logging
 import re
 import sqlite3
 from typing import Any, Dict, Optional, Tuple
@@ -21,10 +22,13 @@ from a2a.types import AgentSkill
 from pydantic import BaseModel, Field
 
 from mesh.lib import permissions
+from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db
 from mesh.orchestrator.constants import WHATSAPP_MCP_URL
+
+logger = logging.getLogger('RulesEngine')
 
 REGISTER_PHRASE = 'register me'
 UNREGISTER_PHRASE = 'unregister me'
@@ -113,11 +117,31 @@ async def _try_add_named_contact(conn: sqlite3.Connection, text: str, cfg: Dict[
     case - most owner messages are just normal requests, not admin
     commands) - falls through to routing exactly like any other owner
     message. A match adds the client and returns a confirmation."""
-    choice = await classify(text, [ADD_CONTACT_SKILL], cfg)
+    # Real bug, confirmed live: this ran unconditionally for EVERY owner
+    # message with no try/except at all, unlike every other classify()
+    # call site in this codebase (_resolve_book_reading_request/
+    # _resolve_read_now_request in handle_message.py both degrade
+    # gracefully). With local Ollama unreachable, classify()'s own
+    # ConnectionError propagated all the way up through check() and
+    # crashed the whole run() function before it ever reached routing,
+    # the communitySearch check, or anything else - meaning an owner
+    # couldn't get ANY reply, not even a peer-offloaded one, while Ollama
+    # was down, regardless of what they typed. Same degrade-on-failure
+    # treatment as every other classify() site: not an add-contact
+    # command, fall through to normal routing.
+    try:
+        choice = await classify(text, [ADD_CONTACT_SKILL], cfg)
+    except Exception as e:
+        logger.error(f'Add-contact intent classification failed: {describe_exception(e)}')
+        return None
     if choice.skill_id != ADD_CONTACT_SKILL.id:
         return None
 
-    params = await extract(text, ADD_CONTACT_SKILL.id, AddContactParams, cfg)
+    try:
+        params = await extract(text, ADD_CONTACT_SKILL.id, AddContactParams, cfg)
+    except Exception as e:
+        logger.error(f'Add-contact parameter extraction failed: {describe_exception(e)}')
+        return None
     phone_digits = _digits_only(params.phone_number)
     if not phone_digits:
         return f"Couldn't find a valid phone number for {params.name} in that - try again with the digits included."
