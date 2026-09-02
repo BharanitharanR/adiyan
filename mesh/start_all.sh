@@ -150,7 +150,18 @@ COMPONENTS=(
     # Platform infrastructure, not something any agent author touches or
     # needs to know exists - Inference Router (above) is the only caller,
     # when it decides a call should go to a peer instead of running here
-    # locally. Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
+    # locally. Discovers/dispatches to a peer via a self-hosted matchmaker
+    # + raw UDP (mesh/p2p/p2p_app.py), not an A2A-based peer exchange -
+    # this is what compute_share (below) used to do. Loopback-only for
+    # its own A2A port by default (P2P_HOST/P2P_PORT env vars override);
+    # the raw UDP worker port (P2P_UDP_PORT, default 9998) needs to
+    # actually bind 0.0.0.0/a Tailscale-reachable interface to be
+    # discoverable cross-machine - see mesh/p2p/server.py's own docstring.
+    "p2p|8462|mesh.p2p.server"
+    # Superseded by p2p (above) as Inference Router's offload backend -
+    # left running, unused in that path, rather than torn out, in case
+    # anything still depends on its own A2A peer-exchange skills directly.
+    # Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
     # override for a real cross-machine peer test) - see mesh/compute_share/
     # README.md and the Peer Exchange design for the full picture.
     "compute_share|8460|mesh.compute_share.server"

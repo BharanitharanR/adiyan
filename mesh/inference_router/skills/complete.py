@@ -7,9 +7,12 @@ into its own agent instead of inline logic duplicated in every calling
 process. ask() is a thin client to this skill for every plain-text call;
 it never touches ChatOllama directly.
 
-Peer offload goes through mesh/p2p/p2p_app.py's matchmaker+UDP mechanism
-(a self-hosted registry, not compute_share's own A2A-based peer exchange
-- superseded here, see _run_on_peer's own comment).
+Peer offload goes through mesh/p2p/'s own A2A agent now (its `dispatch`
+skill), not compute_share's own peer exchange - superseded here, see
+_run_on_peer's own comment. p2p's own agent internally uses
+mesh/p2p/p2p_app.py's matchmaker+UDP mechanism for the actual
+cross-machine leg; this file only ever sees p2p as a normal agent-to-
+agent call, same shape as talking to compute_share used to be.
 
 Concurrency is tracked in-process (a module-level counter, not
 anything shared across restarts or processes) - deliberately simple for
@@ -26,9 +29,9 @@ from typing import Any, Dict, Optional
 
 from langchain_ollama import ChatOllama
 
-from mesh.inference_router.constants import OLLAMA_URL
-from mesh.lib import config_sdk
-from mesh.p2p.p2p_app import discover_and_dispatch
+from mesh.inference_router.constants import OLLAMA_URL, P2P_URL
+from mesh.lib import config_sdk, permissions
+from mesh.lib.a2a_client import call_agent
 
 logger = logging.getLogger('InferenceRouter')
 
@@ -51,13 +54,13 @@ async def _run_local(prompt: str, model: str, temperature: float) -> str:
 
 
 async def _run_on_peer(prompt: str, model: str) -> Optional[str]:
-    # compute_share replaced by mesh/p2p/p2p_app.py's matchmaker+UDP
-    # mechanism (a server you run and fully control, not an internal
-    # A2A call - no permission token needed here anymore). Discovers a
-    # peer advertising `model` as a capability, dispatches the prompt
-    # directly to it over UDP, and returns its answer (or None if no
-    # peer/no response) - see discover_and_dispatch()'s own docstring.
-    return await discover_and_dispatch(model, prompt, timeout=30.0)
+    # inference_router's own identity calling p2p, not the original
+    # caller's - offloading is this agent's decision, not something the
+    # agent that called complete() authorized directly. Same shape this
+    # call had against compute_share before p2p replaced it.
+    token = permissions.mint_token('inference_router', 'inference_router_service')
+    result = await call_agent(P2P_URL, 'dispatch', {'prompt': prompt, 'model': model}, token=token)
+    return result.get('completion')
 
 
 async def run(

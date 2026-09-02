@@ -71,9 +71,9 @@
       ]
     },
     "inference_router_service": {
-      "description": "Inference Router's own identity (mesh/inference_router/skills/complete.py) when IT decides to offload a backed-up call to a peer - a second, separate hop from platform_llm_client above (ask() -> Inference Router -> compute_share), not the same credential reused twice. Scoped to exactly compute_share.offload - nothing about this decision needs any other permission.",
+      "description": "Inference Router's own identity (mesh/inference_router/skills/complete.py) when IT decides to offload a backed-up call to a peer - a second, separate hop from platform_llm_client above (ask() -> Inference Router -> p2p), not the same credential reused twice. Scoped to exactly p2p.dispatch - nothing about this decision needs any other permission. (p2p replaced compute_share as the offload backend - see mesh/p2p/README or complete.py's own module docstring.)",
       "allow": [
-        "compute_share.offload"
+        "p2p.dispatch"
       ]
     },
     "standard": {
