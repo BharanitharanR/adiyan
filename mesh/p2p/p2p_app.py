@@ -140,11 +140,35 @@ async def start_worker_endpoint(port: int, capabilities: List[str]):
 # instead of compute_share.offload, and what query_and_dispatch_task
 # below now wraps for its own CLI/print-facing use. ---
 async def discover_and_dispatch(target_model: str, prompt_text: str, timeout: float = 30.0) -> Optional[str]:
+    # `target_model` is NOT used to filter discovery - real bug, confirmed
+    # live: a worker always answers with whatever model its own local
+    # ask() resolves (see start_worker_endpoint's own comment), completely
+    # independent of the capability string it happened to register under
+    # (the hardcoded placeholder list in server.py/this file's own main(),
+    # 'qwen2.5-7b'/'llama3' - never a real model name like the caller
+    # actually asked for, e.g. 'qwen3:8b-16k'). Filtering discover() by
+    # target_model meant the REAL production path (inference_router's
+    # complete.py, which always passes a real model name) could never
+    # find a peer at all, ever - discovery came back empty every single
+    # time, silently, which is why _run_on_peer kept returning None all
+    # night despite peers being genuinely registered and reachable.
+    # Manual CLI tests (`run_task qwen2.5-7b ...`) only ever worked
+    # because that command happened to pass the matching placeholder
+    # label by hand. No filter is the correct fix, not a different
+    # filter value: any peer can serve any request, so any registered
+    # peer is a valid candidate.
     try:
-        url = f"{RENDER_MATCHMAKER_URL}/discover?capability={target_model}"
+        url = f"{RENDER_MATCHMAKER_URL}/discover"
         response = await asyncio.to_thread(urllib.request.urlopen, url)
         data = json.loads(response.read().decode('utf-8'))
-        workers = data.get("peers", [])
+        # Excludes this instance's own registered entry - without a model
+        # filter narrowing the candidate list, self-routing became a real
+        # risk: the whole point of dispatch is reaching a genuinely
+        # different machine, and a self-loop would silently look like a
+        # successful offload (a real answer comes back) while never
+        # actually leaving this machine.
+        own_ip = get_tailscale_static_ip()
+        workers = [w for w in data.get("peers", []) if w.get("ip") != own_ip]
         if not workers:
             return None
 
