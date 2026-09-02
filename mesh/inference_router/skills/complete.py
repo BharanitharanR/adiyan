@@ -5,7 +5,11 @@ This is where the actual "am I backed up" decision lives, not inside
 mesh/lib/agent_sdk.py's ask() - that's the whole point of pulling it out
 into its own agent instead of inline logic duplicated in every calling
 process. ask() is a thin client to this skill for every plain-text call;
-it never touches ChatOllama or compute_share directly anymore.
+it never touches ChatOllama directly.
+
+Peer offload goes through mesh/p2p/p2p_app.py's matchmaker+UDP mechanism
+(a self-hosted registry, not compute_share's own A2A-based peer exchange
+- superseded here, see _run_on_peer's own comment).
 
 Concurrency is tracked in-process (a module-level counter, not
 anything shared across restarts or processes) - deliberately simple for
@@ -22,9 +26,9 @@ from typing import Any, Dict, Optional
 
 from langchain_ollama import ChatOllama
 
-from mesh.inference_router.constants import COMPUTE_SHARE_URL, OLLAMA_URL
-from mesh.lib import config_sdk, permissions
-from mesh.lib.a2a_client import call_agent
+from mesh.inference_router.constants import OLLAMA_URL
+from mesh.lib import config_sdk
+from mesh.p2p.p2p_app import discover_and_dispatch
 
 logger = logging.getLogger('InferenceRouter')
 
@@ -46,13 +50,14 @@ async def _run_local(prompt: str, model: str, temperature: float) -> str:
         _in_flight -= 1
 
 
-async def _run_on_peer(prompt: str, model: str) -> str:
-    # inference_router's own identity calling compute_share, not the
-    # original caller's - offloading is this agent's decision, not
-    # something the agent that called complete() authorized directly.
-    token = permissions.mint_token('inference_router', 'inference_router_service')
-    result = await call_agent(COMPUTE_SHARE_URL, 'offload', {'prompt': prompt, 'model': model}, token=token)
-    return result.get('completion')
+async def _run_on_peer(prompt: str, model: str) -> Optional[str]:
+    # compute_share replaced by mesh/p2p/p2p_app.py's matchmaker+UDP
+    # mechanism (a server you run and fully control, not an internal
+    # A2A call - no permission token needed here anymore). Discovers a
+    # peer advertising `model` as a capability, dispatches the prompt
+    # directly to it over UDP, and returns its answer (or None if no
+    # peer/no response) - see discover_and_dispatch()'s own docstring.
+    return await discover_and_dispatch(model, prompt, timeout=30.0)
 
 
 async def run(
