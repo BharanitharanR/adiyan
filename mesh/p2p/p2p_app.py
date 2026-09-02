@@ -4,10 +4,20 @@ import socket
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
 
-from mesh.lib.agent_sdk import AdiyanAgent
+# Run as a plain script path (`python3 mesh/p2p/p2p_app.py`), not as a
+# module (`python3 -m mesh.p2p.p2p_app`), and Python only puts this
+# file's own directory on sys.path - not the repo root - so `import mesh`
+# fails. Prepending the repo root here (three levels up: mesh/p2p/ ->
+# mesh/ -> repo root) makes both invocation styles work, confirmed live
+# this was a real trip-up (`ModuleNotFoundError: No module named 'mesh'`)
+# the first time this script was actually run.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from mesh.lib.agent_sdk import AdiyanAgent  # noqa: E402
 
 # community=None, always, for every ask() call this worker makes - this is
 # the SERVING side of an offload (someone else's inference_router picked
