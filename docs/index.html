@@ -741,9 +741,59 @@ h1,h2,h3{
 <section class="slide" id="s3b">
   <p class="eyebrow">Not just self-hosted</p>
   <h2 class="h2">Adiyan is <em>a community, not a customer base.</em></h2>
-  <div class="grid-split" style="grid-template-columns:1.3fr .7fr;">
-    <p class="prose">Every Adiyan runs on someone's own machine - and any two Adiyans can choose to help each other. When yours is busy, or just too small to keep up, it can ask a peer's Adiyan to answer instead, then hand you back the reply as if it had done the work itself. No cloud bill standing between you and an answer, no company renting you back your own compute, no token limit some provider gets to set for you. We help each other reach the same goal: everybody's Adiyan, answering.</p>
-    <p class="pull">No computing is too small to belong.</p>
+  <div class="grid-split">
+    <div>
+      <p class="prose">Every Adiyan runs on someone's own machine - and any two Adiyans can choose to help each other. When yours is busy, or just too small to keep up, it can ask a peer's Adiyan to answer instead, then hand you back the reply as if it had done the work itself. No cloud bill standing between you and an answer, no company renting you back your own compute, no token limit some provider gets to set for you.</p>
+      <p class="pull">No computing is too small to belong.</p>
+    </div>
+    <figure class="diagram-figure">
+      <svg viewBox="0 0 640 400" role="img" aria-label="Your Adiyan is busy, so it asks a peer's Adiyan - running on someone else's machine - to answer instead, then hands you that reply as its own. A wider circle of other Adiyans sits in reserve, unused for this one message." style="width:100%;height:auto;">
+        <defs>
+          <marker id="p2pArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Mulish, sans-serif">
+          <!-- wider community, faint, in reserve -->
+          <g opacity=".28">
+            <rect x="270" y="18" width="100" height="46" rx="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <rect x="420" y="18" width="100" height="46" rx="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="320" y="46" text-anchor="middle" font-size="11" fill="currentColor">Adiyan</text>
+            <text x="470" y="46" text-anchor="middle" font-size="11" fill="currentColor">Adiyan</text>
+          </g>
+          <text x="470" y="88" text-anchor="middle" font-size="11" letter-spacing=".06em" fill="currentColor" fill-opacity=".45">THE WIDER COMMUNITY</text>
+
+          <!-- your machine -->
+          <rect x="20" y="140" width="220" height="220" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5" stroke-dasharray="5 6"/>
+          <text x="130" y="164" text-anchor="middle" font-size="12" letter-spacing=".06em" fill="currentColor" fill-opacity=".55">YOUR MACHINE</text>
+
+          <rect x="10" y="210" width="90" height="50" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text x="55" y="240" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">WhatsApp</text>
+
+          <rect x="50" y="290" width="150" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text x="125" y="316" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor">Your Adiyan</text>
+          <text x="125" y="334" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity=".7">busy right now</text>
+
+          <line x1="55" y1="260" x2="90" y2="290" stroke="currentColor" stroke-width="2" marker-end="url(#p2pArrow)"/>
+
+          <!-- peer's machine -->
+          <rect x="400" y="140" width="220" height="220" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5" stroke-dasharray="5 6"/>
+          <text x="510" y="164" text-anchor="middle" font-size="12" letter-spacing=".06em" fill="currentColor" fill-opacity=".55">A PEER'S MACHINE</text>
+
+          <rect x="435" y="290" width="150" height="60" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+          <text x="510" y="316" text-anchor="middle" font-size="14" font-weight="700" fill="var(--paper)">Their Adiyan</text>
+          <text x="510" y="334" text-anchor="middle" font-size="11" fill="var(--paper)" fill-opacity=".85">free right now</text>
+
+          <!-- the hand-off, both directions -->
+          <line x1="200" y1="305" x2="432" y2="305" stroke="currentColor" stroke-width="2" marker-end="url(#p2pArrow)"/>
+          <text x="316" y="292" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity=".75">asks for help</text>
+
+          <line x1="432" y1="330" x2="200" y2="330" stroke="var(--accent)" stroke-width="2" marker-end="url(#p2pArrow)"/>
+          <text x="316" y="352" text-anchor="middle" font-size="11" fill="var(--accent)">sends back the answer</text>
+        </g>
+      </svg>
+      <figcaption>You only ever talk to your own Adiyan - it quietly finds a peer with room to spare, and hands you the answer as its own.</figcaption>
+    </figure>
   </div>
   <div class="tag-row" style="margin-top:1.6rem;">
     <span class="chip">No cloud cost</span>
