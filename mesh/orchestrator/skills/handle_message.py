@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
+from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config
 from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
@@ -48,6 +49,7 @@ from mesh.orchestrator.router import route_to_agent
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger('HandleMessage')
+_agent = AdiyanAgent(AGENT_ID)
 
 # The logo sent alongside a fresh registration's welcome reply - read once
 # at import time (a static asset baked into the repo, not something that
@@ -612,6 +614,33 @@ async def run(
         # only classified once nothing earlier in this chain already
         # claimed the message.
         reply = await _read_page_now(chat_id, from_number, tier)
+    elif community == 'communitySearch':
+        # The sender explicitly asked to skip this machine entirely, not
+        # just the final reply-wording step - route_to_agent()'s own
+        # classify() and Analysis Agent's ReAct loop are BOTH local-only
+        # (schema/tool-bound ask() calls, never offloadable, see
+        # agent_sdk.py's own docstring), so the normal routing path below
+        # would still hit local Ollama at least twice before ever
+        # reaching a humanize() call that could actually offload -
+        # useless, and actively harmful, on a machine the sender is
+        # explicitly saying not to burden (confirmed live: this is
+        # exactly the case that left a constrained machine unusable).
+        # Going straight to a plain-text ask() call here skips routing
+        # and Analysis Agent's reasoning entirely - a real, deliberate
+        # quality tradeoff (no skill routing, no document/memory tools),
+        # not a bug: the sender asked for this machine to be left alone,
+        # not for a lesser version of the normal answer.
+        should_remember = True
+        try:
+            reply = await _agent.ask(text, stage='community_direct', community=community)
+        except Exception as e:
+            # Same silent-on-unexpected-failure convention as the routing
+            # branch below (see its own comment on why: a raw exception
+            # must never reach WhatsApp) - here specifically covers local
+            # Ollama unreachable AND no peer available either, the one
+            # case complete.py itself can't paper over.
+            logger.error(f'Direct community ask failed for {chat_id}: {describe_exception(e)}')
+            reply = None
     else:
         should_remember = True
         try:
