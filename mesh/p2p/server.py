@@ -21,13 +21,17 @@ Run from the repo root as `python -m mesh.p2p.server`.
 import asyncio
 import threading
 
+import logging
+
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
 from mesh.lib.paths import tasks_db_path
 from mesh.p2p.agent_executor import P2PAgentExecutor
-from mesh.p2p.constants import AGENT_ID, CAPABILITIES, HOST, PORT, UDP_PORT
+from mesh.p2p.constants import AGENT_ID, CAPABILITIES, ENABLED, HOST, PORT, UDP_PORT
 from mesh.p2p.p2p_app import start_worker_endpoint
 from mesh.p2p.skills_catalog import get_skills
+
+logger = logging.getLogger('p2p.server')
 
 
 def _start_worker_thread(port: int, capabilities: list) -> None:
@@ -39,9 +43,26 @@ def _start_worker_thread(port: int, capabilities: list) -> None:
 if __name__ == '__main__':
     skills = asyncio.run(get_skills())
 
-    # Started before serve() (which blocks) - see this module's own
-    # docstring on why this needs a genuinely separate thread/loop.
-    _start_worker_thread(UDP_PORT, CAPABILITIES)
+    # The kill switch (constants.ENABLED, P2P_ENABLED env var) - checked
+    # in exactly this one place. False means the UDP socket is never
+    # bound and the heartbeat announcer never starts at all, so this
+    # machine is never discoverable and never listening as a worker -
+    # not "listens but refuses everything," which would still leave a
+    # real socket for an offender to reach and probe. The A2A server
+    # below (this agent's own `dispatch` skill, for ASKING a peer) still
+    # starts either way - disabling the worker role only ever affects
+    # whether this machine accepts inbound work FROM someone else, never
+    # whether it can still ask for help itself.
+    if ENABLED:
+        # Started before serve() (which blocks) - see this module's own
+        # docstring on why this needs a genuinely separate thread/loop.
+        _start_worker_thread(UDP_PORT, CAPABILITIES)
+    else:
+        logger.warning(
+            "P2P_ENABLED is false - this machine will NOT register as a worker or accept "
+            "any inbound peer requests. Dispatching a prompt TO a peer (this agent's own "
+            "'dispatch' skill) is unaffected and still works."
+        )
 
     agent_card = adiyan_card(
         name='P2P',
