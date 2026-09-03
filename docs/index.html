@@ -730,15 +730,44 @@ h1,h2,h3{
 
 <!-- 03 : WHAT IT IS -->
 <section class="slide" id="s3">
-  <p class="eyebrow">Underneath</p>
-  <h2 class="h2">Own. Control. <em>Cooperate. Extend.</em></h2>
-  <div class="control-list" style="display:grid;grid-template-columns:1fr 1fr;gap:1.6rem 2.4rem;max-width:none;margin-top:1rem;">
-    <div class="control-item"><span class="control-mark">i.</span><p><strong>A mesh, not one bot.</strong> Specialized agents, one orchestrator routing each conversation to whichever knows how to help.</p></div>
-    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Local-first privacy.</strong> Documents, memory, and history stay on your machine. Only an explicitly opted-in message ever leaves.</p></div>
-    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Lives in WhatsApp.</strong> No new app, no dashboard - the interface your business already uses.</p></div>
-    <div class="control-item"><span class="control-mark">iv.</span><p><strong>Own &amp; control.</strong> Your infrastructure, your data, never a vendor to take on faith.</p></div>
-    <div class="control-item"><span class="control-mark">v.</span><p><strong>Cooperate &amp; extend.</strong> Ask a peer when you need capacity; add an agent when you need capability.</p></div>
-    <div class="control-item"><span class="control-mark">vi.</span><p><strong>Grows with you.</strong> Managed hosting, vertical agent packs, and enterprise support - built around the network, not by metering it.</p></div>
+  <div class="grid-split reverse">
+    <div>
+      <p class="eyebrow">Underneath</p>
+      <h2 class="h2">Own. Control. <em>Cooperate. Extend.</em></h2>
+      <p class="prose" style="margin-top:1.2rem;">Think of a shared coffee pot in an office. Everyone brews their own - but if yours runs dry mid-afternoon, you top up from whoever's pot still has some, and nobody's charged for the cup.</p>
+      <div class="tag-row" style="margin-top:1.4rem;">
+        <span class="chip">A mesh of agents</span>
+        <span class="chip">Local-first privacy</span>
+        <span class="chip">Lives in WhatsApp</span>
+        <span class="chip">Grows by adding agents</span>
+      </div>
+    </div>
+    <figure class="diagram-figure">
+      <svg viewBox="0 0 640 400" role="img" aria-label="Your own cup is full - your Adiyan runs on your own machine. A neighbor's cup has run low, so you top it up, the same way a peer borrows spare capacity from yours when theirs runs out." style="width:100%;height:auto;">
+        <g font-family="Mulish, sans-serif">
+          <!-- your cup, full, steaming -->
+          <path d="M100,150 q6,-14 20,0 M130,150 q6,-14 20,0" stroke="currentColor" stroke-width="2" fill="none" stroke-opacity=".6"/>
+          <path d="M80,180 h90 l-8,90 a10,10 0 0 1 -10,9 h-54 a10,10 0 0 1 -10,-9 z" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <path d="M170,195 q26,0 26,26 q0,26 -26,26" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <rect x="82" y="180" width="86" height="14" fill="var(--accent)"/>
+          <text x="125" y="300" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">Your cup</text>
+          <text x="125" y="318" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity=".65">full - runs on your machine</text>
+
+          <!-- the top-up -->
+          <path d="M215,220 q90,-40 180,0" stroke="var(--accent)" stroke-width="2" fill="none" stroke-dasharray="1 8" stroke-linecap="round"/>
+          <path d="M395,214 l10,6 l-10,6 z" fill="var(--accent)"/>
+          <text x="305" y="200" text-anchor="middle" font-size="11" fill="var(--accent)">tops up a neighbor</text>
+
+          <!-- neighbor's cup, running low -->
+          <path d="M420,180 h90 l-8,90 a10,10 0 0 1 -10,9 h-54 a10,10 0 0 1 -10,-9 z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-opacity=".55"/>
+          <path d="M510,195 q26,0 26,26 q0,26 -26,26" fill="none" stroke="currentColor" stroke-width="2.5" stroke-opacity=".55"/>
+          <rect x="422" y="255" width="82" height="21" fill="var(--accent)" opacity=".5"/>
+          <text x="465" y="300" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">A neighbor's cup</text>
+          <text x="465" y="318" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity=".65">running low, right now</text>
+        </g>
+      </svg>
+      <figcaption>Everyone brews their own. When one runs low, another tops it up - no charge for the cup.</figcaption>
+    </figure>
   </div>
 </section>
 
