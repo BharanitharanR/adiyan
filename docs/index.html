@@ -657,7 +657,7 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">A peer-to-peer AI network</p>
       <h1 class="h-hero">Your AI. Your infrastructure. <em>A network when you need it.</em></h1>
-      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is a network of independently owned AI nodes. Run your agents locally, on infrastructure you control - then, when your machine is busy or simply isn't enough, explicitly ask another consenting Adiyan to help.</p>
+      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") runs your agents on your own machine - and asks a peer's Adiyan for help when yours needs it.</p>
     </div>
     <div class="phone">
       <div class="thread" id="hero-thread">
@@ -672,7 +672,7 @@ h1,h2,h3{
   <p class="eyebrow">The problem</p>
   <h2 class="h2">Growing a business doesn't <em>scale by itself.</em></h2>
   <div class="grid-split" style="grid-template-columns:1.3fr .7fr;">
-    <p class="prose">Every conversation competes for the same limited hours. Hire too fast and you dilute what made the business work. Automate carelessly with someone else's cloud AI, and you hand over the conversations that make you valuable.</p>
+    <p class="prose">Every conversation competes for the same limited hours. Hire too fast, you dilute the business. Automate with someone else's cloud AI, you hand over what made it valuable.</p>
     <p class="pull">A customer who waits a week for a reply is a customer who found someone else.</p>
   </div>
 </section>
@@ -683,7 +683,7 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">The idea</p>
       <h2 class="h2">Underneath, it's <em>a mesh, not one bot.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">Adiyan is the harness itself. Each agent does one job well. An orchestrator routes every conversation to whichever one knows how to help. All of it self-hosted, on your own machine.</p>
+      <p class="prose" style="margin-top:1.2rem;">Each agent does one job well. An orchestrator routes every conversation to whichever one knows how to help.</p>
       <div class="tag-row" style="margin-top:1.6rem;">
         <span class="chip">Self-hosted, not SaaS</span>
         <span class="chip">A mesh, not one bot</span>
@@ -744,7 +744,7 @@ h1,h2,h3{
   <h2 class="h2">Don't buy compute for your peak. <em>Borrow it.</em></h2>
   <div class="grid-split">
     <div>
-      <p class="prose">Most businesses don't need their maximum AI capacity every minute of the day. Buying hardware sized for your busiest moment means paying for capacity that sits idle the rest of the time. Adiyan runs on what you already have - and when your machine is busy, or simply too small for a particular request, it can explicitly ask another consenting Adiyan to take that one message instead, then hand you the answer as its own. No cloud bill standing between you and it, no company renting you back your own compute, no token limit some provider gets to set for you.</p>
+      <p class="prose">Buying for your busiest moment means paying for capacity that sits idle the rest of the time. Adiyan runs on what you already have - and asks a consenting peer for help only when yours can't keep up.</p>
       <p class="pull">Today you borrow. Tomorrow you may help someone else.</p>
     </div>
     <figure class="diagram-figure">
@@ -793,7 +793,7 @@ h1,h2,h3{
           <text x="316" y="352" text-anchor="middle" font-size="11" fill="var(--accent)">sends back the answer</text>
         </g>
       </svg>
-      <figcaption>You only ever talk to your own Adiyan - it quietly finds a peer with room to spare, and hands you the answer as its own.</figcaption>
+      <figcaption>You only talk to your own Adiyan. It finds a peer with room to spare.</figcaption>
     </figure>
   </div>
   <div class="tag-row" style="margin-top:1.6rem;">
@@ -803,10 +803,10 @@ h1,h2,h3{
     <span class="chip">Opt-in, every time</span>
   </div>
   <div class="control-list" style="margin-top:1.6rem;">
-    <div class="control-item"><span class="control-mark">i.</span><p><strong>Not another AI cloud.</strong> The usual path is Business → Central AI Provider → response, every single message. Adiyan's own path is Business → Its Adiyan → local response - and only when more capacity is genuinely needed, Business → Its Adiyan → a consenting peer's Adiyan → response. There's no requirement for every request to travel through one central provider.</p></div>
-    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Sharing is mutual, not a marketplace.</strong> Nobody's renting compute from anybody. Whoever has spare capacity right now lends it to whoever needs it right now - and returns the favor later, the same way a neighbor does. There's no compute-credit system and no per-request charge for using a peer.</p></div>
-    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Your prompt, your call.</strong> A peer only ever sees the one message you explicitly hand off for that reply - never your documents, never your memory, nothing else about you.</p></div>
-    <div class="control-item"><span class="control-mark">iv.</span><p><strong>The oldest laptop still gets a seat.</strong> A machine too modest to run its own model can still ask the network - being small was never a reason to be left out. And the network gets more useful as more independently owned Adiyans join it, since every one of them brings its own spare capacity with it, not a bigger bill for whoever runs it.</p></div>
+    <div class="control-item"><span class="control-mark">i.</span><p><strong>Not another AI cloud.</strong> Usually: business → central provider → response, every message. Adiyan: business → its Adiyan → local response, peer only when needed.</p></div>
+    <div class="control-item"><span class="control-mark">ii.</span><p><strong>Mutual, not a marketplace.</strong> No renting, no compute credits, no per-request charge - spare capacity lent, and returned later.</p></div>
+    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Your prompt, your call.</strong> A peer sees only the one message handed off - never your documents, memory, or anything else.</p></div>
+    <div class="control-item"><span class="control-mark">iv.</span><p><strong>No machine too small.</strong> Every Adiyan that joins brings its own capacity, not a bigger bill for anyone.</p></div>
   </div>
 </section>
 
@@ -1103,17 +1103,15 @@ h1,h2,h3{
   <h2 class="h2">Sharing compute does not mean <em>sharing your business.</em></h2>
   <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
     <div>
-      <p class="prose" style="margin-top:.2rem;">Adiyan is designed local-first. Your documents, memory, business knowledge, and conversation history stay on your own machine by default. When a message is explicitly handed off to a peer, only that one request goes with it - never anything else about you. There's no cloud company holding your data, no vendor policy to take on faith.</p>
+      <p class="prose" style="margin-top:.2rem;">Local-first by design. Nothing leaves your machine unless a message is explicitly handed to a peer - and then, only that message.</p>
       <div class="control-list" style="margin-top:1.4rem;">
-        <div class="control-item"><span class="control-mark">→</span><p><strong>Stays local:</strong> documents, memory, business knowledge, conversation history, your own configuration.</p></div>
-        <div class="control-item"><span class="control-mark">→</span><p><strong>Explicitly shared, only when opted in:</strong> the one selected request, and only what you intentionally included in it.</p></div>
+        <div class="control-item"><span class="control-mark">→</span><p><strong>Stays local:</strong> documents, memory, business knowledge, conversation history.</p></div>
+        <div class="control-item"><span class="control-mark">→</span><p><strong>Explicitly shared, when opted in:</strong> only the one request, only what you included.</p></div>
       </div>
     </div>
     <div class="control-list">
-      <div class="control-item"><span class="control-mark">i.</span><p><strong>The AI runs locally, by default.</strong> The model that writes every reply lives on your own machine, unless you explicitly hand one message to a peer.</p></div>
-      <div class="control-item"><span class="control-mark">ii.</span><p><strong>Memory stays put.</strong> Never mirrored to a third-party database, never part of what a peer sees.</p></div>
-      <div class="control-item"><span class="control-mark">iii.</span><p><strong>No vendor privacy policy to take on faith.</strong> There's no outside company holding your data - only people running the same software you are.</p></div>
-      <div class="control-item"><span class="control-mark">iv.</span><p><strong>End-to-end protected.</strong> WhatsApp's own encryption covers the whole path.</p></div>
+      <div class="control-item"><span class="control-mark">i.</span><p><strong>No vendor to take on faith.</strong> No outside company holds your data - only people running the same software.</p></div>
+      <div class="control-item"><span class="control-mark">ii.</span><p><strong>End-to-end protected.</strong> WhatsApp's own encryption covers the whole path.</p></div>
     </div>
   </div>
 </section>
@@ -1151,20 +1149,19 @@ h1,h2,h3{
 <section class="slide" id="s11b">
   <p class="eyebrow">Before you install</p>
   <h2 class="h2">You're not installing a chatbot. <em>You're creating a node.</em></h2>
-  <p class="prose" style="max-width:60ch;">Adiyan runs on your own machine, which means a few pieces of local infrastructure need to be in place first. Because your AI runs on your own infrastructure, you control the infrastructure it runs on - more setup than a SaaS login, more control than a SaaS login.</p>
+  <p class="prose" style="max-width:60ch;">Your AI runs on your own infrastructure - which means you control it, and a few pieces need to be in place first.</p>
   <div class="control-list" style="margin-top:1.4rem;">
-    <div class="control-item"><span class="control-mark">i.</span><p><strong>Ollama - local AI runtime.</strong> Provides the model that actually writes replies. The installer below installs Ollama and downloads the models Adiyan needs automatically - nothing to set up by hand for this part.</p></div>
-    <div class="control-item"><span class="control-mark">ii.</span><p><strong>ngrok - required for the WhatsApp integration.</strong> Gives your machine's local WhatsApp endpoint a secure public address so WhatsApp's own servers can reach it. This is a one-time manual step: <a href="https://ngrok.com/download" target="_blank" rel="noopener">install ngrok</a> and add your own free authtoken from your <a href="https://dashboard.ngrok.com" target="_blank" rel="noopener">ngrok dashboard</a>. After that one time, Adiyan runs and re-registers it automatically on every start.</p></div>
-    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Tailscale - only if you want cross-machine peer sharing.</strong> Gives two different people's Adiyan nodes a private network path to reach each other directly, without exposing either machine to the open internet. Not required to run Adiyan by itself - only if you want your node to actually borrow or lend capacity with someone else's. One-time: <a href="https://tailscale.com/download" target="_blank" rel="noopener">install Tailscale</a> and sign in.</p></div>
+    <div class="control-item"><span class="control-mark">i.</span><p><strong>Ollama, local AI runtime.</strong> Installed automatically, along with the models Adiyan needs.</p></div>
+    <div class="control-item"><span class="control-mark">ii.</span><p><strong>ngrok, for WhatsApp.</strong> One-time: <a href="https://ngrok.com/download" target="_blank" rel="noopener">install</a> and add a free authtoken from your <a href="https://dashboard.ngrok.com" target="_blank" rel="noopener">dashboard</a>. Automatic after that.</p></div>
+    <div class="control-item"><span class="control-mark">iii.</span><p><strong>Tailscale, for peer sharing.</strong> Only if you want cross-machine help. One-time: <a href="https://tailscale.com/download" target="_blank" rel="noopener">install</a> and sign in.</p></div>
   </div>
-  <p class="pull" style="margin-top:1.2rem;">Ollama runs the local AI. Adiyan coordinates the agents. Tailscale connects your node to others, when you choose to. ngrok gives WhatsApp a way in. Once these are running, your machine is an Adiyan node.</p>
 </section>
 
 <!-- 12 : DOWNLOAD -->
 <section class="slide" id="s12">
   <p class="eyebrow">Install: macOS, Apple Silicon</p>
   <h2 class="h2">Create your first Adiyan node <em>on your Mac.</em></h2>
-  <p class="prose" style="max-width:52ch;">One line installs Adiyan itself, Ollama, and the models it needs - genuinely automatic. The WhatsApp connection needs the one-time ngrok step above; joining the peer network needs the one-time Tailscale step above.</p>
+  <p class="prose" style="max-width:52ch;">One line installs Adiyan, Ollama, and its models. WhatsApp and peer sharing need the one-time steps above.</p>
 
   <div class="command-box">
     <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/BharanitharanR/adiyan/main/get.sh | bash</code>
@@ -1180,7 +1177,7 @@ h1,h2,h3{
 
   <p class="download-alt">Prefer not to run a script? <a href="https://github.com/BharanitharanR/adiyan/releases/latest" target="_blank" rel="noopener">Download the zip file directly</a> instead, unzip it, then drag the folder into Terminal and run its <code>install.sh</code>. Requires macOS.</p>
 
-  <p class="pull" style="margin-top:1.4rem;">Once your node is running: your AI runs locally, your data stays under your control by default, and when you need more capacity, your Adiyan can reach out to the network - explicitly, and by choice.</p>
+  <p class="pull" style="margin-top:1.4rem;">Once it's running, your node is yours - and the network's, when you choose.</p>
 </section>
 
 <!-- 12b : WHY ADIYAN -->
@@ -1201,7 +1198,7 @@ h1,h2,h3{
   <h2 class="h2">A different AI cost curve. <em>Not a free one.</em></h2>
   <div class="grid-split" style="grid-template-columns:1fr 1fr;align-items:start;">
     <div>
-      <p class="prose" style="margin-top:.2rem;">A traditional AI API bills you as usage grows: more conversations, more tokens, a higher recurring line item with no ceiling you control. Adiyan changes where that cost sits, not whether it exists. You own the infrastructure - hardware and electricity, largely fixed - and reach for peer capacity only for the occasional request your own machine can't take on. That's predictability and ownership, not "free AI" or "unlimited AI."</p>
+      <p class="prose" style="margin-top:.2rem;">A traditional AI API bills you as usage grows, with no ceiling you control. Adiyan changes where the cost sits, not whether it exists: mostly fixed hardware and electricity, peer capacity only for the occasional overflow. Predictability and ownership, not "free AI."</p>
     </div>
     <div class="control-list">
       <div class="control-item"><span class="control-mark">i.</span><p><strong>Managed Adiyan.</strong> For businesses that would rather not run the infrastructure themselves.</p></div>
@@ -1210,7 +1207,7 @@ h1,h2,h3{
       <div class="control-item"><span class="control-mark">iv.</span><p><strong>Hardware &amp; channel partnerships.</strong> Distribution through SMB hardware, POS, and IT providers.</p></div>
     </div>
   </div>
-  <p class="pull" style="margin-top:1.2rem;">Built around the network, not against it - none of this comes from metering the peer layer itself.</p>
+  <p class="pull" style="margin-top:1.2rem;">Built around the network, not by metering it.</p>
 </section>
 
 <!-- 13 : CTA -->
@@ -1219,7 +1216,7 @@ h1,h2,h3{
   <h2 class="h2">Meet Adiyan. <em>See what comes back.</em></h2>
   <p class="cta-phrase">"Register me to make my life better"</p>
   <p class="prose">Self-hosted, private, and ready when you are.</p>
-  <p class="prose" style="margin-top:1.4rem; max-width:56ch;">The cloud centralized AI. Adiyan distributes it. Every business owns a node. Every node can work alone - and when one needs help, another can choose to help. Adiyan isn't trying to build another AI SaaS. It's trying to build a different way for businesses to own and use AI.</p>
+  <p class="prose" style="margin-top:1.4rem; max-width:56ch;">The cloud centralized AI. Adiyan distributes it. Not another AI SaaS - a different way to own one.</p>
   <p class="prose" style="font-size:.85rem; font-style:italic; color:var(--ink-faint); margin-top:1.6rem; max-width:48ch;">An enabler, not a replacement. In service, not in the way. That's the job. The name just says it plainly.</p>
 </section>
 
