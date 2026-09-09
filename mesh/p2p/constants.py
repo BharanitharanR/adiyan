@@ -32,10 +32,17 @@ CAPABILITIES = [c.strip() for c in os.environ.get('P2P_CAPABILITIES', 'qwen2.5-7
 # the UDP socket is ever bound or the heartbeat announcer ever starts) -
 # false means this machine is never discoverable and never listening,
 # not just "listens but refuses," so there's no socket for an offender to
-# even reach. Default true (the feature only exists if it's on), but this
-# is the one lever to turn it off entirely without touching code, e.g. if
-# abuse shows up faster than the guardrails below can be tuned.
-ENABLED = os.environ.get('P2P_ENABLED', 'true').strip().lower() not in ('false', '0', 'no')
+# even reach.
+#
+# The real value server.py uses comes from config_sdk.get_constant(AGENT_ID,
+# 'p2p_enabled', DEFAULT_ENABLED) at startup - dashboard-editable without a
+# code change, same as community_search_trigger_word. This env var only
+# supplies the seed/fallback: what a brand-new install seeds Mongo with on
+# first run, and what's used if Mongo itself is unreachable at startup
+# (config_sdk's own fallback behavior). Toggling the dashboard value still
+# needs a process restart to take effect - this is checked once at startup
+# by design (see above), not per-request.
+DEFAULT_ENABLED = os.environ.get('P2P_ENABLED', 'true').strip().lower() not in ('false', '0', 'no')
 
 # Guardrails for the worker (see p2p_app.py's start_worker_endpoint) - the
 # real protection given this design's own no-peer-auth stance (see

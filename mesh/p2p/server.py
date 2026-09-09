@@ -23,11 +23,12 @@ import threading
 
 import logging
 
+from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
 from mesh.lib.paths import tasks_db_path
 from mesh.p2p.agent_executor import P2PAgentExecutor
-from mesh.p2p.constants import AGENT_ID, CAPABILITIES, ENABLED, HOST, PORT, UDP_PORT
+from mesh.p2p.constants import AGENT_ID, CAPABILITIES, DEFAULT_ENABLED, HOST, PORT, UDP_PORT
 from mesh.p2p.p2p_app import start_worker_endpoint
 from mesh.p2p.skills_catalog import get_skills
 
@@ -40,20 +41,40 @@ def _start_worker_thread(port: int, capabilities: list) -> None:
     threading.Thread(target=_run, daemon=True, name='p2p_udp_worker').start()
 
 
-if __name__ == '__main__':
-    skills = asyncio.run(get_skills())
+async def _startup():
+    """Everything needed before serve() blocks, resolved on one throwaway
+    event loop (same reasoning as compute_share/inference_router doing
+    the same for their own get_skills() call) - skills, and the
+    dashboard-editable kill switch (see constants.py's own DEFAULT_ENABLED
+    docstring for why this is config_sdk-backed now, not a raw env var)."""
+    skills = await get_skills()
+    enabled = await config_sdk.get_constant(
+        AGENT_ID, 'p2p_enabled', DEFAULT_ENABLED,
+        description=(
+            "Kill switch: whether this machine accepts inbound work from a peer at "
+            "all. False means the UDP worker never binds its socket or announces to "
+            "the matchmaker - not just 'listens but refuses.' Checked once at "
+            "process startup, so a change here needs a p2p restart to take effect."
+        ),
+    )
+    return skills, enabled
 
-    # The kill switch (constants.ENABLED, P2P_ENABLED env var) - checked
-    # in exactly this one place. False means the UDP socket is never
-    # bound and the heartbeat announcer never starts at all, so this
-    # machine is never discoverable and never listening as a worker -
-    # not "listens but refuses everything," which would still leave a
-    # real socket for an offender to reach and probe. The A2A server
-    # below (this agent's own `dispatch` skill, for ASKING a peer) still
-    # starts either way - disabling the worker role only ever affects
-    # whether this machine accepts inbound work FROM someone else, never
-    # whether it can still ask for help itself.
-    if ENABLED:
+
+if __name__ == '__main__':
+    skills, enabled = asyncio.run(_startup())
+
+    # The kill switch (config_sdk's 'p2p_enabled' constant, seeded from
+    # constants.DEFAULT_ENABLED / the P2P_ENABLED env var) - checked in
+    # exactly this one place. False means the UDP socket is never bound
+    # and the heartbeat announcer never starts at all, so this machine is
+    # never discoverable and never listening as a worker - not "listens
+    # but refuses everything," which would still leave a real socket for
+    # an offender to reach and probe. The A2A server below (this agent's
+    # own `dispatch` skill, for ASKING a peer) still starts either way -
+    # disabling the worker role only ever affects whether this machine
+    # accepts inbound work FROM someone else, never whether it can still
+    # ask for help itself.
+    if enabled:
         # Started before serve() (which blocks) - see this module's own
         # docstring on why this needs a genuinely separate thread/loop.
         _start_worker_thread(UDP_PORT, CAPABILITIES)
