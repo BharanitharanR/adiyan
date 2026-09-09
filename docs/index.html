@@ -763,49 +763,133 @@ h1,h2,h3{
 
 <!-- 03 : OFFERING 3 - THE DEV KIT -->
 <section class="slide" id="s3">
-  <div class="grid-split reverse">
-    <div>
-      <p class="eyebrow">Offering 3 &middot; The dev kit</p>
-      <h2 class="h2">Add an agent. <em>Orchestrator finds it.</em></h2>
-      <p class="prose" style="margin-top:1.2rem;">Every agent is a small, self-contained piece: one server, a couple of skills, and a single <code style="font-family:inherit;font-style:italic;color:var(--ink);">ask()</code> call for whatever it needs from an LLM. Register it once and Orchestrator routes to it exactly like it routes to everything already installed.</p>
-      <div class="tag-row" style="margin-top:1.4rem;">
-        <span class="chip">One ask() call, any model</span>
-        <span class="chip">JWT permission tiers</span>
-        <span class="chip">Dashboard-editable config</span>
-        <span class="chip">No routing code to write</span>
+  <p class="eyebrow">Offering 3 &middot; The dev kit</p>
+  <h2 class="h2">Add an agent. <em>Orchestrator finds it.</em></h2>
+  <p class="prose" style="margin-top:1rem;max-width:66ch;">Every agent under the hood is the same handful of files - a scaffold called <code style="font-family:inherit;font-style:italic;color:var(--ink);">example_agent</code> ships in the repo specifically so you can copy it. It rolls a die, on purpose: trivial enough that what's boilerplate and what's actually yours to write is obvious at a glance.</p>
+  <div class="tag-row" style="margin-top:1rem;">
+    <span class="chip">Copy one folder</span>
+    <span class="chip">Owner tier works immediately</span>
+    <span class="chip">Dashboard-editable, no restart</span>
+    <span class="chip">Callable by every other agent</span>
+  </div>
+
+  <div class="steps" style="margin-top:1.6rem;">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div>
+        <h3>Copy the scaffold</h3>
+        <p><code>cp -r mesh/example_agent mesh/your_agent</code>, then change two lines in its <code>constants.py</code>: <code>AGENT_ID</code> and <code>PORT</code>.</p>
       </div>
     </div>
-    <figure class="diagram-figure">
-      <svg viewBox="0 0 640 340" role="img" aria-label="Your new agent registers once with Agent Registry at startup. Orchestrator asks Agent Registry who's available, then routes directly to your agent - no code change needed to wire it in." style="width:100%;height:auto;">
+    <div class="step">
+      <div class="step-num">2</div>
+      <div>
+        <h3>Write the logic</h3>
+        <p>One plain <code>async def run(...)</code> in <code>skills/your_skill.py</code>. No permission check, no A2A wiring in here - just the actual work.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div>
+        <h3>Describe it in plain English</h3>
+        <p>The description you write in <code>skills_catalog.py</code> <em>is</em> the routing logic - Orchestrator reads it to decide whether a message is yours. No regex, no keyword list.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div>
+        <h3>Declare the parameters</h3>
+        <p>One <code>pydantic BaseModel</code> in <code>agent_executor.py</code> (e.g. <code>sides: int</code>) plus one <code>if skill_id == ...</code> line. The harness turns "roll a 20 sided die" into <code>{"sides": 20}</code> against that shape.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div>
+        <h3>Run it</h3>
+        <p><code>python -m mesh.your_agent.server</code>. It seeds its own config into Mongo and registers itself with Agent Registry on startup - Orchestrator picks it up on its next restart, no code change anywhere else.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div>
+        <h3>Tune it without redeploying</h3>
+        <p>Open the config dashboard and your agent already has its own tab - description, examples, model, temperature, timeout, any prompt template. Edit and save; most changes apply on the next message, no restart.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-split" style="margin-top:1.8rem;align-items:start;">
+    <figure class="diagram-figure" style="margin:0;">
+      <svg viewBox="0 0 640 300" role="img" aria-label="Your new agent registers once with Agent Registry at startup. Orchestrator asks Agent Registry who's available, then routes directly to your agent - no code change needed to wire it in." style="width:100%;height:auto;">
         <defs>
           <marker id="devkitArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
           </marker>
         </defs>
         <g font-family="Mulish, sans-serif">
-          <rect x="20" y="130" width="150" height="70" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
-          <text x="95" y="160" text-anchor="middle" font-size="13" font-weight="700" fill="var(--paper)">Your new agent</text>
-          <text x="95" y="177" text-anchor="middle" font-size="10.5" fill="var(--paper)" fill-opacity=".85">a few files, one class</text>
+          <rect x="10" y="100" width="150" height="70" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+          <text x="85" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="var(--paper)">Your new agent</text>
+          <text x="85" y="147" text-anchor="middle" font-size="10.5" fill="var(--paper)" fill-opacity=".85">a few files, one class</text>
 
-          <rect x="245" y="130" width="150" height="70" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
-          <text x="320" y="160" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">Agent Registry</text>
-          <text x="320" y="177" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".65">who's available, right now</text>
+          <rect x="240" y="100" width="150" height="70" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text x="315" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">Agent Registry</text>
+          <text x="315" y="147" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".65">who's available, right now</text>
 
-          <rect x="470" y="130" width="150" height="70" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
-          <text x="545" y="160" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">Orchestrator</text>
-          <text x="545" y="177" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".65">routes every message</text>
+          <rect x="470" y="100" width="150" height="70" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text x="545" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">Orchestrator</text>
+          <text x="545" y="147" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".65">routes every message</text>
 
-          <line x1="170" y1="165" x2="238" y2="165" stroke="var(--accent)" stroke-width="2" marker-end="url(#devkitArrow)"/>
-          <text x="204" y="150" text-anchor="middle" font-size="10" fill="var(--accent)">registers once</text>
+          <line x1="160" y1="135" x2="233" y2="135" stroke="var(--accent)" stroke-width="2" marker-end="url(#devkitArrow)"/>
+          <text x="196" y="120" text-anchor="middle" font-size="10" fill="var(--accent)">registers once</text>
 
-          <line x1="470" y1="150" x2="402" y2="150" stroke="currentColor" stroke-width="2" marker-end="url(#devkitArrow)"/>
-          <text x="436" y="137" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".7">asks who's available</text>
+          <line x1="470" y1="120" x2="397" y2="120" stroke="currentColor" stroke-width="2" marker-end="url(#devkitArrow)"/>
+          <text x="431" y="107" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".7">asks who's available</text>
 
-          <path d="M545,200 C545,260 95,260 95,203" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 5" marker-end="url(#devkitArrow)"/>
-          <text x="320" y="255" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".7">then routes to it directly - no code change needed</text>
+          <path d="M545,170 C545,225 85,225 85,173" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 5" marker-end="url(#devkitArrow)"/>
+          <text x="315" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity=".7">then routes to it directly - step 5</text>
         </g>
       </svg>
       <figcaption>Register once at startup. From then on, it's just another agent Orchestrator already knows about.</figcaption>
+    </figure>
+
+    <figure class="diagram-figure" style="margin:0;">
+      <svg viewBox="0 0 640 300" role="img" aria-label="The config dashboard at localhost 8500, showing one tab per agent - here, your_agent's own tab - with its LLM stages editable as model, temperature and timeout, saved live to the database with no restart." style="width:100%;height:auto;">
+        <g font-family="Mulish, sans-serif">
+          <rect x="0" y="0" width="640" height="300" rx="12" fill="none" stroke="currentColor" stroke-opacity=".3" stroke-width="1.5"/>
+          <text x="24" y="34" font-size="13" font-weight="700" fill="currentColor">localhost:8500/configs</text>
+          <line x1="0" y1="50" x2="640" y2="50" stroke="currentColor" stroke-opacity=".2" stroke-width="1"/>
+
+          <!-- tab row -->
+          <text x="24" y="76" font-size="11" fill="currentColor" fill-opacity=".5">orchestrator</text>
+          <text x="130" y="76" font-size="11" fill="currentColor" fill-opacity=".5">scheduler</text>
+          <text x="222" y="76" font-size="11" font-weight="700" fill="var(--accent)">your_agent</text>
+          <line x1="222" y1="84" x2="304" y2="84" stroke="var(--accent)" stroke-width="2"/>
+          <text x="316" y="76" font-size="11" fill="currentColor" fill-opacity=".5">memory</text>
+
+          <!-- stage row card -->
+          <rect x="24" y="106" width="592" height="76" rx="8" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.3"/>
+          <text x="40" y="130" font-size="11" letter-spacing=".08em" fill="currentColor" fill-opacity=".55">STAGES</text>
+          <text x="40" y="156" font-size="12.5" font-weight="700" fill="currentColor">classify_skill</text>
+          <text x="40" y="171" font-size="9.5" fill="currentColor" fill-opacity=".5">MODEL / TEMPERATURE / TIMEOUT</text>
+          <rect x="220" y="140" width="140" height="26" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="230" y="157" font-size="10.5" fill="currentColor">qwen3:8b-16k</text>
+          <rect x="372" y="140" width="52" height="26" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="382" y="157" font-size="10.5" fill="currentColor">0.3</text>
+          <rect x="436" y="140" width="52" height="26" rx="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="446" y="157" font-size="10.5" fill="currentColor">60</text>
+          <rect x="562" y="140" width="52" height="26" rx="6" fill="var(--accent)"/>
+          <text x="588" y="157" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--paper)">Save</text>
+
+          <!-- constants row card -->
+          <rect x="24" y="196" width="592" height="80" rx="8" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.3"/>
+          <text x="40" y="220" font-size="11" letter-spacing=".08em" fill="currentColor" fill-opacity=".55">CONSTANTS</text>
+          <text x="40" y="246" font-size="12.5" font-weight="700" fill="currentColor">skill_your_skill_description</text>
+          <text x="40" y="261" font-size="9.5" fill="currentColor" fill-opacity=".5">the sentence Orchestrator routes on</text>
+          <rect x="562" y="230" width="52" height="26" rx="6" fill="var(--accent)"/>
+          <text x="588" y="247" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--paper)">Save</text>
+        </g>
+      </svg>
+      <figcaption>Local-only, gated by a one-time code sent to the owner's own WhatsApp - no password stored anywhere.</figcaption>
     </figure>
   </div>
 </section>
