@@ -630,13 +630,14 @@ h1,h2,h3{
     <a href="#s2">Reader</a>
     <a href="#s3">Dev Kit</a>
     <a href="#s4">Community</a>
+    <a href="#s5">Install</a>
   </nav>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">
     <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
     <svg class="icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
   </button>
 </header>
-<div class="counter"><b id="cnum">01</b> / 4</div>
+<div class="counter"><b id="cnum">01</b> / 5</div>
 
 <main class="deck">
 
@@ -646,7 +647,7 @@ h1,h2,h3{
     <div>
       <p class="eyebrow">Offering 1 &middot; An agent harness</p>
       <h1 class="h-hero">One harness. <em>Every agent your business needs.</em></h1>
-      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") runs a full AI agent stack on your own machine - routing, memory, scheduling, and more, wired together and working the moment you install it.</p>
+      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is an AI agent harness that runs entirely on your own machine. It ships with a working orchestrator, memory, and scheduler - not libraries you assemble yourself.</p>
 
       <div class="command-box" style="margin-top:1.8rem;">
         <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/BharanitharanR/adiyan/main/get.sh | bash</code>
@@ -663,7 +664,7 @@ h1,h2,h3{
 
   <div style="margin-top:1rem;">
     <p class="eyebrow">Out of the box</p>
-    <h2 class="h2" style="font-size:clamp(1.6rem,3vw,2.2rem);">Seven agents, <em>already wired together.</em></h2>
+    <h2 class="h2" style="font-size:clamp(1.6rem,3vw,2.2rem);">Seven agents, <em>one install.</em></h2>
     <figure class="diagram-figure" style="width:min(100%,760px);margin-top:1rem;">
       <svg viewBox="0 0 700 460" role="img" aria-label="WhatsApp feeds Orchestrator, which routes each message to whichever of Memory, Scheduler, Journal, Analysis, or Agent Registry the moment needs, then replies back." style="width:100%;height:auto;">
         <g font-family="Mulish, sans-serif">
@@ -707,7 +708,7 @@ h1,h2,h3{
           <line x1="570" y1="374" x2="400" y2="266" stroke="var(--accent)" stroke-width="1.8"/>
         </g>
       </svg>
-      <figcaption>Every line is a live call, not a diagram of intent. WhatsApp feeds Orchestrator, which routes to whichever agent the moment needs.</figcaption>
+      <figcaption>WhatsApp feeds Orchestrator, which routes each message to whichever agent handles it, then replies back.</figcaption>
     </figure>
   </div>
 </section>
@@ -718,8 +719,8 @@ h1,h2,h3{
   <h2 class="h2">It reads. <em>You listen, then it checks.</em></h2>
   <div class="grid-split">
     <div>
-      <p class="prose">Send Adiyan a book. It splits it into daily pages, reads that day's page aloud as a WhatsApp voice note every night, and asks you a couple of questions the next day to see what stuck.</p>
-      <p class="pull">A reading habit that runs itself - and actually checks you understood it.</p>
+      <p class="prose">Send Adiyan a book. It splits it into daily pages, reads that day's page aloud as a WhatsApp voice note every night, and asks you a couple of questions on it the next day.</p>
+      <p class="pull">A reading habit that runs itself, and checks whether you followed it.</p>
       <div class="tag-row" style="margin-top:1.4rem;">
         <span class="chip">Any book you upload</span>
         <span class="chip">One page a night</span>
@@ -761,7 +762,7 @@ h1,h2,h3{
           <text x="130" y="165" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".55">repeats nightly</text>
         </g>
       </svg>
-      <figcaption>One page, one voice note, one quiz - every night, on its own schedule.</figcaption>
+      <figcaption>Runs on Adiyan's own scheduler agent - no reminder app, no manual trigger.</figcaption>
     </figure>
   </div>
 </section>
@@ -771,7 +772,7 @@ h1,h2,h3{
   <div class="grid-split reverse">
     <div>
       <p class="eyebrow">Offering 3 &middot; The dev kit</p>
-      <h2 class="h2">Add an agent. <em>The mesh finds it.</em></h2>
+      <h2 class="h2">Add an agent. <em>Orchestrator finds it.</em></h2>
       <p class="prose" style="margin-top:1.2rem;">Every agent is a small, self-contained piece: one server, a couple of skills, and a single <code style="font-family:inherit;font-style:italic;color:var(--ink);">ask()</code> call for whatever it needs from an LLM. Register it once and Orchestrator routes to it exactly like it routes to everything already installed.</p>
       <div class="tag-row" style="margin-top:1.4rem;">
         <span class="chip">One ask() call, any model</span>
@@ -869,14 +870,29 @@ h1,h2,h3{
       <figcaption>You only talk to your own Adiyan. It finds a peer with room to spare.</figcaption>
     </figure>
   </div>
+</section>
 
-  <div class="tag-row" style="margin-top:.4rem;">
-    <span class="chip">Ollama - installed automatically</span>
-    <span class="chip">ngrok - one-time, for WhatsApp</span>
-    <span class="chip">Tailscale - one-time, to join the community</span>
+<!-- 05 : INSTALL -->
+<section class="slide" id="s5">
+  <p class="eyebrow">Before you install</p>
+  <h2 class="h2">What you need <em>first.</em></h2>
+  <div class="grid-split" style="grid-template-columns:1fr 1fr;">
+    <div>
+      <div class="command-box">
+        <code>curl -fsSL https://raw.githubusercontent.com/BharanitharanR/adiyan/main/get.sh | bash</code>
+        <button class="command-copy" type="button">Copy</button>
+      </div>
+      <p class="download-alt">macOS, Apple Silicon. <a href="https://github.com/BharanitharanR/adiyan/releases/latest" target="_blank" rel="noopener">Or download the zip.</a></p>
+      <p class="prose" style="margin-top:1.4rem;max-width:52ch;">The script above installs Ollama for you. ngrok and Tailscale each need one manual step first, listed alongside what they're actually for.</p>
+    </div>
+    <div class="download-steps">
+      <p><b>Ollama</b> - runs the model itself. Installed automatically by the script. Prefer to do it yourself first? <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>.</p>
+      <p><b>ngrok</b> - exposes your WhatsApp webhook to the internet. One-time setup: <a href="https://ngrok.com/download" target="_blank" rel="noopener">ngrok.com/download</a> (or <code style="font-family:inherit;">brew install ngrok</code>), then <code style="font-family:inherit;">ngrok config add-authtoken</code> with a free account's token.</p>
+      <p><b>Tailscale</b> - only if you want Offering 4: lets your machine reach a peer's when you opt a message into the community. Skip it if you're not using that. <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>.</p>
+    </div>
   </div>
 
-  <div style="margin-top:1.6rem;">
+  <div style="margin-top:1.4rem;">
     <p class="cta-phrase">"Register me to make my life better"</p>
     <p class="prose" style="margin-top:.6rem;max-width:56ch;">The cloud centralizes AI. Adiyan distributes it. Not another AI SaaS - a different way to own one.</p>
   </div>
@@ -915,28 +931,34 @@ h1,h2,h3{
 })();
 
 (function(){
-  var btn = document.getElementById('copy-cmd');
-  var cmd = document.getElementById('install-cmd');
-  if(!btn || !cmd) return;
-  btn.addEventListener('click', function(){
-    var text = cmd.textContent;
-    var done = function(){
-      btn.textContent = 'Copied';
-      btn.classList.add('copied');
-      setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
-    };
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(text).then(done, done);
-    } else {
-      var range = document.createRange();
-      range.selectNode(cmd);
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      try { document.execCommand('copy'); } catch(e){}
-      sel.removeAllRanges();
-      done();
-    }
+  // One handler for every command box on the page (the hero's install-cmd/
+  // copy-cmd IDs still exist and still work - this just also covers the
+  // second copy of the same command on the install slide, without needing
+  // a second pair of unique IDs).
+  document.querySelectorAll('.command-box').forEach(function(box){
+    var btn = box.querySelector('.command-copy');
+    var cmd = box.querySelector('code');
+    if(!btn || !cmd) return;
+    btn.addEventListener('click', function(){
+      var text = cmd.textContent;
+      var done = function(){
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var range = document.createRange();
+        range.selectNode(cmd);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        try { document.execCommand('copy'); } catch(e){}
+        sel.removeAllRanges();
+        done();
+      }
+    });
   });
 })();
 
