@@ -648,12 +648,7 @@ h1,h2,h3{
       <p class="eyebrow">Offering 1 &middot; An agent harness</p>
       <h1 class="h-hero">One harness. <em>Every agent your business needs.</em></h1>
       <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is an AI agent harness that runs entirely on your own machine. It ships with a working orchestrator, memory, and scheduler - not libraries you assemble yourself.</p>
-
-      <div class="command-box" style="margin-top:1.8rem;">
-        <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/BharanitharanR/adiyan/main/get.sh | bash</code>
-        <button class="command-copy" id="copy-cmd" type="button">Copy</button>
-      </div>
-      <p class="download-alt">macOS, Apple Silicon. <a href="https://github.com/BharanitharanR/adiyan/releases/latest" target="_blank" rel="noopener">Or download the zip.</a></p>
+      <p class="prose" style="margin-top:1.4rem;"><a href="#s5" style="color:var(--accent);text-decoration:underline;text-underline-offset:2px;">Installation details and prerequisites are on the last page &rarr;</a></p>
     </div>
     <div class="phone">
       <div class="thread" id="hero-thread">
@@ -931,10 +926,9 @@ h1,h2,h3{
 })();
 
 (function(){
-  // One handler for every command box on the page (the hero's install-cmd/
-  // copy-cmd IDs still exist and still work - this just also covers the
-  // second copy of the same command on the install slide, without needing
-  // a second pair of unique IDs).
+  // One handler for every .command-box on the page - selector-based, not
+  // ID-based, so it doesn't care how many copies of the install command
+  // exist (currently just the one, on the install slide).
   document.querySelectorAll('.command-box').forEach(function(box){
     var btn = box.querySelector('.command-copy');
     var cmd = box.querySelector('code');
