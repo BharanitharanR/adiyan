@@ -102,6 +102,24 @@ class AgentConfig(Document):
         name = 'agent_config'
 
 
+class RunnableAgent(Document):
+    """One row per agent that mesh/start_all.sh should launch on top of its
+    own hardcoded core set. Written by an agent's own server.py at startup
+    (see register_runnable(), wired into the example_agent scaffold), read
+    by mesh/tools/runnable_agents.py which start_all.sh shells out to after
+    the core mesh is up. `_id`/agent_id is the agent id; `module` is what
+    `python -m` runs; `enabled` False keeps the row but stops start_all
+    launching it (a soft off-switch that survives the next agent start,
+    which would otherwise re-register it)."""
+    agent_id: str
+    module: str
+    port: int
+    enabled: bool = True
+
+    class Settings:
+        name = 'run_the_agent'
+
+
 _init_lock = asyncio.Lock()
 _initialized = False
 _unavailable = False
@@ -147,7 +165,7 @@ async def _ensure_initialized() -> bool:
         try:
             client = AsyncMongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
             await client.admin.command('ping')
-            await init_beanie(database=client[MONGO_DB_NAME], document_models=[AgentConfig])
+            await init_beanie(database=client[MONGO_DB_NAME], document_models=[AgentConfig, RunnableAgent])
             _initialized = True
             _initialized_loop = current_loop
             _cache = {}
@@ -415,3 +433,46 @@ async def seed_from_file(agent_id: str, agent_dir) -> None:
     seed = load_seed_config(agent_dir)
     for key, entry in seed.items():
         await get_constant(agent_id, key, entry['value'], description=entry.get('description'))
+
+
+async def register_runnable(agent_id: str, module: str, port: int) -> bool:
+    """Record this agent in the `run_the_agent` collection so mesh/start_all.sh
+    launches it automatically from then on, without an edit to that script.
+    Called from an agent's own server.py at startup (wired into the
+    example_agent scaffold) - so the first time you run a new agent by hand,
+    it registers itself, and every start_all.sh run after that includes it.
+
+    Idempotent: upserts on agent_id. Does NOT flip `enabled` back to True -
+    if an operator disabled the row, re-running the agent won't silently
+    re-enable it. Returns True on success, False if Mongo is unavailable
+    (an agent must still be able to start with its config store down)."""
+    if not await _ensure_initialized():
+        return False
+    try:
+        existing = await RunnableAgent.find_one(RunnableAgent.agent_id == agent_id)
+        if existing is None:
+            await RunnableAgent(agent_id=agent_id, module=module, port=port, enabled=True).insert()
+        else:
+            existing.module = module
+            existing.port = port
+            await existing.save()
+        return True
+    except Exception as e:
+        logger.warning(f'Config SDK could not register runnable {agent_id!r}: {e}')
+        return False
+
+
+async def list_runnables() -> List[Dict[str, Any]]:
+    """Every enabled row in `run_the_agent`, as
+    {'agent_id', 'module', 'port'} dicts - what mesh/tools/runnable_agents.py
+    prints for start_all.sh to consume. Empty list (not an error) when the
+    config store is unreachable: start_all.sh just launches its hardcoded
+    core set in that case."""
+    if not await _ensure_initialized():
+        return []
+    try:
+        docs = await RunnableAgent.find(RunnableAgent.enabled == True).to_list()  # noqa: E712
+        return [{'agent_id': d.agent_id, 'module': d.module, 'port': d.port} for d in docs]
+    except Exception as e:
+        logger.warning(f'Config SDK could not list runnables: {e}')
+        return []

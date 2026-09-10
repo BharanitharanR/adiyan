@@ -20,6 +20,23 @@ curl -s http://127.0.0.1:8440/.well-known/agent-card.json
 ...or register it with `mesh.agent_registry` so the orchestrator can route
 conversations to it like any other agent.
 
+## Getting it started automatically
+
+You do **not** edit `mesh/start_all.sh`. On startup this agent's `server.py`
+calls `config_sdk.register_runnable(AGENT_ID, module=f'mesh.{AGENT_ID}.server',
+port=port)`, which writes a row into the `run_the_agent` collection. From
+then on, every `mesh/start_all.sh` run reads that collection (after its own
+hardcoded core mesh is up) and launches this agent too.
+
+So the flow for a new agent is: run it once by hand (the command above),
+which registers it, and it's part of the mesh from the next `start_all.sh`
+onward. The module path is a convention - `mesh.<AGENT_ID>.server` - so name
+your agent's directory to match its `AGENT_ID`.
+
+To stop `start_all.sh` launching it without deleting the row, set
+`enabled: false` on it in the `run_the_agent` collection (re-running the
+agent won't flip that back).
+
 ## The files, and what's actually agent-specific
 
 | File | What changes per agent |

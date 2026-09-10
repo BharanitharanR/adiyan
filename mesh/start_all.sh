@@ -193,6 +193,11 @@ COMPONENTS=(
     "orchestrator|8426|mesh.orchestrator.server"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
 )
+# The hardcoded core set ends here. Everything appended past this index is a
+# dynamically-registered agent (merge_registered_agents), and do_start's
+# phase 2 starts/waits on exactly the COMPONENTS[CORE_COUNT:] slice - so it
+# still works on `restart`, where do_stop has already appended them.
+CORE_COUNT="${#COMPONENTS[@]}"
 
 refresh_listening() {
     LISTENING="$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null || true)"
@@ -309,6 +314,34 @@ launch_component() {
     echo "  [start] $name (pid $!) -> $logfile"
 }
 
+# Append dynamically-registered agents to COMPONENTS - the ones an agent's
+# own server.py wrote into the `run_the_agent` collection at startup (see
+# mesh/lib/config_sdk.py register_runnable(), wired into the example_agent
+# scaffold). mesh/tools/runnable_agents.py reads that collection and prints
+# one `name|port|module` line each, the same format COMPONENTS already uses.
+#
+# Idempotent: a name already in COMPONENTS (the hardcoded core set) is
+# skipped, so a core agent that also self-registers isn't listed twice.
+# Prints nothing and changes nothing if the config store is unreachable -
+# the core set still starts. do_start() calls this only AFTER the core mesh
+# is up, so a new agent's own startup has the registry / inference_router /
+# config store to talk to; do_stop() calls it up front, since stopping has
+# no such ordering need.
+merge_registered_agents() {
+    local line dyn_name existing
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        dyn_name="${line%%|*}"
+        local already=0
+        for existing in "${COMPONENTS[@]}"; do
+            [ "${existing%%|*}" = "$dyn_name" ] && already=1 && break
+        done
+        [ "$already" -eq 1 ] && continue
+        COMPONENTS+=("$line")
+        echo "  [registered] $dyn_name"
+    done < <("$PYTHON_BIN" -m mesh.tools.runnable_agents 2>/dev/null || true)
+}
+
 # penwa/data/.api-key -> OPENWA_API_KEY in the vault, whenever the file
 # exists (a silent no-op otherwise - nothing to sync yet on a genuinely
 # first-ever boot, before OpenWA has generated a key at all).
@@ -423,6 +456,37 @@ do_start() {
         done
     done
 
+    # --- Phase 2: dynamically-registered agents ---
+    # The core mesh above is up now. Pull in anything an agent registered
+    # into `run_the_agent` and start it, then wait for those too. Uses the
+    # fixed CORE_COUNT boundary, not "did merge add anything just now", so
+    # it still runs on `restart` (where do_stop already appended them).
+    merge_registered_agents
+    if [ "${#COMPONENTS[@]}" -gt "$CORE_COUNT" ]; then
+        refresh_listening
+        for entry in "${COMPONENTS[@]:$CORE_COUNT}"; do
+            IFS='|' read -r name port cmd <<< "$entry"
+            is_target "$name" || continue
+            if component_alive "$port" "$cmd"; then
+                echo "  [skip] $name already running"
+            else
+                launch_component "$name" "$cmd"
+            fi
+        done
+        echo "  waiting for registered agents..."
+        for i in $(seq 1 90); do
+            sleep 2
+            refresh_listening
+            still_down=0
+            for entry in "${COMPONENTS[@]:$CORE_COUNT}"; do
+                IFS='|' read -r name port cmd <<< "$entry"
+                is_target "$name" || continue
+                component_alive "$port" "$cmd" || still_down=1
+            done
+            [ "$still_down" -eq 0 ] && break
+        done
+    fi
+
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"
         is_target "$name" || continue
@@ -521,6 +585,9 @@ asyncio.run(main())
 }
 
 do_stop() {
+    # Dynamically-registered agents too - no ordering need for a stop, so
+    # pull them in up front.
+    merge_registered_agents
     echo "Stopping:"
     for entry in "${COMPONENTS[@]}"; do
         IFS='|' read -r name port cmd <<< "$entry"

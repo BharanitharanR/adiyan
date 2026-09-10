@@ -41,6 +41,14 @@ async def _load_startup_config() -> dict:
         AGENT_ID, 'port', PORT,
         description='Which port this agent listens on. Changing this needs a restart to take effect.',
     )
+    # Self-register so mesh/start_all.sh launches this agent automatically
+    # from now on, no edit to that script. Convention: the module is
+    # mesh.<AGENT_ID>.server, i.e. the agent directory is named for its
+    # AGENT_ID (the README's "rename example_agent" step). A no-op beyond a
+    # Mongo write; safe if the config store is down (returns False, agent
+    # still starts). Delete this call only if the agent is meant to be
+    # started some other way entirely.
+    await config_sdk.register_runnable(AGENT_ID, module=f'mesh.{AGENT_ID}.server', port=port)
     description = await config_sdk.get_constant(
         AGENT_ID, 'card_description',
         'Reference example agent - rolls a die with a given number of sides.',
