@@ -31,6 +31,7 @@ conversations to it like any other agent.
 | `server.py` | `AGENT_ID`/name/description strings - otherwise identical to every other agent's |
 | `runtime_config.json` | Which model/temperature/timeout each LLM stage uses - copy as-is to start |
 | `seed_config.json` | Any prompt templates or constants your skill needs, editable later from the dashboard |
+| `db.py` | **Only if your agent stores its own data.** Copy as-is - the collection name comes from `AGENT_ID`, so there's nothing to rename. Call `add_entry` / `list_entries` from your skill. Delete the file if your agent is stateless (roll_dice is - nothing here is wired into this agent). |
 
 Everything else in `agent_executor.py` - the A2A task lifecycle, the
 DataPart fast-path for agent-to-agent calls, the plain-language routing
@@ -64,9 +65,17 @@ agent in this mesh. You copy it, you don't design it.
   just by a human on WhatsApp.
 - **A live agent card.** `/.well-known/agent-card.json` is generated for
   you from `skills_catalog.py` - nothing to hand-write or keep in sync.
+- **Your own storage, if you need it.** `db.py` is a copy-as-is MongoDB
+  helper: one collection per agent (named from `AGENT_ID`), created on
+  first write, in the same database (`adiyan`) the rest of the deployment
+  uses. `add_entry` / `get_entry` / `list_entries` / `delete_entry` are
+  there; call them from your skill. Stateless agents (roll_dice) just
+  delete the file. See `mesh/scheduler/db.py` for the same pattern in
+  production.
 
 ## What's still yours to write
 
-Just the logic in `skills/roll_dice.py`, and the plain-language
-description in `skills_catalog.py` that tells the orchestrator when to
-reach for it. That's genuinely the whole job.
+Just the logic in `skills/roll_dice.py`, the plain-language description in
+`skills_catalog.py` that tells the orchestrator when to reach for it, and -
+if your agent keeps data - the calls into `db.py` from that skill. That's
+genuinely the whole job.
