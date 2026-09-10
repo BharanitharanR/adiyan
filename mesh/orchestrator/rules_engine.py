@@ -21,31 +21,64 @@ from typing import Any, Dict, Optional, Tuple
 from a2a.types import AgentSkill
 from pydantic import BaseModel, Field
 
-from mesh.lib import permissions
+from mesh.lib import config_sdk, permissions
 from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db
-from mesh.orchestrator.constants import WHATSAPP_MCP_URL
+from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL
 
 logger = logging.getLogger('RulesEngine')
 
 REGISTER_PHRASE = 'register me'
 UNREGISTER_PHRASE = 'unregister me'
 
-# Case-insensitive substring match, deliberately not anchored to the start of
-# the message - "can you check @Adiyan" and "@Adiyan what's next" both count.
-ADIYAN_MENTION = '@adiyan'
-_ADIYAN_MENTION_RE = re.compile(re.escape(ADIYAN_MENTION), re.IGNORECASE)
+# The thumb rule (2026-09-10): Adiyan responds to a message ONLY if that
+# message contains the summon phrase - every sender (owner and client
+# alike), every chat. Adiyan's own replies never contain it, so an echo of
+# a reply can never re-trigger Adiyan; and ordinary conversation in a
+# client's chat never wakes it either. register/unregister are the only
+# exceptions (their own opt-in gesture, a new client wouldn't know to
+# summon first).
+#
+# Case-insensitive substring match, deliberately not anchored to the start
+# of the message - "can you check @Adiyan" and "@Adiyan what's next" both
+# count. Dashboard-editable via config_sdk (see get_summon_phrase); the
+# constant here is only the default / the value used if Mongo is
+# unreachable.
+DEFAULT_SUMMON_PHRASE = '@adiyan'
+# Back-compat alias - existing call sites / tests referencing the old name.
+ADIYAN_MENTION = DEFAULT_SUMMON_PHRASE
 
 
+async def get_summon_phrase() -> str:
+    """The phrase a message must contain (anywhere, case-insensitive) for
+    Adiyan to respond at all. Dashboard-editable; defaults to '@adiyan'. A
+    blank configured value falls back to the default rather than meaning
+    "respond to everything" - an empty summon phrase would re-open the
+    exact ambient-reply / echo loop this gate exists to close."""
+    phrase = await config_sdk.get_constant(
+        AGENT_ID, 'summon_phrase', DEFAULT_SUMMON_PHRASE,
+        description=(
+            'Text a message must contain (anywhere, case-insensitive) for Adiyan to respond '
+            'at all - applies to every sender and every chat. "register me" / "unregister me" '
+            'still work without it. Blank falls back to the default.'
+        ),
+    )
+    return (phrase or DEFAULT_SUMMON_PHRASE).strip().lower()
+
+
+def strip_summon_phrase(text: str, phrase: str = DEFAULT_SUMMON_PHRASE) -> str:
+    """Removes every occurrence of the summon phrase before the text is
+    handed to routing/classification, so the summon itself isn't just
+    extra noise a skill classifier has to ignore. Safe to call
+    unconditionally - a no-op for text that never had it."""
+    return re.compile(re.escape(phrase), re.IGNORECASE).sub('', text).strip()
+
+
+# Back-compat alias for the pre-2026-09-10 name.
 def strip_adiyan_mention(text: str) -> str:
-    """Removes every @Adiyan mention before the text is handed to
-    routing/classification, so the mention itself isn't just extra noise a
-    skill classifier has to ignore. Safe to call unconditionally, including
-    on a registered client's own message that never had a mention to begin
-    with - a no-op in that case."""
-    return _ADIYAN_MENTION_RE.sub('', text).strip()
+    return strip_summon_phrase(text, DEFAULT_SUMMON_PHRASE)
 
 REGISTERED_REPLY = "You're registered! Ask away."
 UNREGISTERED_REPLY = 'You\'ve been unregistered. Send "register me" any time to come back.'
@@ -169,10 +202,12 @@ async def check(
     handled this message (registration, unregistration, or an add-named-
     contact admin command) - the caller should send that reply and stop,
     not route further. reply is None if the message should proceed to
-    normal routing (the owner with an eligible, @Adiyan-mentioned message,
-    or an already-registered contact's own message with no
-    register/unregister command in it) - tier is then the permission tier
-    (mesh/lib/permissions.py) to mint a token for before routing.
+    normal routing - which now requires the summon phrase (get_summon_phrase(),
+    dashboard-configurable, default '@adiyan') to be present, for BOTH the
+    owner (in their self-chat or a client's chat) AND a registered client.
+    A registered client's message with no register/unregister command and
+    no summon phrase returns (None, None): silence. tier is the permission
+    tier (mesh/lib/permissions.py) to mint a token for before routing.
 
     is_self_chat matters only for deciding whether an owner-authored message
     (is_owner(from_number) is True) should trigger at all - see the owner
@@ -202,6 +237,13 @@ async def check(
     # read, so comparing raw chat_id values directly is unreliable.
     identity_key = db.resolve_identity_key(chat_id)
 
+    # The thumb rule: no summon phrase in the message, no response - for
+    # anyone, in any chat (see this module's own header comment and the
+    # 2026-09-10 runaway-loop incident). Fetched once here; register/
+    # unregister below are the only things allowed past without it.
+    summon_phrase = await get_summon_phrase()
+    summoned = summon_phrase in text.lower()
+
     if await is_owner(from_number):
         admin_reply = await _try_add_named_contact(conn, text, cfg)
         if admin_reply is not None:
@@ -209,13 +251,12 @@ async def check(
 
         # An owner-authored message only ever triggers Adiyan in your own
         # self-chat or an already-registered client's chat - never in a
-        # conversation with someone who isn't a client - AND only when
-        # explicitly @-mentioned there too, so ordinary chatting (including
-        # with a registered client) never fires Adiyan just because you sent
-        # a message. See this function's docstring for the incident this
-        # closes.
+        # conversation with someone who isn't a client - AND only when it
+        # carries the summon phrase, so ordinary chatting (including with a
+        # registered client) never fires Adiyan just because you sent a
+        # message.
         eligible_chat = is_self_chat or db.is_whitelisted(conn, identity_key)
-        if not eligible_chat or ADIYAN_MENTION not in text.lower():
+        if not eligible_chat or not summoned:
             return None, None
         return None, 'owner'
 
@@ -233,6 +274,13 @@ async def check(
             return None, None
     if not whitelisted:
         # Silent, not a rejection reply - see check()'s docstring for why.
+        return None, None
+
+    # Registered client, real message: same thumb rule as the owner branch.
+    # Without this, every message a client sent (and every watermark-less
+    # echo of Adiyan's own reply) re-entered routing and could be answered -
+    # the exact gap behind the 2026-09-10 loop in a client chat.
+    if not summoned:
         return None, None
 
     tier = db.get_metadata(conn, identity_key).get('permission_type') or permissions.default_client_tier()

@@ -516,12 +516,13 @@ async def run(
         # reaches send_message at all, unlike every other branch below.
         return {'chat_id': chat_id, 'reply': None, 'delivered': False}
 
-    # Strip any @Adiyan mention before routing - it's how an owner message
-    # earns eligibility (see rules_engine.check()), not part of the actual
-    # request, and left in it's just noise the skill classifier has to
-    # ignore. No-op for text that never had a mention (every registered
-    # client's own message, most owner messages).
-    text = rules_engine.strip_adiyan_mention(text)
+    # Strip the summon phrase before routing - every message that reaches
+    # here carried it (that's now the thumb rule for owner and client
+    # alike, see rules_engine.check()), and it's a signal about whether to
+    # respond, not part of the actual request. Uses the same dashboard-
+    # configured phrase the gate checked.
+    summon_phrase = await rules_engine.get_summon_phrase()
+    text = rules_engine.strip_summon_phrase(text, summon_phrase)
 
     # POC: a sender can opt this one message into compute_share's
     # peer-sharing network (mesh/lib/agent_sdk.py's ask() `community`

@@ -104,6 +104,20 @@ class OpenWAAdapter:
 
         data = webhook_data.get('data', {})
 
+        # Self-echo guard, checked on EVERY inbound event regardless of type.
+        # Confirmed live (2026-09-10 runaway loop in a client chat): a
+        # watermarked reply Adiyan sent came back projected as
+        # 'message.received', not 'message.sent', so a check gated on
+        # 'message.sent' alone never ran - the reply re-entered routing as
+        # fresh input and looped ~1/min for hours. The watermark
+        # (mesh/lib/utilities/watermark.py, dashboard-editable via config_sdk)
+        # is the one reliable "Adiyan wrote this" signal that survives
+        # whichever event WhatsApp's multi-device sync happens to deliver it
+        # on, so it is the check that has to be unconditional.
+        if await watermark.has_watermark(data.get('body', '')):
+            logger.debug("Ignoring a message that carries our own watermark (self-echo)")
+            return None
+
         if event_type == 'message.sent':
             if not data.get('fromMe'):
                 # Should be impossible (message.sent only fires for fromMe
@@ -111,9 +125,6 @@ class OpenWAAdapter:
                 # condition the echo-loop guard depends on, so it's checked
                 # explicitly rather than assumed.
                 logger.debug("Ignoring message.sent with fromMe=False (unexpected)")
-                return None
-            if await watermark.has_watermark(data.get('body', '')):
-                logger.debug("Ignoring message.sent that carries our own watermark (self-echo)")
                 return None
 
         # Only 1:1 conversations - not channel/newsletter broadcasts, status

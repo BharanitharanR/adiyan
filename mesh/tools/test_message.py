@@ -55,11 +55,11 @@ async def _resolve_own_phone() -> Optional[str]:
 
 async def main(text: str, chat_id: str, contact_name: str, is_self_chat: bool) -> None:
     from_number = await _resolve_own_phone() if is_self_chat else None
-    # An owner-authored message only ever triggers Adiyan when explicitly
-    # @-mentioned (rules_engine.check()'s own eligibility gate) - without
-    # this, --self-chat still silently returns (None, None), same as a
-    # missing from_number does.
-    if is_self_chat and '@adiyan' not in text.lower():
+    # Adiyan responds to a message ONLY if it carries the summon phrase now -
+    # owner or client, any chat (rules_engine.check()'s thumb rule). Without
+    # this prepend, any test message silently returns (None, None). Uses the
+    # hardcoded default rather than reading config here - fine for a dev tool.
+    if '@adiyan' not in text.lower():
         text = f'@Adiyan {text}'
     print(f'Sending to Orchestrator: chat_id={chat_id!r} text={text!r} is_self_chat={is_self_chat} from_number={from_number!r}')
     try:
