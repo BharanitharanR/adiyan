@@ -1,0 +1,18 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1080, "h": 1350 },
+    { "file": "Slide02.dc.html", "x": 1200, "y": 0, "w": 1080, "h": 1350 },
+    { "file": "Slide03.dc.html", "x": 2400, "y": 0, "w": 1080, "h": 1350 },
+    { "file": "Slide04.dc.html", "x": 3600, "y": 0, "w": 1080, "h": 1350 },
+    { "file": "Slide05.dc.html", "x": 0, "y": 1510, "w": 1080, "h": 1350 },
+    { "file": "Slide06.dc.html", "x": 1200, "y": 1510, "w": 1080, "h": 1350 },
+    { "file": "Slide07.dc.html", "x": 2400, "y": 1510, "w": 1080, "h": 1350 },
+    { "file": "Slide08.dc.html", "x": 3600, "y": 1510, "w": 1080, "h": 1350 },
+    { "file": "Slide09.dc.html", "x": 0, "y": 3020, "w": 1080, "h": 1350 },
+    { "file": "Slide10.dc.html", "x": 1200, "y": 3020, "w": 1080, "h": 1350 },
+    { "file": "Slide11.dc.html", "x": 2400, "y": 3020, "w": 1080, "h": 1350 },
+    { "file": "Slide12.dc.html", "x": 3600, "y": 3020, "w": 1080, "h": 1350 },
+    { "file": "Slide13.dc.html", "x": 0, "y": 4530, "w": 1080, "h": 1350 }
+  ],
+  "launch": { "view": "focused", "file": "Main.dc.html" }
+}
