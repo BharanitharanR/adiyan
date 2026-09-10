@@ -2,8 +2,22 @@
 
 A real, working agent that does almost nothing (rolls a die), kept
 deliberately trivial so what's boilerplate and what's actually new per
-agent is obvious at a glance. Copy this directory, rename `example_agent`
-and `roll_dice`, and you have a second real agent in the mesh.
+agent is obvious at a glance.
+
+**To make a new agent, don't `cp -r` this - run the generator:**
+
+```bash
+python -m mesh.tools.new_agent <agent_id>
+```
+
+It copies this directory, asks a handful of questions (port, display
+name, skill id + description + examples, the fields the skill extracts,
+whether you want a Mongo collection), and rewrites every field that has
+to change - imports, `AGENT_ID`, `PORT`, the executor class, the skill
+id in all three places it appears, the extraction schema, the catalog.
+A raw copy leaves stale `mesh.example_agent` imports and a mismatched
+skill id; the generator doesn't. The rest of this file explains what
+each generated file is, so you know what you're editing afterward.
 
 ## Run it
 
