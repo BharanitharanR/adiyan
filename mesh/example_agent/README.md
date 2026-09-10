@@ -36,20 +36,28 @@ conversations to it like any other agent.
 
 ## Getting it started automatically
 
-You do **not** edit `mesh/start_all.sh`. On startup this agent's `server.py`
-calls `config_sdk.register_runnable(AGENT_ID, module=f'mesh.{AGENT_ID}.server',
-port=port)`, which writes a row into the `run_the_agent` collection. From
-then on, every `mesh/start_all.sh` run reads that collection (after its own
-hardcoded core mesh is up) and launches this agent too.
+You do **not** edit `mesh/start_all.sh`, and you do **not** have to run the
+agent by hand first. After its hardcoded core mesh is up, `start_all.sh`
+runs `mesh/tools/runnable_agents.py`, which:
 
-So the flow for a new agent is: run it once by hand (the command above),
-which registers it, and it's part of the mesh from the next `start_all.sh`
-onward. The module path is a convention - `mesh.<AGENT_ID>.server` - so name
-your agent's directory to match its `AGENT_ID`.
+1. Scans every `mesh/<dir>/constants.py` for `AGENT_ID` + `PORT` (a static
+   parse - it never imports or runs the agent), skips the core components
+   and the scaffold, and upserts a row per agent into the `run_the_agent`
+   collection.
+2. Prints every enabled row, which `start_all.sh` then launches.
 
-To stop `start_all.sh` launching it without deleting the row, set
-`enabled: false` on it in the `run_the_agent` collection (re-running the
-agent won't flip that back).
+So the flow is: create the directory (`python -m mesh.tools.new_agent`),
+and it starts on the next `mesh/start_all.sh`. The module path is a
+convention - `mesh.<AGENT_ID>.server` - so name your agent's directory to
+match its `AGENT_ID`.
+
+`server.py` also calls `config_sdk.register_runnable(...)` at startup as a
+backup - it covers an agent whose `PORT` isn't a plain literal (an env-var
+default), which the static scan skips.
+
+To stop `start_all.sh` launching an agent without deleting the directory,
+set `enabled: false` on its row in `run_the_agent` (neither the scan nor
+the agent's own startup flips that back).
 
 ## The files, and what's actually agent-specific
 
