@@ -1,8 +1,20 @@
 """
 Scheduler Agent's own domain data - jobs, keyed by id, with the embedding
-used for dedup matching stored alongside each row. This is state.db (see
-mesh/lib/paths.py's state_db_path) - fixed relationships, not A2A task
-bookkeeping (that's tasks.db, a separate file/concern entirely).
+used for dedup matching stored alongside each document.
+
+Storage: MongoDB (collection `scheduler_jobs` in the `adiyan` database),
+not the old SQLite state.db. Ported 2026-09-10 - see the runaway '* * * * *'
+incident; also lets an operator inspect/repair jobs with the same Mongo
+tooling the rest of the deployment already uses. The A2A task lifecycle
+store (tasks.db) is a separate concern and stays on SQLite via the a2a SDK.
+
+Function signatures still take `conn` as the first argument - it is the
+Mongo collection handle returned by connect(), passed through unchanged so
+existing call sites (`conn = db.connect(...)`, `db.create_job(conn, ...)`)
+did not all have to change in the port. The functions remain synchronous
+(pymongo's sync client): the jobs collection is tiny - a handful of
+recurring routines - so a blocking call from an async handler costs
+nothing measurable, same as the old sqlite3 calls did.
 
 Dedup approach: cosine similarity over embeddings (0.72 floor, carried over
 from the old codebase's services/routine_store.py, still worth re-tuning
@@ -10,38 +22,45 @@ from real usage) AND an exact resolved_schedule match - see
 find_similar_job()'s own docstring for why schedule has to be part of the
 check too, not just description similarity.
 """
-import json
-import sqlite3
+import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from pymongo import MongoClient
+from pymongo.collection import Collection
 
 SIMILARITY_FLOOR = 0.72
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL,
-    target TEXT NOT NULL,
-    resolved_schedule TEXT NOT NULL,
-    next_run_at TEXT NOT NULL,
-    expects_response INTEGER NOT NULL DEFAULT 0,
-    response_window_minutes INTEGER,
-    embedding TEXT NOT NULL,
-    created_at TEXT NOT NULL
-)
-"""
+MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
+MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
+COLLECTION_NAME = 'scheduler_jobs'
+
+_client: Optional[MongoClient] = None
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute(SCHEMA)
-    return conn
+def connect(_state_db_path: Any = None) -> Collection:
+    """Returns the `scheduler_jobs` collection. The argument is ignored -
+    kept so existing call sites that pass state_db_path(AGENT_ID) don't all
+    have to change in the sqlite->mongo move. The client is created once
+    and reused."""
+    global _client
+    if _client is None:
+        _client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
+    return _client[MONGO_DB_NAME][COLLECTION_NAME]
+
+
+def _doc_to_job(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Mongo `_id` -> `id`, so callers keep reading `job['id']` exactly as
+    they did with the sqlite row. `expects_response` comes back as a real
+    bool (sqlite stored 0/1); everything else is stored in its final shape."""
+    if doc is None:
+        return None
+    job = dict(doc)
+    job['id'] = job.pop('_id')
+    job['expects_response'] = bool(job.get('expects_response', False))
+    return job
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
@@ -50,7 +69,7 @@ def _cosine(a: List[float], b: List[float]) -> float:
     return float(np.dot(a_arr, b_arr) / denom) if denom else 0.0
 
 
-def find_similar_job(conn: sqlite3.Connection, embedding: List[float], resolved_schedule: str) -> Optional[Dict[str, Any]]:
+def find_similar_job(conn: Collection, embedding: List[float], resolved_schedule: str) -> Optional[Dict[str, Any]]:
     """Returns the closest existing job at/above SIMILARITY_FLOOR that also
     runs on the exact same schedule, or None.
 
@@ -63,20 +82,20 @@ def find_similar_job(conn: sqlite3.Connection, embedding: List[float], resolved_
     only what it's about, so schedule was never actually being checked.
     Requiring an exact resolved_schedule match alongside the similarity
     floor is what actually captures "this is a repeat of an existing job,"
-    not just "these two descriptions are topically similar." Only scans
-    rows that already match on schedule - cheap early filter before the
-    embedding comparison, not just a post-hoc check."""
-    best_row, best_score = None, 0.0
-    for row in conn.execute('SELECT * FROM jobs WHERE resolved_schedule = ?', (resolved_schedule,)):
-        score = _cosine(embedding, json.loads(row['embedding']))
+    not just "these two descriptions are topically similar." The Mongo
+    query is the cheap early filter on schedule; the cosine comparison only
+    runs over that already-narrowed set."""
+    best_doc, best_score = None, 0.0
+    for doc in conn.find({'resolved_schedule': resolved_schedule}):
+        score = _cosine(embedding, doc['embedding'])
         if score > best_score:
-            best_row, best_score = row, score
-    if best_row is not None and best_score >= SIMILARITY_FLOOR:
-        return dict(best_row)
+            best_doc, best_score = doc, score
+    if best_doc is not None and best_score >= SIMILARITY_FLOOR:
+        return _doc_to_job(best_doc)
     return None
 
 
-def find_job_by_name(conn: sqlite3.Connection, embedding: List[float]) -> Optional[Dict[str, Any]]:
+def find_job_by_name(conn: Collection, embedding: List[float]) -> Optional[Dict[str, Any]]:
     """Returns the closest existing job at/above SIMILARITY_FLOOR, searched
     across ALL jobs regardless of schedule.
 
@@ -85,23 +104,19 @@ def find_job_by_name(conn: sqlite3.Connection, embedding: List[float]) -> Option
     schedule in advance, so there's nothing to pre-filter on. That's the
     opposite situation from find_similar_job()'s dedup check, which already
     has a target resolved_schedule in hand and uses it to narrow the
-    candidate set before comparing embeddings. Reusing find_similar_job()
-    here doesn't just need a schedule argument threaded through - even a
-    correct one would wrongly exclude every job on a different schedule,
-    breaking lookup for the exact jobs a caller is most likely searching by
-    name for."""
-    best_row, best_score = None, 0.0
-    for row in conn.execute('SELECT * FROM jobs'):
-        score = _cosine(embedding, json.loads(row['embedding']))
+    candidate set before comparing embeddings."""
+    best_doc, best_score = None, 0.0
+    for doc in conn.find({}):
+        score = _cosine(embedding, doc['embedding'])
         if score > best_score:
-            best_row, best_score = row, score
-    if best_row is not None and best_score >= SIMILARITY_FLOOR:
-        return dict(best_row)
+            best_doc, best_score = doc, score
+    if best_doc is not None and best_score >= SIMILARITY_FLOOR:
+        return _doc_to_job(best_doc)
     return None
 
 
 def create_job(
-    conn: sqlite3.Connection,
+    conn: Collection,
     name: str,
     description: str,
     target: str,
@@ -112,29 +127,36 @@ def create_job(
     response_window_minutes: Optional[int] = None,
 ) -> Dict[str, Any]:
     job_id = str(uuid.uuid4())
-    conn.execute(
-        'INSERT INTO jobs (id, name, description, target, resolved_schedule, next_run_at, '
-        'expects_response, response_window_minutes, embedding, created_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (job_id, name, description, target, resolved_schedule, next_run_at,
-         int(expects_response), response_window_minutes, json.dumps(embedding),
-         datetime.now(timezone.utc).isoformat()),
-    )
-    conn.commit()
+    conn.insert_one({
+        '_id': job_id,
+        'name': name,
+        'description': description,
+        'target': target,
+        'resolved_schedule': resolved_schedule,
+        'next_run_at': next_run_at,
+        'expects_response': bool(expects_response),
+        'response_window_minutes': response_window_minutes,
+        'embedding': list(embedding),
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
     return get_job(conn, job_id)
 
 
-def get_job(conn: sqlite3.Connection, job_id: str) -> Optional[Dict[str, Any]]:
-    row = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
-    return dict(row) if row else None
+def get_job(conn: Collection, job_id: str) -> Optional[Dict[str, Any]]:
+    return _doc_to_job(conn.find_one({'_id': job_id}))
 
 
-def update_next_run(conn: sqlite3.Connection, job_id: str, next_run_at: str) -> None:
-    conn.execute('UPDATE jobs SET next_run_at = ? WHERE id = ?', (next_run_at, job_id))
-    conn.commit()
+def list_all(conn: Collection) -> List[Dict[str, Any]]:
+    """Every job, id-normalized. list_jobs.py used to read this with a raw
+    `SELECT * FROM jobs`; that lives here now that the store is Mongo."""
+    return [_doc_to_job(doc) for doc in conn.find({})]
 
 
-def find_overdue_jobs(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+def update_next_run(conn: Collection, job_id: str, next_run_at: str) -> None:
+    conn.update_one({'_id': job_id}, {'$set': {'next_run_at': next_run_at}})
+
+
+def find_overdue_jobs(conn: Collection) -> List[Dict[str, Any]]:
     """Every job whose next_run_at has already passed - checked once at
     Scheduler Agent's own startup (see mesh/scheduler/server.py) to catch
     anything cron_trigger's own misfire handling silently dropped while
@@ -143,16 +165,15 @@ def find_overdue_jobs(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     own next-fire computation is always relative to 'now' at the moment it
     fires, so catching up once here - not once per missed occurrence -
     is enough to get it current again; this isn't a queue of backlogged
-    reminders to replay."""
+    reminders to replay. next_run_at is an ISO-8601 UTC string, so a plain
+    lexicographic '$lt' comparison is also a chronological one."""
     now = datetime.now(timezone.utc).isoformat()
-    rows = conn.execute('SELECT * FROM jobs WHERE next_run_at < ?', (now,)).fetchall()
-    return [dict(row) for row in rows]
+    return [_doc_to_job(doc) for doc in conn.find({'next_run_at': {'$lt': now}})]
 
 
-def delete_job(conn: sqlite3.Connection, job_id: str) -> None:
-    """Only removes this agent's own domain row. The matching cron_trigger
-    registration is a separate store entirely - callers must also cancel
-    that themselves (see mesh/scheduler/skills/delete_job.py), or the job
-    keeps firing against a row that no longer exists."""
-    conn.execute('DELETE FROM jobs WHERE id = ?', (job_id,))
-    conn.commit()
+def delete_job(conn: Collection, job_id: str) -> None:
+    """Only removes this agent's own domain document. The matching
+    cron_trigger registration is a separate store entirely - callers must
+    also cancel that themselves (see mesh/scheduler/skills/delete_job.py),
+    or the job keeps firing against a document that no longer exists."""
+    conn.delete_one({'_id': job_id})

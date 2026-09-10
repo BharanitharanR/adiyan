@@ -15,8 +15,7 @@ _INTERNAL_FIELDS = {'embedding'}
 
 def run(target: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
-    rows = conn.execute('SELECT * FROM jobs').fetchall()
-    jobs = [{k: v for k, v in dict(row).items() if k not in _INTERNAL_FIELDS} for row in rows]
+    jobs = [{k: v for k, v in job.items() if k not in _INTERNAL_FIELDS} for job in db.list_all(conn)]
     if target:
         jobs = [j for j in jobs if j['target'] == target]
         # No fallback to a hardcoded 'self' here - zero matches for a real,

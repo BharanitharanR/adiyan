@@ -4,8 +4,9 @@ name_or_phrase via the same embedding infrastructure schedule_job.py uses
 for dedup, here used for lookup instead. Extracted out of run_routine.py so
 delete_job doesn't duplicate the exact same logic a second time.
 """
-import sqlite3
 from typing import Any, Dict, Optional
+
+from pymongo.collection import Collection
 
 from mesh.scheduler import db
 from mesh.scheduler.skills.schedule_job import _embed
@@ -17,7 +18,7 @@ class JobNotFoundError(Exception):
 
 
 async def resolve_job(
-    conn: sqlite3.Connection,
+    conn: Collection,
     job_id: Optional[str],
     name_or_phrase: Optional[str],
 ) -> Dict[str, Any]:

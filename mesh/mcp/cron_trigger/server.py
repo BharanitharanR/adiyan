@@ -42,17 +42,18 @@ Requires: pip install "mcp[cli]" apscheduler sqlalchemy httpx
 """
 import asyncio
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict
 
 from apscheduler.jobstores.base import JobLookupError
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.mongodb import MongoDBJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from mcp.server.fastmcp import Context, FastMCP
+from pymongo import MongoClient
 
 from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
-from mesh.lib.paths import mcp_state_db_path
 
 SERVER_NAME = 'cron_trigger'
 HOST = '127.0.0.1'
@@ -74,8 +75,19 @@ logger = logging.getLogger(SERVER_NAME)
 
 mcp = FastMCP(SERVER_NAME, host=HOST, port=PORT)
 
+# APScheduler 3.x jobstores are synchronous - MongoDBJobStore wants a plain
+# pymongo MongoClient, not the async one. Same Mongo server / database the
+# rest of the deployment uses (ADIYAN_MONGO_URL); collection `cron_trigger_jobs`
+# in the `adiyan` database. Ported from SQLAlchemyJobStore(sqlite) 2026-09-10 -
+# see mesh/scheduler/db.py's header for the why.
+_MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
+_MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
+_mongo_client = MongoClient(_MONGO_URL, serverSelectionTimeoutMS=3000)
+
 _scheduler = AsyncIOScheduler(
-    jobstores={'default': SQLAlchemyJobStore(url=f'sqlite:///{mcp_state_db_path(SERVER_NAME)}')}
+    jobstores={'default': MongoDBJobStore(
+        database=_MONGO_DB_NAME, collection='cron_trigger_jobs', client=_mongo_client,
+    )}
 )
 
 
