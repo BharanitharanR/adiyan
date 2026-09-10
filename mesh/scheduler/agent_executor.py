@@ -177,7 +177,7 @@ class SchedulerAgentExecutor(AgentExecutor):
 
         try:
             result = await self._dispatch(skill_id, params)
-        except (schedule_job.TargetNotResolvableError, JobNotFoundError) as e:
+        except (schedule_job.TargetNotResolvableError, schedule_job.ScheduleTooFrequentError, JobNotFoundError) as e:
             await updater.failed(new_text_message(str(e)))
             return
         except NotImplementedError as e:

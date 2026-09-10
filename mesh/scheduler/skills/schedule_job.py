@@ -59,6 +59,37 @@ class TargetNotResolvableError(Exception):
         super().__init__(f"Cannot resolve target '{target}' - only 'self' is currently supported.")
 
 
+class ScheduleTooFrequentError(Exception):
+    """The resolved cron would fire more than once an hour. Code-side
+    backstop for resolve_schedule_prompt_template's own once-per-hour rule -
+    a model that ignores the prompt (2026-09-10: 'starting now' resolved to
+    '* * * * *', every minute, and spammed the owner's chat for hours)
+    stops here instead of at cron_trigger.register_trigger."""
+    def __init__(self, cron_expression: str):
+        self.cron_expression = cron_expression
+        super().__init__(
+            f"Refusing to schedule {cron_expression!r} - it fires more than once an hour. "
+            "The minute field must be a single literal 0-59."
+        )
+
+
+def _reject_if_subhourly(cron_expression: str) -> None:
+    """Raise ScheduleTooFrequentError unless the minute field is one fixed
+    value. '*', a step ('*/5'), a list ('0,30') or a range ('0-15') in the
+    minute field all mean 'more than once an hour' - none of which any
+    legitimate reminder needs, and all of which turn a bad parse into a
+    flood."""
+    fields = cron_expression.split()
+    minute = fields[0] if fields else '*'
+    if minute == '*' or any(c in minute for c in ('/', ',', '-')):
+        raise ScheduleTooFrequentError(cron_expression)
+    try:
+        if not (0 <= int(minute) <= 59):
+            raise ScheduleTooFrequentError(cron_expression)
+    except ValueError:
+        raise ScheduleTooFrequentError(cron_expression)
+
+
 async def _resolve_schedule(description: str) -> str:
     """description -> a real cron expression, via its own LLM stage. Mirrors
     the old codebase's services/schedule_parser.py rather than folding this
@@ -107,6 +138,7 @@ async def run(
     # db.find_similar_job()'s own docstring for why "same schedule" has to
     # be part of what "duplicate" means, not just description similarity.
     cron_expression = await _resolve_schedule(description)
+    _reject_if_subhourly(cron_expression)
     next_run_at = _next_run_at(cron_expression)
 
     existing = db.find_similar_job(conn, embedding, cron_expression)
