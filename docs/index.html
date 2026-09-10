@@ -221,6 +221,16 @@ h1,h2,h3{
   text-align:center;
   line-height:1.5;
 }
+.video-embed{
+  width:min(100%,300px);
+  margin-inline:auto;
+  aspect-ratio:9/16;
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:var(--shadow-soft);
+  background:var(--paper-2);
+}
+.video-embed iframe{ width:100%; height:100%; display:block; border:0; }
 .thread{
   display:flex;
   flex-direction:column;
@@ -653,6 +663,17 @@ h1,h2,h3{
       <div class="thread" id="hero-thread">
         <div class="bubble bubble--out">Register me to make my life better</div>
       </div>
+    </div>
+  </div>
+
+  <div class="grid-split reverse" style="margin-top:.4rem;align-items:center;">
+    <div>
+      <p class="eyebrow">Hear it from me</p>
+      <h2 class="h2" style="font-size:clamp(1.6rem,3vw,2.2rem);">What Adiyan is, <em>in 60 seconds.</em></h2>
+      <p class="prose" style="margin-top:.8rem;">A quick walkthrough of what Adiyan actually is and why I built it this way.</p>
+    </div>
+    <div class="video-embed">
+      <iframe src="https://www.youtube.com/embed/ukA9zg3NEjo" title="What is Adiyan" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
     </div>
   </div>
 
