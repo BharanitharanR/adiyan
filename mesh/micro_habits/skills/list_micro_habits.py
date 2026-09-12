@@ -24,7 +24,10 @@ async def run(limit: int = 20) -> Dict[str, Any]:
         "slipping, any pattern worth noting. No pep talk, no invented detail.",
         description="How list_micro_habits summarises the entries. Needs an {entries} placeholder.",
     )
-    interpretation = await _agent.ask(
-        template.format(entries=lines), stage="interpret",
-    )
+    # No memory_context handling here anymore - mesh/lib/agent_sdk.py's
+    # ask() prepends the caller's known facts to this prompt automatically
+    # (Phase 5's platform wiring). This skill doesn't know that happens,
+    # and doesn't need to.
+    prompt = template.format(entries=lines)
+    interpretation = await _agent.ask(prompt, stage="interpret")
     return {"count": len(entries), "entries": entries, "interpretation": interpretation}

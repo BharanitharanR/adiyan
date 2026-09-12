@@ -1,0 +1,204 @@
+<title>The Best Outcome</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --accent:#0F6E56; --accent-soft:#E1F5EE;
+  --without:#993C1D; --without-soft:#FAECE7;
+  --with:#0F6E56; --with-soft:#E1F5EE;
+  --agent:#378ADD; --agent-soft:#E6F1FB;
+  --bubble-user:#EFEEE7; --bubble-user-ink:#3A3C36;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --accent:#5DCAA5; --accent-soft:#0F6E56;
+    --without:#F0997B; --without-soft:#4A1B0C;
+    --with:#5DCAA5; --with-soft:#085041;
+    --agent:#85B7EB; --agent-soft:#0C447C;
+    --bubble-user:#2A2C27; --bubble-user-ink:#C9CBC2;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --accent:#5DCAA5; --accent-soft:#0F6E56;
+  --without:#F0997B; --without-soft:#4A1B0C;
+  --with:#5DCAA5; --with-soft:#085041;
+  --agent:#85B7EB; --agent-soft:#0C447C;
+  --bubble-user:#2A2C27; --bubble-user-ink:#C9CBC2;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:960px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
+h1{font-size:1.7rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
+.lede{color:var(--ink-soft);font-size:.97rem;line-height:1.65;max-width:66ch;margin:0 0 1.8rem;}
+
+.tabs{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.4rem;}
+.tab{
+  font-family:var(--sans);font-size:.85rem;font-weight:500;color:var(--ink-soft);background:var(--panel);
+  border:1.5px solid var(--line);border-radius:20px;padding:.5rem 1rem;cursor:pointer;
+}
+.tab.active{border-color:var(--accent);color:var(--accent);border-width:2px;}
+
+.fact-banner{
+  display:flex;align-items:center;gap:.8rem;padding:.85rem 1.1rem;border-radius:10px;
+  background:var(--accent-soft);border:1.5px solid var(--accent);margin-bottom:1.4rem;font-size:.9rem;
+}
+.fact-banner .tag{
+  font-family:var(--mono);font-size:.65rem;letter-spacing:.04em;text-transform:uppercase;font-weight:600;
+  background:var(--accent);color:var(--panel);padding:.25rem .55rem;border-radius:5px;flex-shrink:0;
+}
+
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.4rem;}
+@media (max-width:720px){.compare{grid-template-columns:1fr;}}
+.col{border-radius:12px;padding:1.1rem;border:1.5px solid var(--line);background:var(--panel);}
+.col.without{border-color:var(--without);}
+.col.with{border-color:var(--with);border-width:2px;}
+.col-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;}
+.col-title{font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;font-weight:600;}
+.col.without .col-title{color:var(--without);}
+.col.with .col-title{color:var(--with);}
+.col-icon{font-family:var(--mono);font-size:.7rem;padding:.2rem .5rem;border-radius:5px;}
+.col.without .col-icon{background:var(--without-soft);color:var(--without);}
+.col.with .col-icon{background:var(--with-soft);color:var(--with);}
+
+.thread{display:flex;flex-direction:column;gap:.6rem;}
+.msg{max-width:92%;font-size:.86rem;line-height:1.5;padding:.6rem .8rem;border-radius:10px;}
+.msg.user{background:var(--bubble-user);color:var(--bubble-user-ink);align-self:flex-end;}
+.msg.agent{background:var(--agent-soft);color:var(--ink);align-self:flex-start;}
+.msg.agent .who{display:block;font-family:var(--mono);font-size:.66rem;color:var(--agent);margin-bottom:.25rem;font-weight:600;}
+.msg .miss{font-family:var(--mono);font-size:.7rem;color:var(--without);display:block;margin-top:.35rem;}
+.msg .hit{font-family:var(--mono);font-size:.7rem;color:var(--with);display:block;margin-top:.35rem;}
+
+.synthesis{
+  background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:1.1rem 1.2rem;
+  font-size:.9rem;line-height:1.6;
+}
+.synthesis .lbl{font-family:var(--mono);font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:.5rem;display:block;}
+
+.northstar{
+  margin-top:2rem;padding:1.2rem 1.3rem;border-radius:12px;background:var(--accent-soft);border:1.5px solid var(--accent);
+  font-size:.92rem;line-height:1.65;
+}
+.northstar b{color:var(--accent);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; universal memory &middot; best-case outcomes</p>
+  <h1>What "say it once, known everywhere" actually looks like</h1>
+  <p class="lede">Four real scenarios across Adiyan's real agents. Each one is a fact stated once, in one conversation - then the same question asked of a different agent, with and without shared memory. Click a scenario to see the exchange.</p>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="scenario"></div>
+
+  <div class="northstar">
+    <b>The pattern across all four:</b> the fact is never restated and never contradicted. Different agent, same truth, permission-checked for who's asking. That's the actual north star - not "agents know more," but "agents can't quietly know less than what you already told Adiyan."
+  </div>
+</div>
+
+<script>
+const scenarios = [
+  {
+    tab: 'Marathon training',
+    fact: 'Said once to Analysis Agent, in ordinary chat: "Training for the Mumbai marathon in October."',
+    agentLabel: 'micro_habits',
+    userMsg: '@Adiyan what\'s my micro habit pattern this week',
+    without: [
+      {who: 'micro_habits', text: 'Logged 4 entries this week: "ran 5k," "ran 5k," "stretched," "ran 8k." Consistent activity, no clear pattern noted.', tag: {kind:'miss', text: 'Doesn\'t know why the running increased, or that it\'s building toward anything'}},
+    ],
+    withMem: [
+      {who: 'micro_habits', text: 'Logged 4 entries this week, all running-related and trending up (5k → 5k → 8k) - consistent with marathon training in October. Worth adding a rest day before the next long run.', tag: {kind:'hit', text: 'fetch_context surfaced the marathon fact recorded weeks earlier in an unrelated conversation'}},
+    ],
+    synthesis: 'The entries themselves didn\'t change. What changed is whether the interpretation step had the one fact that turns "4 running logs" into "on track for marathon training, so build in recovery." That fact was never said to micro_habits - it doesn\'t need to be.',
+  },
+  {
+    tab: 'Injury, not a lapse',
+    fact: 'Said once, in a totally different context: "Twisted my ankle yesterday, doctor said no running for 10 days."',
+    agentLabel: 'scheduler + micro_habits',
+    userMsg: '(3 days pass with no running logged) @Adiyan any reminders due today?',
+    without: [
+      {who: 'scheduler', text: 'You haven\'t logged a run in 3 days - want me to send a nudge reminder?', tag: {kind:'miss', text: 'Reads silence as a lapse, because it has no idea an injury happened'}},
+    ],
+    withMem: [
+      {who: 'scheduler', text: 'No running reminders needed - you mentioned resting an ankle injury through the 19th. I\'ll hold off until then.', tag: {kind:'hit', text: 'The injury fact, recorded elsewhere, correctly explains the gap instead of flagging it'}},
+    ],
+    synthesis: 'This is the case that matters most in practice: memory isn\'t just "know more nice things," it\'s "don\'t act on stale assumptions." A reminder system that doesn\'t know about the injury actively produces a worse interaction than one with no memory at all - it nags you about something you already explained.',
+  },
+  {
+    tab: 'Dietary preference',
+    fact: 'Said once, weeks ago, to Orchestrator directly: "I\'m vegetarian, and I\'m trying to eat cleaner this month."',
+    agentLabel: 'micro_habits (interpretation) + journal',
+    userMsg: '@Adiyan I logged "cooked dinner" - any thoughts?',
+    without: [
+      {who: 'micro_habits', text: 'Logged: "cooked dinner." No pattern data yet for cooking habits.', tag: {kind:'miss', text: 'Generic acknowledgment - nothing to connect it to'}},
+    ],
+    withMem: [
+      {who: 'micro_habits', text: 'Cooking dinner at home fits the "eating cleaner" goal you mentioned this month - a good sign alongside the vegetarian shift. Worth logging what you made, to see if it stays varied.', tag: {kind:'hit', text: 'Two unrelated facts (vegetarian + "eating cleaner this month") both reached the interpretation, from two different past conversations'}},
+    ],
+    synthesis: 'Neither fact was about cooking. Both became relevant only because they were retrievable at the moment a related message arrived - which is the actual argument for embedding-backed retrieval over "just remember everything and hope": the right two facts surfaced out of everything ever said, not all of it.',
+  },
+  {
+    tab: 'Confidential note, correct audience',
+    fact: 'The fitness-coach scenario: the owner tells Adiyan "Priya B still hasn\'t paid September fees" - about Priya B, never meant for her.',
+    agentLabel: 'orchestrator, replying to two different people',
+    userMsg: 'Priya B asks Adiyan: "Anything I should know before my session?"  /  The owner (coach) separately asks: "Anything I should know about Priya B?"',
+    without: [
+      {who: 'Adiyan → Priya B', text: 'Nothing on file for your session today.', tag: {kind:'miss', text: 'Correct by accident - only because nothing was ever wired to check, not because anything enforced it'}},
+      {who: 'Adiyan → Coach', text: 'Nothing specific noted about Priya B.', tag: {kind:'miss', text: 'The fee note isn\'t reachable by anyone yet - a real memory gap, not a safe default'}},
+    ],
+    withMem: [
+      {who: 'Adiyan → Priya B', text: 'Nothing on file for your session today.', tag: {kind:'hit', text: 'Same answer - but now because visible_to structurally excludes her, not by omission'}},
+      {who: 'Adiyan → Coach', text: 'One thing on file: Priya B hasn\'t paid September fees yet.', tag: {kind:'hit', text: 'The coach gets the fact; Priya B never can, by the same graph edge'}},
+    ],
+    synthesis: 'This is the scenario the whole tiered design exists for. "Universal" memory that leaked this to Priya B would be a worse outcome than no memory at all. The best outcome isn\'t maximum information flow - it\'s the coach knowing what they told Adiyan, and nobody else learning it by accident.',
+  },
+];
+
+const tabs = document.getElementById('tabs');
+const box = document.getElementById('scenario');
+let active = 0;
+
+scenarios.forEach((s, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'tab';
+  b.textContent = s.tab;
+  b.addEventListener('click', () => { active = i; render(); });
+  tabs.appendChild(b);
+});
+
+function bubble(m, isUser){
+  if(isUser) return `<div class="msg user">${m}</div>`;
+  const tagHtml = m.tag ? `<span class="${m.tag.kind}">${m.tag.kind === 'miss' ? '✕ ' : '✓ '}${m.tag.text}</span>` : '';
+  return `<div class="msg agent"><span class="who">${m.who}</span>${m.text}${tagHtml}</div>`;
+}
+
+function render(){
+  document.querySelectorAll('.tab').forEach((b,i) => b.classList.toggle('active', i === active));
+  const s = scenarios[active];
+  box.innerHTML = `
+    <div class="fact-banner"><span class="tag">Fact stated once</span><span>${s.fact}</span></div>
+    <div class="compare">
+      <div class="col without">
+        <div class="col-head"><span class="col-title">Without shared memory</span><span class="col-icon">today</span></div>
+        <div class="thread">
+          ${bubble(s.userMsg, true)}
+          ${s.without.map(m => bubble(m, false)).join('')}
+        </div>
+      </div>
+      <div class="col with">
+        <div class="col-head"><span class="col-title">With shared memory</span><span class="col-icon">north star</span></div>
+        <div class="thread">
+          ${bubble(s.userMsg, true)}
+          ${s.withMem.map(m => bubble(m, false)).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="synthesis"><span class="lbl">Why this is the outcome that matters</span>${s.synthesis}</div>
+  `;
+}
+
+render();
+</script>

@@ -18,8 +18,8 @@
 # Start is idempotent - a component already running is left alone, not
 # restarted. Does NOT start/stop nginx itself - that's external infra this
 # script assumes is managed separately (see docs/EXTERNAL_DEPENDENCIES.md).
-# MongoDB, Qdrant, OpenWA, and ngrok ARE started/stopped here despite also
-# being third-party infra - explicit exceptions:
+# MongoDB, Qdrant, Neo4j, OpenWA, and ngrok ARE started/stopped here despite
+# also being third-party infra - explicit exceptions:
 #   - MongoDB: mesh/lib/config_sdk.py's whole point is degrading gracefully
 #     without it, so having start_all.sh guarantee it's up removes the most
 #     common reason that fallback would silently kick in. Started via
@@ -53,6 +53,17 @@
 #     scope invalidates a connectionId between separate tool calls,
 #     breaking the auto-connect interceptor _make_connection_interceptor()
 #     relies on) are both load-bearing flags, not defaults to tidy up later.
+#   - Neo4j (graph_db): the memory-graph rebuild's own backing store
+#     (mesh/lib/graph_client.py/graph_store.py/memory_hook.py) - every
+#     agent's ask() call degrades gracefully without it (see
+#     memory_hook.py's own try/except-and-log-a-warning shape, the same
+#     "never fail the user's real request over the memory tier being
+#     down" reasoning Mongo's exception above already established), which
+#     is exactly the kind of silent degradation worth guaranteeing against
+#     rather than leaving to chance. A real Homebrew formula exists (unlike
+#     Qdrant) - runs `neo4j console` directly, same reasoning as every
+#     other exception here: this script's own start/stop model, not
+#     `brew services`.
 #   - ngrok: confirmed live the same "silently never arrives" failure mode
 #     as OpenWA above, one hop further downstream - OpenWA's own SSRF guard
 #     refuses to webhook to localhost, so without a public tunnel every
@@ -130,6 +141,7 @@ COMPONENTS=(
     "phoenix|6006|phoenix serve"
     "mongodb|27017|mongod --config /opt/homebrew/etc/mongod.conf"
     "qdrant|6339|mesh/qdrant/qdrant-bin --config-path mesh/qdrant/config.yaml"
+    "graph_db|7687|neo4j console"
     "mongo_mcp|3000|mongodb-mcp-server --readOnly --transport http --httpPort 3000 --httpHost 127.0.0.1 --connectionScope global"
     "agent_registry|8424|mesh.mcp.agent_registry.server"
     "cron_trigger|8421|mesh.mcp.cron_trigger.server"
@@ -302,11 +314,11 @@ launch_component() {
         # prepended only here, at the actual launch site, while cmd
         # itself stays exactly what pkill needs to find the real worker.
         nohup npx -y $cmd >> "$logfile" 2>&1 &
-    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ]; then
+    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ]; then
         # A raw binary/npm invocation, not a `python3 -m` module - mongod
         # logs to its own configured path (systemLog.path in
-        # mongod.conf) rather than this one; qdrant, openwa, and ngrok do
-        # log here.
+        # mongod.conf) rather than this one; qdrant, openwa, ngrok, and
+        # neo4j (graph_db) do log here.
         nohup $cmd >> "$logfile" 2>&1 &
     else
         nohup "$PYTHON_BIN" -m "$cmd" >> "$logfile" 2>&1 &
@@ -624,6 +636,17 @@ do_stop() {
     done
 }
 
+# Dynamically-registered agents have to be merged in BEFORE validation when
+# the caller named a target - otherwise `restart micro_habits` dies on
+# "Unknown component" (confirmed live), since COMPONENTS at this point still
+# holds only the hardcoded core set, and the merge that would have added it
+# doesn't happen until inside do_start/do_stop. Skipped entirely for an
+# unscoped run, which validates nothing and whose own merge timing inside
+# do_start is deliberate (core mesh up first, so a new agent's own startup
+# has the registry to talk to).
+if [ "${#TARGET_NAMES[@]}" -gt 0 ]; then
+    merge_registered_agents
+fi
 validate_target_names
 
 case "$ACTION" in

@@ -1,0 +1,267 @@
+<title>Memory Graph Model</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2;
+  --panel:#FFFFFF;
+  --ink:#1B1D1A;
+  --ink-soft:#5B5D57;
+  --line:#DEDCD4;
+  --identity:#378ADD;
+  --identity-soft:#E6F1FB;
+  --fact:#0F6E56;
+  --fact-soft:#E1F5EE;
+  --edge-visible:#0F6E56;
+  --edge-about:#993C1D;
+  --edge-supersede:#854F0B;
+  --edge-source:#534AB7;
+  --doc:#7F77DD;
+  --doc-soft:#EEEDFE;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+    --edge-visible:#5DCAA5; --edge-about:#F0997B; --edge-supersede:#EF9F27; --edge-source:#AFA9EC;
+    --doc:#AFA9EC; --doc-soft:#3C3489;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+  --edge-visible:#5DCAA5; --edge-about:#F0997B; --edge-supersede:#EF9F27; --edge-source:#AFA9EC;
+  --doc:#AFA9EC; --doc-soft:#3C3489;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:860px;margin:0 auto;padding:2.5rem 1.5rem 3rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .5rem;}
+h1{font-size:1.6rem;font-weight:600;margin:0 0 .4rem;text-wrap:balance;}
+.lede{color:var(--ink-soft);font-size:.95rem;line-height:1.6;max-width:60ch;margin:0 0 1.5rem;}
+.legend{display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.2rem;font-size:.8rem;color:var(--ink-soft);}
+.legend span{display:inline-flex;align-items:center;gap:.4rem;}
+.swatch{width:14px;height:14px;border-radius:3px;display:inline-block;}
+.line-sample{width:20px;height:0;border-top:2px solid;display:inline-block;}
+svg{width:100%;height:auto;display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;}
+.node rect{cursor:pointer;stroke-width:1.5;transition:opacity .15s;}
+.node text{cursor:pointer;pointer-events:none;}
+.node.dim{opacity:.25;}
+.edge{transition:opacity .15s,stroke-width .15s;}
+.edge.dim{opacity:.12;}
+.edge.lit{stroke-width:3;opacity:1;}
+.detail{
+  margin-top:1.3rem;padding:1.1rem 1.3rem;border-radius:10px;background:var(--panel);
+  border:1.5px solid var(--line);font-size:.85rem;line-height:1.6;
+}
+.detail .hint{color:var(--ink-soft);}
+.detail pre{
+  font-family:var(--mono);font-size:.78rem;background:var(--paper);border-radius:8px;
+  padding:.8rem .9rem;overflow-x:auto;margin:.7rem 0 0;line-height:1.5;
+}
+.detail .field{color:var(--ink-soft);}
+.detail .val{color:var(--ink);}
+.layers{
+  display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.2rem;
+  padding:.9rem 1rem;border:1.5px dashed var(--line);border-radius:10px;
+}
+.layers label{font-size:.85rem;color:var(--ink-soft);display:flex;align-items:center;gap:.55rem;cursor:pointer;}
+.layers input{cursor:pointer;}
+.node.hidden-layer{display:none;}
+.edge.hidden-layer{display:none;}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; memory design &middot; example</p>
+  <h1>A fitness coach, two clients, one shared first name</h1>
+  <p class="lede">The coach runs Adiyan on WhatsApp. Two of their clients are both named Priya. Every fact is one document with three relationships - who said it, who it's about, and who's allowed to see it - and those two don't have to match: the coach's note that Priya B owes fees is <i>about</i> her but never <i>visible to</i> her. Click any node to trace its edges.</p>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--identity-soft);border:1.5px solid var(--identity);"></i>Identity</span>
+    <span><i class="swatch" style="background:var(--fact-soft);border:1.5px solid var(--fact);"></i>Fact</span>
+    <span><i class="line-sample" style="border-color:var(--edge-visible);"></i>visible_to</span>
+    <span><i class="line-sample" style="border-color:var(--edge-about);border-top-style:dashed;"></i>about / stated_by</span>
+    <span><i class="line-sample" style="border-color:var(--edge-supersede);"></i>supersedes</span>
+    <span><i class="line-sample" style="border-color:var(--edge-source);border-top-style:dotted;"></i>source document</span>
+  </div>
+
+  <div class="layers">
+    <label><input type="checkbox" id="layer-batch"> Batch scope - a fact shared with a named subset</label>
+    <label><input type="checkbox" id="layer-supersede"> A fact correcting an older one</label>
+    <label><input type="checkbox" id="layer-document"> A fact citing an uploaded document</label>
+  </div>
+
+  <svg viewBox="0 0 1040 600" role="img" aria-label="Node graph: a coach and two clients both named Priya, with three optional complexity layers - batch scope shared with a subset of clients, a fact superseding an older one, and a fact citing a source document."></svg>
+
+  <div class="detail" id="detail">
+    <span class="hint">Click a node above to see how it's actually stored.</span>
+  </div>
+</div>
+
+<script>
+const nodes = [
+  {id:'owner', type:'identity', x:40, y:60, w:200, h:60, label:'Coach', sub:'self-chat',
+    doc:{_id:'owner', contact_name:'Coach', is_whitelisted:null}},
+  {id:'a', type:'identity', x:300, y:60, w:200, h:60, label:'Priya (A)', sub:'919812345601@lid',
+    doc:{_id:'919812345601@lid', contact_name:'Priya', is_whitelisted:true}},
+  {id:'b', type:'identity', x:560, y:60, w:200, h:60, label:'Priya (B)', sub:'919812345699@lid',
+    doc:{_id:'919812345699@lid', contact_name:'Priya', is_whitelisted:true}},
+
+  {id:'f1', type:'fact', x:40, y:210, w:200, h:80, label:'Owes September fees', sub:'owner-only, about B',
+    doc:{_id:'f1', text:'Priya B has not paid September fees', about:'919812345699@lid', stated_by:'owner', visible_to:['owner'], created_at:'2026-09-05T10:00:00Z'}},
+
+  {id:'f2', type:'fact', x:300, y:210, w:200, h:80, label:'Knee surgery recovery', sub:'shared with A',
+    doc:{_id:'f2', text:'Recovering from knee surgery, avoid squats', about:'919812345601@lid', stated_by:'919812345601@lid', visible_to:['owner','919812345601@lid'], created_at:'2026-08-14T07:30:00Z'}},
+  {id:'f3', type:'fact', x:300, y:320, w:200, h:80, label:'Prefers 6am sessions', sub:'shared with A',
+    doc:{_id:'f3', text:'Prefers 6am sessions', about:'919812345601@lid', stated_by:'919812345601@lid', visible_to:['owner','919812345601@lid'], created_at:'2026-07-02T06:45:00Z'}},
+
+  {id:'f4', type:'fact', x:560, y:210, w:200, h:80, label:'Mumbai marathon training', sub:'shared with B',
+    doc:{_id:'f4', text:'Training for the Mumbai marathon in October', about:'919812345699@lid', stated_by:'919812345699@lid', visible_to:['owner','919812345699@lid'], created_at:'2026-08-01T18:00:00Z'}},
+  {id:'f5', type:'fact', x:560, y:320, w:200, h:80, label:'Lactose intolerant', sub:'shared with B',
+    doc:{_id:'f5', text:'Lactose intolerant', about:'919812345699@lid', stated_by:'919812345699@lid', visible_to:['owner','919812345699@lid'], created_at:'2026-06-19T11:20:00Z'}},
+
+  {id:'f6', type:'fact', x:220, y:430, w:360, h:56, label:'Studio closed on public holidays', sub:'global',
+    doc:{_id:'f6', text:'Studio closed on public holidays', about:null, stated_by:'owner', visible_to:['*'], created_at:'2026-01-05T09:00:00Z'}},
+
+  {id:'c', type:'identity', x:820, y:60, w:200, h:60, label:'Priya (C)', sub:'919812345644@lid', layer:'batch',
+    doc:{_id:'919812345644@lid', contact_name:'Priya', is_whitelisted:true}},
+  {id:'f7', type:'fact', x:820, y:210, w:200, h:80, label:'Batch moved to 7:30am', sub:'shared with A and C', layer:'batch',
+    doc:{_id:'f7', text:'Saturday 7am batch moved to 7:30am', about:null, stated_by:'owner', visible_to:['owner','919812345601@lid','919812345644@lid'], created_at:'2026-09-06T08:00:00Z'}},
+
+  {id:'f8', type:'fact', x:40, y:320, w:200, h:80, label:'Cleared for squats', sub:'corrects the knee note', layer:'supersede',
+    doc:{_id:'f8', text:'Physio cleared her for squats again', about:'919812345601@lid', stated_by:'919812345601@lid', visible_to:['owner','919812345601@lid'], supersedes:'f2', created_at:'2026-09-09T07:15:00Z'}},
+
+  {id:'doc1', type:'document', x:40, y:500, w:200, h:60, label:'physio_report.pdf', sub:'knowledge base', layer:'document',
+    doc:{_id:'919812345601@lid/physio_report.pdf', uploaded_by:'919812345601@lid', user_context:'Physio clearance note for training', ingested_at:'2026-09-09T07:10:00Z'}}
+];
+const edges = [
+  {from:'f1', to:'owner', kind:'visible'},
+  {from:'f1', to:'b', kind:'about'},
+
+  {from:'f2', to:'owner', kind:'visible'},
+  {from:'f2', to:'a', kind:'visible'},
+  {from:'f2', to:'a', kind:'about'},
+  {from:'f3', to:'owner', kind:'visible'},
+  {from:'f3', to:'a', kind:'visible'},
+  {from:'f3', to:'a', kind:'about'},
+
+  {from:'f4', to:'owner', kind:'visible'},
+  {from:'f4', to:'b', kind:'visible'},
+  {from:'f4', to:'b', kind:'about'},
+  {from:'f5', to:'owner', kind:'visible'},
+  {from:'f5', to:'b', kind:'visible'},
+  {from:'f5', to:'b', kind:'about'},
+
+  {from:'f6', to:'owner', kind:'visible'},
+  {from:'f6', to:'a', kind:'visible'},
+  {from:'f6', to:'b', kind:'visible'},
+
+  {from:'f7', to:'owner', kind:'visible', layer:'batch'},
+  {from:'f7', to:'a', kind:'visible', layer:'batch'},
+  {from:'f7', to:'c', kind:'visible', layer:'batch'},
+
+  {from:'f8', to:'owner', kind:'visible', layer:'supersede'},
+  {from:'f8', to:'a', kind:'visible', layer:'supersede'},
+  {from:'f8', to:'a', kind:'about', layer:'supersede'},
+  {from:'f8', to:'f2', kind:'supersede', layer:'supersede'},
+
+  {from:'f2', to:'doc1', kind:'source', layer:'document'}
+];
+
+const svg = document.querySelector('svg');
+const ns = 'http://www.w3.org/2000/svg';
+function el(tag, attrs){
+  const e = document.createElementNS(ns, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function nodeById(id){ return nodes.find(n => n.id === id); }
+function center(n){ return {x: n.x + n.w/2, y: n.y + n.h/2}; }
+
+const edgeStyle = {
+  visible: {stroke:'var(--edge-visible)', dash:'none'},
+  about: {stroke:'var(--edge-about)', dash:'5 4'},
+  supersede: {stroke:'var(--edge-supersede)', dash:'none', width:2.5},
+  source: {stroke:'var(--edge-source)', dash:'2 4'}
+};
+
+const edgeEls = [];
+edges.forEach(e => {
+  const from = nodeById(e.from), to = nodeById(e.to);
+  const c1 = center(from), c2 = center(to);
+  const style = edgeStyle[e.kind];
+  const line = el('line', {
+    x1:c1.x, y1:c1.y, x2:c2.x, y2:c2.y,
+    stroke: style.stroke,
+    'stroke-width': style.width || 1.5,
+    'stroke-dasharray': style.dash,
+    class: 'edge' + (e.layer ? ' hidden-layer' : '')
+  });
+  line.dataset.layer = e.layer || '';
+  svg.appendChild(line);
+  edgeEls.push({el: line, from: e.from, to: e.to});
+});
+
+const nodeEls = [];
+nodes.forEach(n => {
+  if(!n.doc) return;
+  const g = el('g', {class:'node' + (n.layer ? ' hidden-layer' : ''), 'data-id':n.id});
+  g.dataset.layer = n.layer || '';
+  const fill = n.type === 'fact' ? 'var(--fact-soft)' : n.type === 'document' ? 'var(--doc-soft)' : 'var(--identity-soft)';
+  const stroke = n.type === 'fact' ? 'var(--fact)' : n.type === 'document' ? 'var(--doc)' : 'var(--identity)';
+  const rect = el('rect', {x:n.x, y:n.y, width:n.w, height:n.h, rx:10, fill, stroke});
+  g.appendChild(rect);
+  const label = el('text', {x:n.x+14, y:n.y+28, 'font-size':13, 'font-weight':600, fill:'var(--ink)', 'font-family':'IBM Plex Sans, sans-serif'});
+  label.textContent = n.label;
+  g.appendChild(label);
+  const sub = el('text', {x:n.x+14, y:n.y+n.h-14, 'font-size':10.5, fill:'var(--ink-soft)', 'font-family':'IBM Plex Mono, monospace'});
+  sub.textContent = n.sub;
+  g.appendChild(sub);
+  g.addEventListener('click', () => selectNode(n.id));
+  svg.appendChild(g);
+  nodeEls.push(g);
+});
+
+['batch','supersede','document'].forEach(layerName => {
+  document.getElementById('layer-' + layerName).addEventListener('change', e => {
+    const on = e.target.checked;
+    nodeEls.forEach(g => { if(g.dataset.layer === layerName) g.classList.toggle('hidden-layer', !on); });
+    edgeEls.forEach(({el}) => { if(el.dataset.layer === layerName) el.classList.toggle('hidden-layer', !on); });
+    clearSelection();
+  });
+});
+
+function clearSelection(){
+  edgeEls.forEach(({el}) => { el.classList.remove('lit'); el.classList.remove('dim'); });
+  nodeEls.forEach(g => g.classList.remove('dim'));
+  document.getElementById('detail').innerHTML = '<span class="hint">Click a node above to see how it\'s actually stored.</span>';
+}
+
+function jsonHtml(doc){
+  const lines = Object.entries(doc).map(([k,v]) => {
+    const val = Array.isArray(v) ? '[' + v.map(x => '"'+x+'"').join(', ') + ']' : (v === null ? 'null' : '"'+v+'"');
+    return '  <span class="field">' + k + '</span>: <span class="val">' + val + '</span>';
+  });
+  return '{\n' + lines.join(',\n') + '\n}';
+}
+
+function selectNode(id){
+  const selected = nodeById(id);
+  const connected = new Set([id]);
+  edgeEls.forEach(({el, from, to}) => {
+    const touches = from === id || to === id;
+    el.classList.toggle('lit', touches);
+    el.classList.toggle('dim', !touches);
+    if(touches){ connected.add(from); connected.add(to); }
+  });
+  document.querySelectorAll('.node').forEach(g => {
+    g.classList.toggle('dim', !connected.has(g.getAttribute('data-id')));
+  });
+  const collection = selected.type === 'fact' ? 'memory_facts'
+    : selected.type === 'document' ? 'knowledge_base_documents' : 'orchestrator_clients';
+  document.getElementById('detail').innerHTML =
+    '<div><b>' + selected.label + '</b> <span class="hint">&middot; ' + collection + '</span></div>' +
+    '<pre>' + jsonHtml(selected.doc) + '</pre>';
+}
+</script>

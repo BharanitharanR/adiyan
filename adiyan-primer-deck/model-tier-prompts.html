@@ -1,0 +1,212 @@
+<title>Model-Tiered Prompts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --accent:#0F6E56; --accent-soft:#E1F5EE;
+  --small:#854F0B; --small-soft:#FBF0DD;
+  --large:#378ADD; --large-soft:#E6F1FB;
+  --code-bg:#EFEEE7; --code-ink:#3A3C36; --code-add:#D8EFE5; --code-add-ink:#0B4E3D;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --accent:#5DCAA5; --accent-soft:#0F6E56;
+    --small:#EF9F27; --small-soft:#3B2B08;
+    --large:#85B7EB; --large-soft:#0C447C;
+    --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --accent:#5DCAA5; --accent-soft:#0F6E56;
+  --small:#EF9F27; --small-soft:#3B2B08;
+  --large:#85B7EB; --large-soft:#0C447C;
+  --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:960px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
+h1{font-size:1.65rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.2;}
+.lede{color:var(--ink-soft);font-size:.96rem;line-height:1.65;max-width:66ch;margin:0 0 1.8rem;}
+
+h2.sect{font-size:1.05rem;font-weight:600;margin:2rem 0 .3rem;}
+p.sect-sub{font-size:.86rem;color:var(--ink-soft);margin:0 0 1rem;line-height:1.5;}
+
+.tester{
+  background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;
+}
+.tester-row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;}
+.tester input[type=text]{
+  flex:1;min-width:200px;font-family:var(--mono);font-size:.9rem;padding:.6rem .8rem;
+  border-radius:8px;border:1.5px solid var(--line);background:var(--paper);color:var(--ink);
+}
+.tester input[type=text]:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
+.presets{display:flex;gap:.4rem;flex-wrap:wrap;}
+.preset-btn{
+  font-family:var(--mono);font-size:.76rem;color:var(--ink-soft);background:var(--paper);
+  border:1px solid var(--line);border-radius:16px;padding:.32rem .7rem;cursor:pointer;
+}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);}
+
+.tier-result{
+  display:flex;align-items:center;gap:.9rem;padding:.9rem 1.05rem;border-radius:10px;margin-top:.4rem;
+}
+.tier-result.small{background:var(--small-soft);}
+.tier-result.large{background:var(--large-soft);}
+.tier-badge{
+  font-family:var(--mono);font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  padding:.35rem .7rem;border-radius:6px;flex-shrink:0;
+}
+.tier-badge.small{background:var(--small);color:var(--panel);}
+.tier-badge.large{background:var(--large);color:var(--panel);}
+.tier-explain{font-size:.86rem;color:var(--ink);line-height:1.5;}
+.tier-explain code{font-family:var(--mono);font-size:.9em;background:var(--code-bg);color:var(--code-ink);padding:.06rem .3rem;border-radius:4px;}
+
+.key-flow{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:1.3rem;font-size:.85rem;}
+.key-box{
+  font-family:var(--mono);font-size:.82rem;background:var(--code-bg);color:var(--code-ink);
+  padding:.5rem .8rem;border-radius:8px;
+}
+.key-arrow{color:var(--ink-soft);}
+.key-box.dynamic{border:1.5px dashed var(--accent);color:var(--accent);background:var(--accent-soft);}
+
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.5rem;}
+@media (max-width:720px){.compare{grid-template-columns:1fr;}}
+.col{border-radius:11px;padding:1rem 1.05rem;border:1.5px solid var(--line);background:var(--panel);}
+.col.small{border-color:var(--small);}
+.col.large{border-color:var(--large);}
+.col-head{display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem;}
+.col-title{font-size:.85rem;font-weight:600;}
+.col.small .col-title{color:var(--small);}
+.col.large .col-title{color:var(--large);}
+.col-key{font-family:var(--mono);font-size:.7rem;color:var(--ink-soft);}
+.rule-list{margin:0;padding-left:1.1rem;font-size:.82rem;line-height:1.65;}
+.rule-list li.new{color:inherit;background:var(--code-add);color:var(--code-add-ink);border-radius:4px;padding:.05rem .3rem;margin:0 -.3rem;list-style-position:outside;}
+
+.evidence{
+  margin-top:1.8rem;padding:1rem 1.15rem;border-radius:11px;background:var(--panel);border:1.5px dashed var(--line);
+  font-size:.87rem;line-height:1.6;
+}
+.evidence b{color:var(--accent);}
+
+.dash-note{
+  margin-top:1.8rem;padding:1rem 1.15rem;border-radius:11px;background:var(--accent-soft);border:1.5px solid var(--accent);
+  font-size:.88rem;line-height:1.6;
+}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; platform capability &middot; model-tiered prompts</p>
+  <h1>One prompt, two variants, picked by which model reads it</h1>
+  <p class="lede">Type any model name below to see which tier it lands in - the exact same logic <code>mesh/lib/model_tiers.py</code> runs. Then see the two real, dashboard-editable prompt variants this now drives for Analysis Agent's decision step.</p>
+
+  <h2 class="sect">1. Try it - what tier is this model?</h2>
+  <p class="sect-sub">Parses the digits before "b" in the name, compares against the threshold (6B, itself a dashboard constant).</p>
+  <div class="tester">
+    <div class="tester-row">
+      <input type="text" id="model-input" value="qwen3:4b" spellcheck="false">
+      <div class="presets" id="presets"></div>
+    </div>
+    <div class="tier-result" id="tier-result"></div>
+  </div>
+
+  <h2 class="sect">2. How the config key changes underneath</h2>
+  <p class="sect-sub">One logical prompt, <code>decide_next_step_prompt_template</code>, becomes one of two stored constants - no new dashboard code needed, since both are just ordinary keys.</p>
+  <div class="key-flow">
+    <span class="key-box">decide_next_step_prompt_template</span>
+    <span class="key-arrow">+ tier from</span>
+    <span class="key-box dynamic" id="key-model">qwen3:4b</span>
+    <span class="key-arrow">&rarr;</span>
+    <span class="key-box" id="key-result">decide_next_step_prompt_template__small</span>
+  </div>
+
+  <h2 class="sect">3. What each variant actually says</h2>
+  <p class="sect-sub">Same base rules in both. Highlighted lines exist only in the small-model variant - added directly from tonight's observed failures.</p>
+  <div class="compare">
+    <div class="col small">
+      <div class="col-head"><span class="col-title">Small-model variant</span></div>
+      <div class="col-key">...prompt_template__small &middot; used by qwen3:4b</div>
+      <ol class="rule-list">
+        <li class="new">If the instruction or memory context already states the fact needed - do not search for it again. Call finish immediately.</li>
+        <li class="new">If asked to write/draft/compose using details already given, that's a writing task, not a lookup - call finish with the composed text directly.</li>
+        <li class="new">Only call a tool for something genuinely missing from both the instruction and scratchpad.</li>
+        <li class="new">Call exactly one real tool, or call finish - never describe a tool call in your own words instead of making one.</li>
+        <li>If the instruction refers to something ambiguously ("it", "that"), call recall_memory before asking for clarification.</li>
+        <li>search_documents only returns a filename - read a document before treating it as evidence.</li>
+        <li>Use search_within_document for a specific question about a known document, not read_document.</li>
+        <li>Never state a specific real-world detail unless a tool returned it, or it was already given in the instruction.</li>
+      </ol>
+    </div>
+    <div class="col large">
+      <div class="col-head"><span class="col-title">Large-model variant</span></div>
+      <div class="col-key">...prompt_template__large &middot; used by qwen3:8b-16k</div>
+      <ol class="rule-list">
+        <li>If the instruction refers to something ambiguously ("it", "that"), call recall_memory before asking for clarification.</li>
+        <li>search_documents only returns a filename - read a document before treating it as evidence.</li>
+        <li>Use search_within_document for a specific question about a known document, not read_document.</li>
+        <li>Never state a specific real-world detail unless a tool returned it.</li>
+      </ol>
+      <p style="font-size:.8rem;color:var(--ink-soft);margin-top:.8rem;">Unchanged from before tonight - the larger model handled the terser version correctly without the extra scaffolding.</p>
+    </div>
+  </div>
+
+  <div class="evidence">
+    <b>Why these four lines specifically:</b> each maps to a real failure logged tonight in <code>~/.Adiyan/logs/llm_calls.log</code> on the identical prompt - qwen3:4b looping on <code>search_documents</code> for an address already given, treating a drafting request as something needing verification, and once, writing out a fake tool call as plain text instead of using real function-calling. qwen3:8b-16k hit none of these on the same wording.
+  </div>
+
+  <div class="dash-note">
+    Both variants live at <b>analysis &rarr; decide_next_step_prompt_template__small</b> / <b>__large</b> in the config dashboard, editable independently, starting from the same default the day this was introduced - editing one never touches the other.
+  </div>
+</div>
+
+<script>
+const THRESHOLD = 6.0;
+const presets = ['qwen3:4b', 'qwen3:8b-16k', 'qwen3:14b', 'llama3', 'qwen3:1.5b'];
+
+function parseParamsB(name){
+  const m = name.match(/(\d+(?:\.\d+)?)b/i);
+  return m ? parseFloat(m[1]) : null;
+}
+function tierOf(name){
+  const p = parseParamsB(name);
+  if(p === null) return 'large';
+  return p <= THRESHOLD ? 'small' : 'large';
+}
+
+const input = document.getElementById('model-input');
+const result = document.getElementById('tier-result');
+const keyModel = document.getElementById('key-model');
+const keyResult = document.getElementById('key-result');
+const presetsBox = document.getElementById('presets');
+
+presets.forEach(p => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'preset-btn';
+  b.textContent = p;
+  b.addEventListener('click', () => { input.value = p; render(); });
+  presetsBox.appendChild(b);
+});
+
+function render(){
+  const name = input.value.trim() || 'qwen3:4b';
+  const p = parseParamsB(name);
+  const tier = tierOf(name);
+  result.className = 'tier-result ' + tier;
+  const explain = p === null
+    ? `No parameter count found in "${name}" - treated as <code>large</code> by default (the safer failure direction).`
+    : `Parsed <code>${p}B</code> parameters, threshold is <code>${THRESHOLD}B</code> &rarr; <code>${p} ${p <= THRESHOLD ? '&le;' : '&gt;'} ${THRESHOLD}</code>`;
+  result.innerHTML = `
+    <span class="tier-badge ${tier}">${tier}</span>
+    <span class="tier-explain">${explain}</span>
+  `;
+  keyModel.textContent = name;
+  keyResult.textContent = `decide_next_step_prompt_template__${tier}`;
+}
+
+input.addEventListener('input', render);
+render();
+</script>

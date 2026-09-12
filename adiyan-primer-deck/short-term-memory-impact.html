@@ -1,0 +1,146 @@
+<title>Short-Term Memory Impact</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --identity:#378ADD; --identity-soft:#E6F1FB; --fact:#0F6E56; --fact-soft:#E1F5EE;
+  --amber:#854F0B; --amber-soft:#FBF0DD;
+  --unchanged:#5B5D57; --unchanged-soft:#EDECE6;
+  --new:#0F6E56; --new-soft:#E1F5EE;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+    --amber:#EF9F27; --amber-soft:#3B2B08;
+    --unchanged:#9A9C94; --unchanged-soft:#2A2C27;
+    --new:#5DCAA5; --new-soft:#085041;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+  --amber:#EF9F27; --amber-soft:#3B2B08;
+  --unchanged:#9A9C94; --unchanged-soft:#2A2C27;
+  --new:#5DCAA5; --new-soft:#085041;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:900px;margin:0 auto;padding:2.5rem 1.5rem 3rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .5rem;}
+h1{font-size:1.6rem;font-weight:600;margin:0 0 .4rem;text-wrap:balance;}
+.lede{color:var(--ink-soft);font-size:.95rem;line-height:1.6;max-width:64ch;margin:0 0 1.6rem;}
+.verdict{
+  display:flex;align-items:center;gap:.8rem;padding:.9rem 1.1rem;border-radius:10px;
+  background:var(--unchanged-soft);border:1.5px solid var(--line);margin-bottom:1.6rem;font-size:.92rem;
+}
+.verdict .tag{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.03em;text-transform:uppercase;
+  background:var(--unchanged);color:var(--panel);padding:.25rem .55rem;border-radius:5px;flex-shrink:0;
+}
+.stack{display:flex;flex-direction:column;gap:.7rem;margin-bottom:1.6rem;}
+.tier{
+  background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:1rem 1.2rem;
+  cursor:pointer;transition:border-color .15s;
+}
+.tier:hover{border-color:var(--ink-soft);}
+.tier.open{border-color:var(--ink);border-width:2px;}
+.tier-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;}
+.tier-name{font-size:1rem;font-weight:600;}
+.tier-name .file{font-family:var(--mono);font-weight:400;font-size:.78rem;color:var(--ink-soft);display:block;margin-top:.15rem;}
+.status-pill{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.03em;text-transform:uppercase;
+  padding:.3rem .6rem;border-radius:6px;white-space:nowrap;flex-shrink:0;
+}
+.status-pill.unchanged{background:var(--unchanged-soft);color:var(--unchanged);border:1px solid var(--unchanged);}
+.status-pill.new{background:var(--new-soft);color:var(--new);border:1px solid var(--new);}
+.tier-body{max-height:0;overflow:hidden;transition:max-height .25s ease;}
+.tier.open .tier-body{max-height:400px;}
+.tier-body-inner{padding-top:.9rem;font-size:.87rem;line-height:1.6;color:var(--ink);}
+.tier-body-inner .row{display:flex;gap:.6rem;margin-bottom:.5rem;}
+.tier-body-inner .k{color:var(--ink-soft);flex-shrink:0;width:110px;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;padding-top:.15rem;}
+.tier-body-inner .v{flex:1;}
+.tier-body-inner code{font-family:var(--mono);font-size:.85em;background:var(--paper);padding:.1rem .35rem;border-radius:4px;}
+.flow{
+  display:flex;align-items:stretch;gap:.5rem;margin-bottom:.5rem;overflow-x:auto;padding-bottom:.4rem;
+}
+.flow-box{
+  flex:1;min-width:150px;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;
+  padding:.7rem .8rem;font-size:.78rem;
+}
+.flow-box .ft{font-weight:600;margin-bottom:.3rem;}
+.flow-box .fs{color:var(--ink-soft);font-size:.74rem;line-height:1.4;}
+.flow-arrow{align-self:center;color:var(--ink-soft);font-size:1.1rem;flex-shrink:0;}
+.caption{font-size:.8rem;color:var(--ink-soft);margin-top:.5rem;}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; memory design &middot; Phase 2 impact</p>
+  <h1>What Phase 2 does to short-term memory</h1>
+  <p class="lede">Adiyan already has three separate memory mechanisms doing three separate jobs. Phase 2 (the graph schema) only touches one of them. Click each tier to see its mechanism and whether Phase 2 changed anything about it.</p>
+
+  <div class="verdict">
+    <span class="tag">Answer</span>
+    <span>Short-term memory (<code>chat_cache.py</code>) is untouched. Phase 2 is a new, third tier added alongside it - nothing about how recent turns are cached or read changes.</span>
+  </div>
+
+  <div class="stack" id="stack"></div>
+
+  <p class="caption">The three feed into one prompt at read time (a later phase's job - the platform memory hook), but they are stored differently, expire differently, and answer different questions. None of them replace another.</p>
+</div>
+
+<script>
+const tiers = [
+  {
+    id:'short', name:'Short-term memory', file:'mesh/lib/chat_cache.py', status:'unchanged',
+    job:'What did we just say, verbatim',
+    mechanism:'An in-process deque per contact - the literal last 10 turns (or last 30 minutes), your choice via CHAT_CACHE_MODE. Nothing is written to disk.',
+    persistence:'Gone the moment any process restarts - it is a cache, not a store, by design.',
+    answers:'"What about tomorrow instead" - needs the actual last exchange, not a semantic match.',
+    phase2:'No code here changed. This tier still runs exactly as it did before Phase 1 existed.',
+  },
+  {
+    id:'fuzzy', name:'Fuzzy long-term memory', file:'mesh/memory/mem0_backend.py', status:'unchanged',
+    job:'What do we generally know about this person, by meaning',
+    mechanism:'mem0, an LLM extraction pipeline. On every remember() call it retrieves the top-10 existing memories for that contact and one LLM call decides ADD / UPDATE / DELETE / NONE.',
+    persistence:'Durable (Qdrant-backed), but keyed by raw display name today - confirmed live that two different WhatsApp contacts named "Bharani" share one bucket.',
+    answers:'"Suggest a recipe" correctly recalling "I\'m vegetarian" from a much earlier, differently-worded message.',
+    phase2:'No code here changed either. Its display-name keying bug and non-deterministic invocation are still open - a separate fix, not something Phase 2 touched.',
+  },
+  {
+    id:'structured', name:'Structured long-term memory', file:'mesh/lib/graph_store.py', status:'new',
+    job:'What is definitely true, for whom, said by whom, and who is allowed to hear it back',
+    mechanism:'A real Neo4j graph. Every write is an explicit function call (record_fact) with named about / stated_by / visible_to / supersedes relationships - no LLM judgment call involved.',
+    persistence:'Durable, deterministic. A correction ( supersedes ) is a guaranteed structural change, not a hope that an LLM extraction step notices the correction.',
+    answers:'"Is Priya B\'s knee note still current" or "who can I tell that Priya B owes fees" - questions today\'s two tiers cannot answer reliably.',
+    phase2:'This tier did not exist before tonight. It is additive - nothing currently reads from or writes to it yet (that is Phase 3, the platform hook).',
+  },
+];
+
+const stack = document.getElementById('stack');
+tiers.forEach(t => {
+  const div = document.createElement('div');
+  div.className = 'tier';
+  div.innerHTML = `
+    <div class="tier-head">
+      <div class="tier-name">${t.name}<span class="file">${t.file}</span></div>
+      <span class="status-pill ${t.status}">${t.status === 'new' ? 'New in Phase 2' : 'Unchanged'}</span>
+    </div>
+    <div class="tier-body"><div class="tier-body-inner">
+      <div class="row"><span class="k">Job</span><span class="v">${t.job}</span></div>
+      <div class="row"><span class="k">Mechanism</span><span class="v">${t.mechanism}</span></div>
+      <div class="row"><span class="k">Persistence</span><span class="v">${t.persistence}</span></div>
+      <div class="row"><span class="k">Answers</span><span class="v">${t.answers}</span></div>
+      <div class="row"><span class="k">Phase 2</span><span class="v"><b>${t.phase2}</b></span></div>
+    </div></div>
+  `;
+  div.addEventListener('click', () => {
+    const willOpen = !div.classList.contains('open');
+    document.querySelectorAll('.tier').forEach(el => el.classList.remove('open'));
+    if(willOpen) div.classList.add('open');
+  });
+  stack.appendChild(div);
+});
+tiers[2] && stack.children[2] && stack.children[2].classList.add('open');
+</script>

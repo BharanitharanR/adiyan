@@ -29,7 +29,7 @@ from a2a.server.tasks import TaskUpdater
 from mesh.micro_habits.constants import AGENT_ID
 from mesh.micro_habits.skills import micro_habits,list_micro_habits
 from mesh.micro_habits.skills_catalog import get_skills
-from mesh.lib import config_sdk, permissions
+from mesh.lib import config_sdk, memory_hook, permissions
 from mesh.lib.config import load_runtime_config
 from mesh.lib.skill_router import route
 
@@ -112,6 +112,17 @@ class MicroHabitAgentExecutor(AgentExecutor):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
 
+        # Read-side memory (identity resolution, ensure_identity, and
+        # fetch_context feeding every ask() call in the skills below) now
+        # happens automatically in mesh/lib/bootstrap.py's executor wrapper
+        # and mesh/lib/agent_sdk.py's ask() - Phase 5's platform wiring.
+        # identity_key is still resolved here only because record_fact
+        # (the write side, below) needs it - that half stays a deliberate,
+        # explicit per-skill decision, not something the platform can
+        # safely infer generically. See mesh/lib/memory_hook.py and
+        # mesh/lib/bootstrap.py for the two platform hook points.
+        identity_key = memory_hook.identity_from_claims(claims)
+
         try:
             if skill_id == 'log_micro_habit':
                 result = await micro_habits.run(**params)
@@ -121,6 +132,18 @@ class MicroHabitAgentExecutor(AgentExecutor):
             await updater.failed(new_text_message(f'Could not process request: {e}'))
             return
         # --- end of what changes per-skill ---
+
+        # The write side of the same hook. visible_to is the logger alone:
+        # a micro habit is the owner's own private log, and widening that
+        # is a deliberate decision no agent should make by default (see
+        # the Phase 4 design notes on visible_to being the weakest point
+        # of this wiring until the platform derives scope from tier).
+        if identity_key and skill_id == 'log_micro_habit':
+            memory_hook.record_fact(
+                f'Logged a micro habit: {params.get("entry")}',
+                about=identity_key, stated_by=identity_key,
+                visible_to=[identity_key],
+            )
 
         await updater.add_artifact(parts=[new_data_part(result)])
         await updater.complete()

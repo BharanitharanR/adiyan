@@ -42,6 +42,7 @@ docling>=2.75.0
 mem0ai>=2.0.18
 beanie>=2.2.0
 pymongo>=4.9.0
+neo4j>=6.3.0
 croniter>=2.0.0
 fpdf2>=2.7.0
 # After installing, also run `crawl4ai-setup` once to download its Playwright

@@ -339,9 +339,19 @@ async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg
         'genuinely needs a specific, verifiable, real-world fact you have '
         'no way to confirm (see below), not for an ordinary advice question.'
     )
+    # Model-size-tiered (mesh/lib/model_tiers.py / config_sdk.get_tiered_constant):
+    # confirmed live this session that this exact prompt reliably confused
+    # qwen3:4b (looping on pointless search_documents calls, or a response
+    # with neither a tool call nor real content) while qwen3:8b-16k handled
+    # it correctly first try - see ~/.Adiyan/logs/llm_calls.log. Both tiers
+    # seed from the same default below; the '__small' variant was then
+    # explicitly given more constrained wording (see
+    # decide_next_step_prompt_template__small in the dashboard/Mongo),
+    # since terser phrasing that a larger model infers correctly left the
+    # smaller one guessing.
     seeded = _seeded('decide_next_step_prompt_template')
-    template = await config_sdk.get_constant(
-        AGENT_ID, 'decide_next_step_prompt_template', seeded['value'], description=seeded['description'],
+    template = await config_sdk.get_tiered_constant(
+        AGENT_ID, 'decide_next_step_prompt_template', cfg['model'], seeded['value'], description=seeded['description'],
     )
     scratchpad_json = scratchpad.model_dump_json(indent=2)
     try:
@@ -502,10 +512,24 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
         response = await _decide_next_step(instruction, scratchpad, tools, cfg, strict)
 
         if not response.tool_calls:
-            # Answered directly without calling finish - treat its own text
-            # as the answer, a graceful outcome, not an error.
-            fallback = await _get_message('msg_no_clear_answer')
-            return _package_result(response.content or fallback, source_filename)
+            if response.content:
+                # Answered directly without calling finish - treat its own
+                # text as the answer, a graceful outcome, not an error.
+                return _package_result(response.content, source_filename)
+            # Confirmed live: an empty response here (no tool call AND no
+            # content - a real, observed model hiccup on decide_next_step,
+            # not a hypothetical) used to fall straight to the generic
+            # msg_no_clear_answer text, discarding whatever the scratchpad
+            # had already gathered - including, in the case that surfaced
+            # this, a specific fact (the user's own address) found two
+            # steps earlier. _final_answer() already exists for exactly
+            # this situation (see its own docstring) - it was just never
+            # called from this branch, only from the MAX_STEPS exhaustion
+            # path below. Same call, same fallback-to-scratchpad behavior,
+            # now from both places a response can fail to move the loop
+            # forward.
+            final = await _final_answer(instruction, scratchpad, cfg, strict)
+            return _package_result(final, source_filename)
 
         call = response.tool_calls[0]
         if call['name'] == 'finish':

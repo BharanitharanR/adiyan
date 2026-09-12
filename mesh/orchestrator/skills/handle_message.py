@@ -664,11 +664,55 @@ async def run(
             history = await chat_cache.format_recent_turns(
                 contact_name or chat_id, text, cfg['filter_chat_history'],
             )
-            augmented_text = f'{history}\n\nNew message: {text}' if history else text
 
-            target_url = await route_to_agent(text, cfg['route_to_agent'])
-            if target_url is None:
-                # No skill classified this - Analysis Agent is the fallback,
+            # Long-term memory, fetched unconditionally - the same class of
+            # bug chat_cache's own history fix (above) already closed for
+            # short-term context, now closed for long-term facts too.
+            # recall_contact_memory existed as a tool Analysis Agent's ReAct
+            # loop could choose to call, but a choice isn't a guarantee: "I'm
+            # vegetarian" logged via remember_interaction, then "give me a
+            # recipe" later, had no reliable path back to that fact - it
+            # depended on the model happening to decide this instruction
+            # warranted a memory lookup, which recall_contact_memory's own
+            # docstring never promised ("not for using this history to
+            # reason or advise"). mem0_backend.retrieve() is a plain vector
+            # search, not an LLM call - cheap enough to run on every message,
+            # the same reasoning chat_cache's own relevance filter already
+            # relies on. A service token, not the sender's own tier - this
+            # is Orchestrator fetching context to compose the reply, not the
+            # sender exercising a skill, same reasoning is_owner()'s own
+            # internal lookup already documents for itself. Silent on any
+            # failure (Memory unreachable, mem0 unavailable, nothing on file
+            # yet) - a missing preference degrades to today's behavior, it
+            # never blocks or garbles the reply.
+            memory_context = ''
+            try:
+                memory_url = router.get_agent_url('memory')
+                if memory_url is not None:
+                    service_token = permissions.mint_token('orchestrator', 'service')
+                    recall_result = await call_agent(memory_url, 'recall_contact_memory', {
+                        'contact_name': contact_name or chat_id, 'query': text, 'top_k': 3,
+                    }, token=service_token)
+                    snippets = recall_result.get('snippets') or []
+                    if snippets:
+                        memory_context = 'What you know about this person:\n' + '\n'.join(f'- {s}' for s in snippets)
+            except Exception as e:
+                logger.warning(f'Long-term memory recall failed for {chat_id}: {describe_exception(e)}')
+
+            # Assembled in a fixed order (long-term facts, then recent
+            # turns, then the message itself) regardless of which pieces
+            # are actually present, so the model always sees the same
+            # structure rather than a shape that varies message to message.
+            context_blocks = [b for b in (memory_context, history) if b]
+            if context_blocks:
+                augmented_text = '\n\n'.join(context_blocks) + f'\n\nNew message: {text}'
+            else:
+                augmented_text = text
+
+            async def _fallback_to_analysis() -> str:
+                # No skill classified this (or the agent route_to_agent()
+                # picked rejected it on its own reclassification - see the
+                # except clause below) - Analysis Agent is the fallback,
                 # not a canned "I don't know" reply. Called directly via a
                 # structured DataPart (skill_id already known - there's
                 # exactly one skill on this agent), same reasoning
@@ -676,43 +720,70 @@ async def run(
                 # combined flow, not routed through classify() again.
                 analysis_url = router.get_agent_url('analysis')
                 if analysis_url is None:
-                    reply = "Sorry, I'm not sure how to help with that yet."
+                    return "Sorry, I'm not sure how to help with that yet."
+                result = await call_agent(analysis_url, 'analyse_this', {
+                    'instruction': augmented_text,
+                    'contact_name': contact_name,
+                }, token=token)
+                if result.get('content_b64'):
+                    nonlocal pending_document
+                    pending_document = result
+                    caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
+                    return await humanize(text, caption_source, cfg['humanize'], community=community)
+                if result.get('result'):
+                    # Confirmed live: skipping humanize() here (unlike
+                    # every other branch in this function) let Analysis
+                    # Agent's own ReAct-loop answer reach WhatsApp
+                    # verbatim - grammatically fine but report-toned
+                    # ("Based on the provided information, the user is
+                    # a vegetarian...") rather than a natural reply, the
+                    # one branch in this whole function that skipped
+                    # the humanize step everything else already gets.
+                    return await humanize(text, result, cfg['humanize'], community=community)
+                return "Sorry, I'm not sure how to help with that yet."
+
+            target_url = await route_to_agent(text, cfg['route_to_agent'])
+            if target_url is None:
+                reply = await _fallback_to_analysis()
+            else:
+                try:
+                    result = await call_agent_with_text(target_url, augmented_text, token=token)
+                except RuntimeError as e:
+                    # Confirmed live, the actual bug this fixes: route_to_agent()
+                    # picks a target agent by classifying against the FULL
+                    # cross-agent skill pool, then call_agent_with_text() makes
+                    # that agent classify the SAME text again from scratch,
+                    # against only ITS OWN skills - two independent classify()
+                    # calls that can disagree. When they do, the target agent's
+                    # own skill_router rejects the text ("None of my skills
+                    # match that request." / "Did you mean one of: ...?") and
+                    # this used to be treated as a hard failure - the message
+                    # was silently dropped even though Analysis Agent could
+                    # have handled it, the same way it already handles
+                    # anything route_to_agent() itself failed to classify.
+                    # Narrowed to specifically this rejection shape (not any
+                    # RuntimeError) so a genuine crash on the target agent
+                    # still surfaces as a failure rather than being papered
+                    # over by a fallback that might mask a real bug there.
+                    error_text = str(e)
+                    if 'None of my skills match' not in error_text and 'Did you mean one of' not in error_text:
+                        raise
+                    logger.warning(f'{target_url} rejected the routed text on its own reclassification, falling back to Analysis Agent: {error_text}')
+                    reply = await _fallback_to_analysis()
                 else:
-                    result = await call_agent(analysis_url, 'analyse_this', {
-                        'instruction': augmented_text,
-                        'contact_name': contact_name,
-                    }, token=token)
                     if result.get('content_b64'):
+                        # See this module's own docstring on the content_b64
+                        # delivery convention. Humanize a caption from
+                        # everything except the blob itself - passing the raw
+                        # base64 into the humanize prompt would bloat it for no
+                        # reason, and result.get('content_b64') is already the
+                        # deliver-a-file signal, not something the caption needs
+                        # to restate.
                         pending_document = result
                         caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
                         reply = await humanize(text, caption_source, cfg['humanize'], community=community)
-                    elif result.get('result'):
-                        # Confirmed live: skipping humanize() here (unlike
-                        # every other branch in this function) let Analysis
-                        # Agent's own ReAct-loop answer reach WhatsApp
-                        # verbatim - grammatically fine but report-toned
-                        # ("Based on the provided information, the user is
-                        # a vegetarian...") rather than a natural reply, the
-                        # one branch in this whole function that skipped
-                        # the humanize step everything else already gets.
-                        reply = await humanize(text, result, cfg['humanize'], community=community)
                     else:
-                        reply = "Sorry, I'm not sure how to help with that yet."
-            else:
-                result = await call_agent_with_text(target_url, augmented_text, token=token)
-                if result.get('content_b64'):
-                    # See this module's own docstring on the content_b64
-                    # delivery convention. Humanize a caption from
-                    # everything except the blob itself - passing the raw
-                    # base64 into the humanize prompt would bloat it for no
-                    # reason, and result.get('content_b64') is already the
-                    # deliver-a-file signal, not something the caption needs
-                    # to restate.
-                    pending_document = result
-                    caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'], community=community)
-                else:
-                    reply = await humanize(text, result, cfg['humanize'], community=community)
+                        reply = await humanize(text, result, cfg['humanize'], community=community)
         except Exception as e:
             # Confirmed live: this used to reply with the raw exception text
             # ("Did you mean one of: recall_contact_memory,

@@ -140,6 +140,16 @@ else
     fail "brew install mongodb-community ran but mongod still isn't on PATH - open a new terminal and re-run ./install.sh."
 fi
 
+if ! command -v neo4j >/dev/null 2>&1; then
+    echo -e "${DIM}  installing${RESET} - Neo4j (brew install neo4j)"
+    brew install neo4j
+fi
+if command -v neo4j >/dev/null 2>&1; then
+    ok "Neo4j"
+else
+    fail "brew install neo4j ran but neo4j still isn't on PATH - open a new terminal and re-run ./install.sh."
+fi
+
 if ! command -v ollama >/dev/null 2>&1; then
     echo -e "${DIM}  installing${RESET} - Ollama (brew install ollama)"
     brew install ollama
@@ -173,6 +183,24 @@ if [ -x "mesh/qdrant/qdrant-bin" ]; then
     skip "mesh/qdrant/qdrant-bin already present"
 else
     bash mesh/qdrant/fetch_binary.sh
+fi
+
+step "Neo4j initial password"
+# Only settable before the database has ever started (neo4j-admin refuses
+# once real data exists) - checked via its own data directory rather than
+# just "did we just install the formula", so re-running this script after
+# Neo4j has already been used once (this machine, or a previous partial
+# install) never tries to reset a password on a live database. Matches
+# mesh/lib/graph_client.py's own hardcoded fallback (ADIYAN_NEO4J_PASSWORD
+# env var overrides it) - this is what makes that fallback actually work
+# out of the box on a fresh install, not a value the code merely hopes is
+# already set.
+NEO4J_DATA_DIR="$(brew --prefix 2>/dev/null || echo /opt/homebrew)/var/neo4j/data"
+if [ -d "$NEO4J_DATA_DIR/databases" ]; then
+    skip "Neo4j already initialized (has an existing database)"
+else
+    neo4j-admin dbms set-initial-password adiyan-graph-dev
+    ok "Set Neo4j initial password (user 'neo4j', password 'adiyan-graph-dev' - override via the ADIYAN_NEO4J_PASSWORD env var before first start)"
 fi
 
 step "OpenWA (WhatsApp)"

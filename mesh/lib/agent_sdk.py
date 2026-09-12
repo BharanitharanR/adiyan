@@ -38,7 +38,7 @@ from typing import Any, Dict, Optional, Type
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from mesh.lib import config_sdk, permissions
+from mesh.lib import config_sdk, llm_log, memory_hook, permissions
 from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
 from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
@@ -174,7 +174,35 @@ class AdiyanAgent:
         offloadable, regardless of `community`: a bigger trust jump than
         text alone (a user's actual uploaded photo, not just a prompt
         string), and combines with `schema` if both are given (a
-        structured read of an image), but never with `tools`."""
+        structured read of an image), but never with `tools`.
+
+        Memory read-side hook (Phase 5): if mesh/lib/bootstrap.py's
+        executor wrapper resolved an identity for the caller of this whole
+        A2A request, that identity's known facts are prepended to `prompt`
+        automatically here - no caller of ask() changes. Deliberately NOT
+        applied when schema or image_b64 is given: schema calls
+        (classify_skill/extract_parameters in skill_router.py, the two
+        highest-volume callers of this method) expect the model to parse
+        structured output strictly from `prompt` alone, and a stray
+        "what you know about this person" block ahead of that instruction
+        risks degrading extraction accuracy for no benefit - there's
+        nothing about someone's known facts that should change which
+        skill_id a message routes to. The `tools` (ReAct) and plain-text
+        paths below are genuine answer-generation, where this is exactly
+        the fix for the gap named earlier tonight: recall today only
+        happens if the model chooses to call an optional tool; this
+        happens unconditionally."""
+        memory_context = memory_hook.CURRENT_CONTEXT.get() if schema is None and image_b64 is None else ''
+        if memory_context:
+            prompt = f'{memory_context}\n\n{prompt}'
+
+        # Central LLM logging (mesh/lib/llm_log.py): every branch below logs
+        # its own prompt/response right at its own return point, since each
+        # branch resolves a different model name and shapes its response
+        # differently - a single log call after an if/elif chain would lose
+        # which branch actually ran. See llm_log.py's own docstring for why
+        # this lives outside agent_sdk.py and writes to one shared file
+        # rather than each agent's own log.
         if image_b64 is not None:
             from langchain_core.messages import HumanMessage
             cfg = await config_sdk.get_stage_config(
@@ -185,17 +213,30 @@ class AdiyanAgent:
                 {'type': 'text', 'text': prompt},
                 {'type': 'image_url', 'image_url': f'data:{image_mimetype};base64,{image_b64}'},
             ])
-            if schema is not None:
-                return await llm.with_structured_output(schema).ainvoke([message])
-            result = await llm.ainvoke([message])
-            return result.content
+            try:
+                if schema is not None:
+                    result = await llm.with_structured_output(schema).ainvoke([message])
+                    llm_log.log_call(self.agent_id, stage, 'image+schema', cfg['model'], prompt, result)
+                    return result
+                result = await llm.ainvoke([message])
+                llm_log.log_call(self.agent_id, stage, 'image', cfg['model'], prompt, result.content)
+                return result.content
+            except Exception as e:
+                llm_log.log_call(self.agent_id, stage, 'image', cfg['model'], prompt, None, error=str(e))
+                raise
 
         if tools is not None:
             cfg = await config_sdk.get_stage_config(
                 self.agent_id, stage, {'model': model, 'temperature': temperature},
             )
             llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature']).bind_tools(tools)
-            return await llm.ainvoke(prompt)
+            try:
+                result = await llm.ainvoke(prompt)
+            except Exception as e:
+                llm_log.log_call(self.agent_id, stage, 'tools', cfg['model'], prompt, None, error=str(e))
+                raise
+            llm_log.log_call(self.agent_id, stage, 'tools', cfg['model'], prompt, result)
+            return result
 
         if schema is not None:
             cfg = await config_sdk.get_stage_config(
@@ -203,7 +244,13 @@ class AdiyanAgent:
             )
             llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
             structured = llm.with_structured_output(schema)
-            return await structured.ainvoke(prompt)
+            try:
+                result = await structured.ainvoke(prompt)
+            except Exception as e:
+                llm_log.log_call(self.agent_id, stage, 'schema', cfg['model'], prompt, None, error=str(e))
+                raise
+            llm_log.log_call(self.agent_id, stage, 'schema', cfg['model'], prompt, result)
+            return result
 
         # A fixed platform identity, not self.agent_id/self._tier - ask()
         # itself never mints against the calling agent's own tier for
@@ -212,10 +259,15 @@ class AdiyanAgent:
         # each agent's own permission grant (see platform_llm_client's
         # own description in permissions_config.json).
         token = permissions.mint_token('adiyan_platform', 'platform_llm_client')
-        result = await _call_agent(INFERENCE_ROUTER_URL, 'complete', {
-            'caller_agent_id': self.agent_id, 'stage': stage, 'prompt': prompt,
-            'model': model, 'temperature': temperature, 'community': community,
-        }, token=token)
+        try:
+            result = await _call_agent(INFERENCE_ROUTER_URL, 'complete', {
+                'caller_agent_id': self.agent_id, 'stage': stage, 'prompt': prompt,
+                'model': model, 'temperature': temperature, 'community': community,
+            }, token=token)
+        except Exception as e:
+            llm_log.log_call(self.agent_id, stage, 'text', model, prompt, None, error=str(e))
+            raise
+        llm_log.log_call(self.agent_id, stage, 'text', model, prompt, result.get('completion'))
         return result.get('completion')
 
     async def search_knowledge_base(self, query: str, top_k: int = 3) -> Dict[str, Any]:

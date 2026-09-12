@@ -28,6 +28,70 @@ Every agent/component running under `mesh/`, what it's actually for, and where t
 
 **Recovery model:** no heartbeat/liveness polling anywhere in this - if an agent crashes, restarting it is how it reappears (both in the registry, via re-registration, and in Orchestrator's pool, via an Orchestrator restart if the affected agent was added/changed after Orchestrator's own last startup). The registry itself is in-memory only, by design - an Agent Registry restart just means every agent re-registers once it's back up.
 
+## Platform-wide memory wiring (2026-09-11/12)
+
+Not agents themselves - shared `mesh/lib/` modules every agent gets by
+construction, the same category as `config_sdk.py`/`agent_sdk.py`:
+
+- `graph_client.py` / `graph_store.py`: the structured-fact memory graph
+  (Neo4j - see `docs/EXTERNAL_DEPENDENCIES.md`'s Neo4j section).
+  `graph_client.py` is bare graph primitives with zero memory-domain
+  concepts; `graph_store.py` is the actual `Identity`/`Fact`/`Document`
+  schema built on top of it (`about`/`stated_by`/`visible_to`/
+  `supersedes`/`sourced_from`).
+- `memory_hook.py`: the platform contract every agent calls instead of
+  touching the graph directly - `ensure_identity`/`fetch_context`/
+  `record_fact`, plus `identity_from_claims()` (derives the caller's
+  identity from their A2A token, skipping machine/service callers).
+- `identity.py`: `resolve_identity_key()`, moved here from
+  `mesh/orchestrator/db.py` once agents needed the same identity-key
+  derivation orchestrator already used - a pure function shared by both
+  sides rather than reimplemented.
+- **The two platform hooks that make this automatic, zero code change per
+  agent:** `mesh/lib/bootstrap.py`'s `_MemoryWiredExecutor` (wraps every
+  agent's own executor - resolves identity and fetches context *before*
+  the agent's own code runs, via a `contextvars.ContextVar`) and
+  `mesh/lib/agent_sdk.py`'s `AdiyanAgent.ask()` (reads that same
+  ContextVar and prepends it to the prompt automatically - except for
+  `schema`/`image_b64` calls, since injecting "what you know about this
+  person" ahead of a strict structured-extraction instruction risks
+  degrading `skill_router.py`'s classify/extract accuracy for no benefit).
+  Read side is fully automatic; writing a fact (`record_fact`) stays a
+  deliberate, explicit call per skill - deciding what's worth remembering
+  is domain judgment the platform can't infer generically.
+- `model_tiers.py`: classifies a model name into `small`/`large` (parsed
+  parameter count vs. a dashboard-tunable threshold) and
+  `config_sdk.get_tiered_constant()` namespaces a prompt/constant key by
+  it - built because the identical `decide_next_step` prompt in
+  `mesh/analysis/skills/analyze.py` reliably confused a smaller local
+  model while a larger one handled it correctly; both tiers seed from the
+  same default, so using this causes zero behavior change until a
+  `__small`/`__large` variant is deliberately edited.
+- `llm_log.py`: one central, plain-text log
+  (`~/.Adiyan/logs/llm_calls.log`) of every prompt any agent sends to the
+  LLM and the response (or error) it gets back, wired into all four
+  branches of `ask()` - zero per-agent code, same "every agent already
+  passes through this one function" reasoning as the memory hooks above.
+  **Known real gap:** for a plain-text call that goes through Inference
+  Router (`mesh/inference_router/skills/complete.py`), the model actually
+  used is resolved *inside* Inference Router from that stage's own
+  config - which can differ from, and is never reported back to, the
+  `model` value `agent_sdk.py` logs. Confirmed live this can misattribute
+  which model actually produced a given answer, especially once
+  `communitySearch` peer offload is involved (`mesh/p2p/p2p_app.py`'s
+  `discover_and_dispatch()` has its own confirmed bug: a peer answers with
+  whatever model it has loaded, ignoring the requested model entirely).
+  Not yet fixed - `served_by` and the real resolved model would need to
+  flow back through `complete.py`'s return value into the log call.
+
+Test scripts for all of the above (`mesh/lib/test_graph_client.py`,
+`test_graph_store.py`, `test_memory_hook.py`, `test_bootstrap_memory_wiring.py`,
+`mesh/micro_habits/test_memory_wiring.py`) run in isolation against a real
+Neo4j, no agent server or A2A traffic required - see each file's own
+docstring. `mesh/tools/seed_memory_graph.py` seeds a demo scenario into the
+graph for manual exploration via Neo4j Browser (they wipe the graph on
+entry/exit, so nothing survives after running them).
+
 ## Retired
 
 `mesh/whatsapp_connector/` (webhook receiver + A2A client, no AgentCard of its own) is gone - replaced by the WhatsApp MCP server + Orchestrator Agent pair above, which splits the same job correctly: WhatsApp-specific concerns stay in the MCP server, routing/reply-decision concerns live in a real agent.

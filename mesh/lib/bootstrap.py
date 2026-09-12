@@ -47,15 +47,59 @@ import uvicorn
 from sqlalchemy.ext.asyncio import create_async_engine
 from starlette.applications import Starlette
 
-from a2a.server.agent_execution import AgentExecutor
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore
 from a2a.types import AgentCard, AgentSkill
 
-from mesh.lib import config_sdk, registry_client
+from mesh.lib import config_sdk, memory_hook, permissions, registry_client
 
 logger = logging.getLogger('bootstrap')
+
+
+class _MemoryWiredExecutor(AgentExecutor):
+    """Wraps an agent's own executor with the memory read-side hook - see
+    the Phase 5 design (memory_hook.py's own docstring on CURRENT_CONTEXT).
+    Every agent that calls build_app() gets this automatically, because
+    DefaultRequestHandler is only ever constructed here, never by an
+    agent's own server.py directly - the exact same lever this module
+    already uses for agent-registry self-registration (see this module's
+    top docstring).
+
+    Same interface as the wrapped executor (AgentExecutor's own two
+    abstract methods), so DefaultRequestHandler can't tell the difference -
+    this is a proxy, not a replacement. The wrapped agent's own executor
+    code is never touched, imported differently, or aware this exists."""
+
+    def __init__(self, inner: AgentExecutor):
+        self._inner = inner
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # Same token every agent's own permission check already verifies
+        # (context.metadata['token']) - read a second time here, not
+        # threaded through, since this wrapper runs before the inner
+        # executor and has no other way to see the same claims it does.
+        claims = permissions.verify_token(context.metadata.get('token'))
+        identity_key = memory_hook.identity_from_claims(claims)
+        context_value = ''
+        if identity_key:
+            memory_hook.ensure_identity(identity_key)
+            context_value = memory_hook.fetch_context(identity_key)
+        reset_token = memory_hook.CURRENT_CONTEXT.set(context_value)
+        try:
+            await self._inner.execute(context, event_queue)
+        finally:
+            # Always reset, even on failure/cancellation - a ContextVar set
+            # here must never leak into whatever task this same worker
+            # picks up next. Framework guarantees single execution per
+            # request (see AgentExecutor.execute's own docstring), but
+            # nothing guarantees single execution per *process* over time.
+            memory_hook.CURRENT_CONTEXT.reset(reset_token)
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await self._inner.cancel(context, event_queue)
 
 # Self-registration needs this agent's own A2A server to already be
 # accepting connections (the registry calls back to this agent's
@@ -206,7 +250,7 @@ def build_app(
     task_store = DatabaseTaskStore(engine=engine, create_table=True)
 
     request_handler = DefaultRequestHandler(
-        agent_executor=executor,
+        agent_executor=_MemoryWiredExecutor(executor),
         task_store=task_store,
         agent_card=agent_card,
     )

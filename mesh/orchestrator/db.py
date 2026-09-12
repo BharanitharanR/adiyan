@@ -26,31 +26,19 @@ from typing import Any, Dict, Optional
 from pymongo import MongoClient
 from pymongo.collection import Collection
 
+# Moved to mesh/lib/identity.py when agents began deriving the same key
+# from their own A2A token's `sub` claim - re-exported here (rather than
+# updating rules_engine's two `db.resolve_identity_key(...)` call sites to
+# import it separately) because this module's own contract is still "the
+# clients collection, keyed by identity key," and the key's definition
+# belongs with it.
+from mesh.lib.identity import resolve_identity_key  # noqa: F401
+
 MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
 COLLECTION_NAME = 'orchestrator_clients'
 
 _client: Optional[MongoClient] = None
-
-
-def resolve_identity_key(chat_id: str) -> str:
-    """Phone digits when chat_id is already phone-form (@c.us) - the
-    stable, WhatsApp-account-level identifier. Falls back to the raw
-    chat_id (usually @lid) otherwise - a lid-form contact's phone number
-    isn't safely resolvable (resolve_chat_id() is confirmed live to hang
-    indefinitely - see mesh/mcp/whatsapp/server.py's get_own_phone()
-    docstring), so the lid is the best available identity for them today.
-
-    Every clients-collection read/write goes through this, not the raw
-    chat_id a webhook happens to report - confirmed live that the same
-    contact can be addressed in different JID forms depending on which
-    field you read (see openwa_receiver.py's is_self_chat fix), so
-    comparing raw chat_id values directly is unreliable. Delivery
-    (send_message) still uses the real, un-normalized chat_id - only
-    identity lookups go through this."""
-    if chat_id and chat_id.endswith('@c.us'):
-        return chat_id.split('@')[0]
-    return chat_id
 
 
 def connect(_state_db_path: Any = None) -> Collection:

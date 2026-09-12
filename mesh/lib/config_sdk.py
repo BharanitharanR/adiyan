@@ -307,6 +307,38 @@ async def get_constant(
     return default
 
 
+async def get_tiered_constant(
+    agent_id: str, key: str, model_name: str, default: Any,
+    vertical_id: Optional[str] = None, description: Optional[str] = None,
+) -> Any:
+    """Same resolution as get_constant(), but the key is namespaced by
+    which capability tier (mesh/lib/model_tiers.py - 'small' or 'large')
+    `model_name` falls into - so the exact same logical prompt/constant can
+    read differently depending on which model is actually configured to
+    run it. Exists for prompts a smaller local model reliably handles
+    worse than a larger one on the identical wording - see
+    model_tiers.py's own docstring for the real, observed case this was
+    built from.
+
+    Both tiers seed from the SAME `default` on first use - introducing
+    this call at a site causes zero behavior change until someone
+    (a human, via the dashboard) deliberately edits one tier's stored
+    value to diverge from the other. From that point on the two tiers are
+    completely independent constants underneath - editing
+    '<key>__small' never touches '<key>__large', and vice versa.
+
+    Built on get_constant(), not a parallel implementation - vertical
+    overrides, auto-seeding, and description-backfill all work exactly as
+    they already do, since each tier is just an ordinary constant key with
+    a suffix; the dashboard needs no special handling to show or edit it,
+    the same way it needs none for any other constant."""
+    from mesh.lib.model_tiers import model_tier
+    tier = await model_tier(model_name)
+    tiered_key = f'{key}__{tier}'
+    tier_description = f'{description} ({tier}-model variant)' if description else None
+    return await get_constant(agent_id, tiered_key, default, vertical_id=vertical_id, description=tier_description)
+
+
 async def get_active_vertical_id() -> Optional[str]:
     """The deployment-wide active vertical, or None if the deployment is
     running plain platform defaults (the default state). Same caching as

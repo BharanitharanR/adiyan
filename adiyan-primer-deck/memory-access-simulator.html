@@ -1,0 +1,187 @@
+<title>Memory Access Simulator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2;
+  --panel:#FFFFFF;
+  --ink:#1B1D1A;
+  --ink-soft:#5B5D57;
+  --line:#DEDCD4;
+  --accent:#0F6E56;
+  --accent-soft:#E1F5EE;
+  --danger:#993C1D;
+  --danger-soft:#FAECE7;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A;
+    --panel:#1F211F;
+    --ink:#EDEDE7;
+    --ink-soft:#9A9C94;
+    --line:#34362F;
+    --accent:#5DCAA5;
+    --accent-soft:#0F6E56;
+    --danger:#F0997B;
+    --danger-soft:#4A1B0C;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A;
+  --panel:#1F211F;
+  --ink:#EDEDE7;
+  --ink-soft:#9A9C94;
+  --line:#34362F;
+  --accent:#5DCAA5;
+  --accent-soft:#0F6E56;
+  --danger:#F0997B;
+  --danger-soft:#4A1B0C;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:820px;margin:0 auto;padding:2.5rem 1.5rem 3rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .5rem;}
+h1{font-size:1.7rem;font-weight:600;margin:0 0 .4rem;text-wrap:balance;}
+.lede{color:var(--ink-soft);font-size:.98rem;line-height:1.6;max-width:56ch;margin:0 0 2rem;}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:2rem;}
+.mode-btn{
+  font-family:var(--sans);font-size:.92rem;font-weight:500;color:var(--ink);
+  background:var(--panel);border:1.5px solid var(--line);border-radius:10px;
+  padding:.9rem 1rem;text-align:left;cursor:pointer;transition:border-color .15s;
+}
+.mode-btn .sub{display:block;font-size:.78rem;color:var(--ink-soft);font-weight:400;margin-top:.15rem;}
+.mode-btn.active{border-color:var(--accent);border-width:2px;}
+.mode-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.section-label{font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .7rem;}
+.identities{display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin-bottom:2rem;}
+.id-btn{
+  font-family:var(--sans);background:var(--panel);border:1.5px solid var(--line);border-radius:10px;
+  padding:.85rem .9rem;text-align:left;cursor:pointer;transition:border-color .15s;
+}
+.id-btn.active{border-color:var(--ink);border-width:2px;}
+.id-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.id-name{font-size:.94rem;font-weight:600;}
+.id-sub{font-size:.78rem;color:var(--ink-soft);font-family:var(--mono);margin-top:.15rem;}
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;}
+.fact{border-radius:10px;padding:.9rem 1rem;border:1.5px solid var(--line);}
+.fact.visible{background:var(--accent-soft);border-color:var(--accent);}
+.fact.hidden{opacity:.55;}
+.fact-text{font-size:.9rem;font-weight:500;line-height:1.4;}
+.fact-tag{font-family:var(--mono);font-size:.72rem;color:var(--ink-soft);margin-top:.4rem;display:block;}
+.fact.visible .fact-tag{color:var(--accent);}
+.status{
+  margin-top:1.8rem;padding:1rem 1.1rem;border-radius:10px;font-size:.88rem;line-height:1.55;
+  background:var(--panel);border:1.5px solid var(--line);
+}
+.status.leak{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
+.status b{font-weight:600;}
+@media (max-width:520px){
+  .identities,.facts{grid-template-columns:1fr;}
+}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; memory design</p>
+  <h1>Who can see what a person told Adiyan</h1>
+  <p class="lede">Pick a model, then click an identity to see which stored facts it can reach. The "Bharani (B)" contact is real - it's a second registered WhatsApp chat that happens to share a display name with another contact, which is exactly the collision that leaks memory today.</p>
+
+  <p class="section-label">Model</p>
+  <div class="modes">
+    <button class="mode-btn active" id="mode-today" type="button">
+      Today's model
+      <span class="sub">keyed by display name</span>
+    </button>
+    <button class="mode-btn" id="mode-tiered" type="button">
+      Tiered model
+      <span class="sub">keyed by stable identity</span>
+    </button>
+  </div>
+
+  <p class="section-label">Viewing as</p>
+  <div class="identities" id="identities"></div>
+
+  <p class="section-label">Facts in memory</p>
+  <div class="facts" id="facts"></div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+const identities = [
+  {id:'owner', label:'Owner', sub:'self-chat'},
+  {id:'a', label:'Bharani (A)', sub:'213103828537359@lid'},
+  {id:'b', label:'Bharani (B)', sub:'42795289067704@lid'}
+];
+const facts = [
+  {id:'f1', text:'Prefers vegetarian food', tier:'owner', tag:'owner-only'},
+  {id:'f2', text:"Reading Crime and Punishment, page 8", tier:'a', tag:'shared with A'},
+  {id:'f3', text:'Reading The Power of Now, page 6', tier:'b', tag:'shared with B'},
+  {id:'f4', text:'Office hours are 9am to 6pm', tier:'global', tag:'global'}
+];
+
+let mode = 'today';
+let viewer = 'owner';
+
+function visible(fact){
+  if(fact.tier === 'global') return true;
+  if(fact.tier === 'owner') return viewer === 'owner';
+  if(mode === 'today'){
+    return viewer === 'owner' || viewer === 'a' || viewer === 'b';
+  }
+  return viewer === 'owner' || viewer === fact.tier;
+}
+
+function renderIdentities(){
+  const el = document.getElementById('identities');
+  el.innerHTML = '';
+  identities.forEach(idn => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'id-btn' + (viewer === idn.id ? ' active' : '');
+    btn.innerHTML = '<div class="id-name">' + idn.label + '</div><div class="id-sub">' + idn.sub + '</div>';
+    btn.onclick = () => { viewer = idn.id; render(); };
+    el.appendChild(btn);
+  });
+}
+
+function renderFacts(){
+  const el = document.getElementById('facts');
+  el.innerHTML = '';
+  facts.forEach(f => {
+    const vis = visible(f);
+    const div = document.createElement('div');
+    div.className = 'fact ' + (vis ? 'visible' : 'hidden');
+    div.innerHTML = '<div class="fact-text">' + f.text + '</div><span class="fact-tag">' + f.tag + (vis ? ' &middot; visible' : ' &middot; hidden') + '</span>';
+    el.appendChild(div);
+  });
+}
+
+function renderStatus(){
+  const idn = identities.find(i => i.id === viewer);
+  const count = facts.filter(visible).length;
+  const otherTier = viewer === 'a' ? 'b' : viewer === 'b' ? 'a' : null;
+  const leaking = mode === 'today' && otherTier && facts.some(f => f.tier === otherTier);
+  const el = document.getElementById('status');
+  if(leaking){
+    el.className = 'status leak';
+    el.innerHTML = '<b>' + idn.label + '</b> can see ' + count + ' of ' + facts.length + ' facts - including the other Bharani contact\'s own reading progress. Same display name, one shared bucket in mem0 today.';
+  } else {
+    el.className = 'status';
+    el.innerHTML = '<b>' + idn.label + '</b> can see ' + count + ' of ' + facts.length + ' facts.' + (mode === 'tiered' ? ' Scoped correctly - no cross-contact leak.' : '');
+  }
+}
+
+function render(){
+  document.getElementById('mode-today').classList.toggle('active', mode === 'today');
+  document.getElementById('mode-tiered').classList.toggle('active', mode === 'tiered');
+  renderIdentities();
+  renderFacts();
+  renderStatus();
+}
+
+document.getElementById('mode-today').onclick = () => { mode = 'today'; render(); };
+document.getElementById('mode-tiered').onclick = () => { mode = 'tiered'; render(); };
+
+render();
+</script>

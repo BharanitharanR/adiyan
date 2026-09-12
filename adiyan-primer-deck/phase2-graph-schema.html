@@ -1,0 +1,300 @@
+<title>Phase 2 Graph Schema</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --identity:#378ADD; --identity-soft:#E6F1FB; --fact:#0F6E56; --fact-soft:#E1F5EE;
+  --edge-visible:#0F6E56; --edge-about:#993C1D; --edge-supersede:#854F0B; --edge-source:#534AB7;
+  --doc:#7F77DD; --doc-soft:#EEEDFE;
+  --code-bg:#EFEEE7; --code-ink:#3A3C36;
+  --accent:#0F6E56; --accent-soft:#E1F5EE;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+    --edge-visible:#5DCAA5; --edge-about:#F0997B; --edge-supersede:#EF9F27; --edge-source:#AFA9EC;
+    --doc:#AFA9EC; --doc-soft:#3C3489;
+    --code-bg:#0F110F; --code-ink:#C9CBC2;
+    --accent:#5DCAA5; --accent-soft:#0F6E56;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --identity:#85B7EB; --identity-soft:#0C447C; --fact:#5DCAA5; --fact-soft:#085041;
+  --edge-visible:#5DCAA5; --edge-about:#F0997B; --edge-supersede:#EF9F27; --edge-source:#AFA9EC;
+  --doc:#AFA9EC; --doc-soft:#3C3489;
+  --code-bg:#0F110F; --code-ink:#C9CBC2;
+  --accent:#5DCAA5; --accent-soft:#0F6E56;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:920px;margin:0 auto;padding:2.5rem 1.5rem 3rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .5rem;}
+h1{font-size:1.6rem;font-weight:600;margin:0 0 .4rem;text-wrap:balance;}
+.lede{color:var(--ink-soft);font-size:.95rem;line-height:1.6;max-width:64ch;margin:0 0 1.6rem;}
+.stepper{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.1rem;}
+.step-dots{display:flex;gap:.4rem;}
+.step-dots button{
+  width:9px;height:9px;padding:0;border-radius:50%;border:none;background:var(--line);cursor:pointer;
+}
+.step-dots button.active{background:var(--accent);}
+.nav-btn{
+  font-family:var(--sans);font-size:.85rem;font-weight:500;color:var(--ink);background:var(--panel);
+  border:1.5px solid var(--line);border-radius:8px;padding:.5rem 1rem;cursor:pointer;
+}
+.nav-btn:disabled{opacity:.35;cursor:default;}
+.nav-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.step-label{font-family:var(--mono);font-size:.78rem;color:var(--ink-soft);}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;}
+@media (max-width:720px){.grid{grid-template-columns:1fr;}}
+.panel{background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:1rem 1.1rem;}
+.panel h2{font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .7rem;font-weight:600;}
+.narration{font-size:.92rem;line-height:1.55;margin-bottom:1rem;min-height:2.4em;}
+pre.code{
+  font-family:var(--mono);font-size:.76rem;line-height:1.55;background:var(--code-bg);color:var(--code-ink);
+  border-radius:8px;padding:.8rem .9rem;overflow-x:auto;margin:0;
+}
+.cypher-label{font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin:.9rem 0 .4rem;}
+.query-result{margin-top:1rem;}
+.qr-title{font-size:.78rem;color:var(--ink-soft);margin-bottom:.4rem;}
+.qr-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem;}
+.qr-list li{
+  font-size:.83rem;padding:.5rem .65rem;border-radius:7px;background:var(--fact-soft);border:1px solid var(--fact);
+  display:flex;justify-content:space-between;gap:.6rem;
+}
+.qr-list li.removed{background:transparent;border:1px dashed var(--line);color:var(--ink-soft);text-decoration:line-through;}
+.qr-list li .badge{font-family:var(--mono);font-size:.68rem;color:var(--ink-soft);white-space:nowrap;text-decoration:none;}
+.qr-empty{font-size:.83rem;color:var(--ink-soft);font-style:italic;}
+svg{width:100%;height:auto;display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;}
+.node rect{stroke-width:1.5;transition:opacity .3s;}
+.node text{pointer-events:none;}
+.node.pending{opacity:0;}
+.edge{transition:opacity .3s,stroke-width .3s;}
+.edge.pending{opacity:0;}
+.edge.just-added{stroke-width:3;}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;margin:.9rem 0 0;font-size:.76rem;color:var(--ink-soft);}
+.legend span{display:inline-flex;align-items:center;gap:.35rem;}
+.swatch{width:12px;height:12px;border-radius:3px;display:inline-block;}
+.line-sample{width:16px;height:0;border-top:2px solid;display:inline-block;}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; memory design &middot; Phase 2</p>
+  <h1>What mesh/lib/graph_store.py actually does</h1>
+  <p class="lede">Phase 1 gave the mesh bare graph primitives. Phase 2 is the first code that knows what a "Fact" or "Identity" is - built only on top of those primitives, tested with zero involvement from any agent. Step through the same scenario <a href="#" id="test-link" style="color:var(--accent);">test_graph_store.py</a> runs: each step is one real function call, the Cypher it issues, and how <code>facts_visible_to()</code> changes for the person asking.</p>
+
+  <div class="stepper">
+    <button class="nav-btn" id="prev">&larr; Prev</button>
+    <div class="step-dots" id="dots"></div>
+    <button class="nav-btn" id="next">Next &rarr;</button>
+  </div>
+  <p class="step-label" id="step-label"></p>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Code executed</h2>
+      <p class="narration" id="narration"></p>
+      <pre class="code" id="code"></pre>
+      <p class="cypher-label">Cypher this issues</p>
+      <pre class="code" id="cypher"></pre>
+    </div>
+    <div class="panel">
+      <h2 id="qr-heading">facts_visible_to()</h2>
+      <div class="query-result" id="query-result"></div>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 1000 480" role="img" aria-label="Graph of Identity, Fact and Document nodes building up step by step as graph_store.py functions are called."></svg>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--identity-soft);border:1.5px solid var(--identity);"></i>Identity</span>
+    <span><i class="swatch" style="background:var(--fact-soft);border:1.5px solid var(--fact);"></i>Fact</span>
+    <span><i class="swatch" style="background:var(--doc-soft);border:1.5px solid var(--doc);"></i>Document</span>
+    <span><i class="line-sample" style="border-color:var(--edge-visible);"></i>visible_to</span>
+    <span><i class="line-sample" style="border-color:var(--edge-about);border-top-style:dashed;"></i>about / stated_by</span>
+    <span><i class="line-sample" style="border-color:var(--edge-supersede);"></i>supersedes</span>
+    <span><i class="line-sample" style="border-color:var(--edge-source);border-top-style:dotted;"></i>sourced_from</span>
+  </div>
+</div>
+
+<script>
+const nodes = {
+  owner:  {type:'identity', x:20,  y:20,  w:160, h:56, label:'owner',   sub:'Identity'},
+  a:      {type:'identity', x:220, y:20,  w:160, h:56, label:'priya_a', sub:'Identity'},
+  b:      {type:'identity', x:420, y:20,  w:160, h:56, label:'priya_b', sub:'Identity'},
+  global: {type:'identity', x:620, y:20,  w:160, h:56, label:'global',  sub:'sentinel Identity'},
+  f1:     {type:'fact', x:420, y:150, w:220, h:64, label:'"...not paid Sept fees"', sub:'f1'},
+  f2:     {type:'fact', x:60,  y:150, w:220, h:64, label:'"...knee surgery, avoid squats"', sub:'f2'},
+  f3:     {type:'fact', x:60,  y:260, w:220, h:64, label:'"Cleared for squats again"', sub:'f3'},
+  f4:     {type:'fact', x:340, y:260, w:220, h:64, label:'"Studio closed on holidays"', sub:'f4'},
+  f5:     {type:'fact', x:60,  y:370, w:220, h:64, label:'"...full range of motion"', sub:'f5'},
+  doc1:   {type:'document', x:340, y:370, w:220, h:56, label:'physio_report.pdf', sub:'Document'},
+};
+const edgeDefs = [
+  {id:'e1', from:'f1', to:'b',      kind:'about'},
+  {id:'e2', from:'f1', to:'owner',  kind:'about'},
+  {id:'e3', from:'f1', to:'owner',  kind:'visible'},
+  {id:'e4', from:'f2', to:'a',      kind:'about'},
+  {id:'e5', from:'f2', to:'owner',  kind:'visible'},
+  {id:'e6', from:'f2', to:'a',      kind:'visible'},
+  {id:'e7', from:'f3', to:'a',      kind:'about'},
+  {id:'e8', from:'f3', to:'owner',  kind:'visible'},
+  {id:'e9', from:'f3', to:'a',      kind:'visible'},
+  {id:'e10',from:'f3', to:'f2',     kind:'supersede'},
+  {id:'e11',from:'f4', to:'global', kind:'visible'},
+  {id:'e12',from:'f5', to:'a',      kind:'about'},
+  {id:'e13',from:'f5', to:'owner',  kind:'visible'},
+  {id:'e14',from:'f5', to:'a',      kind:'visible'},
+  {id:'e15',from:'f5', to:'doc1',   kind:'source'},
+];
+
+const steps = [
+  {
+    label: 'Step 0 / 6', narration: 'Every identity referenced later must exist first - upsert_identity is idempotent (MERGE), so calling it again for a contact whose display name changed just refreshes it.',
+    code: `graph_store.upsert_identity(driver, 'owner', 'Coach (owner)')\ngraph_store.upsert_identity(driver, 'priya_a', 'Priya A')\ngraph_store.upsert_identity(driver, 'priya_b', 'Priya B')\ngraph_store.upsert_identity(driver, GLOBAL_IDENTITY_KEY)  # 'global'`,
+    cypher: `MERGE (i:Identity {key: $key})\nSET i.display_name = coalesce($display_name, i.display_name)`,
+    nodes: ['owner','a','b','global'], edges: [],
+    query: null,
+  },
+  {
+    label: 'Step 1 / 6', narration: '"About" and "visible_to" are independent edges. This fact is about Priya B, but visible_to only lists the owner - Priya B never sees it.',
+    code: `graph_store.record_fact(\n    driver, 'Priya B has not paid September fees',\n    about='priya_b', stated_by='owner', visible_to=['owner'],\n)`,
+    cypher: `CREATE (f:Fact {id: $id, text: $text, created_at: $now})\nMATCH (f:Fact {id:$id}),(b:Identity {key:'priya_b'}) CREATE (f)-[:ABOUT]->(b)\nMATCH (f:Fact {id:$id}),(o:Identity {key:'owner'})   CREATE (f)-[:VISIBLE_TO]->(o)`,
+    nodes: ['f1'], edges: ['e1','e2','e3'],
+    query: {who:'priya_b', before:[], after:[], note:'facts_visible_to(driver, "priya_b") returns [] - the ABOUT edge never grants visibility.'},
+  },
+  {
+    label: 'Step 2 / 6', narration: 'Priya A is told her own knee-surgery note - here about and visible_to point at the same person, but they are still two separate edges written independently.',
+    code: `graph_store.record_fact(\n    driver, 'Recovering from knee surgery, avoid squats',\n    about='priya_a', stated_by='priya_a', visible_to=['owner', 'priya_a'],\n)`,
+    cypher: `CREATE (f:Fact {id: $id, text: $text, created_at: $now})\nMATCH (f),(a:Identity {key:'priya_a'}) CREATE (f)-[:ABOUT]->(a)\nMATCH (f),(a:Identity {key:'priya_a'}) CREATE (f)-[:VISIBLE_TO]->(a)\nMATCH (f),(o:Identity {key:'owner'})   CREATE (f)-[:VISIBLE_TO]->(o)`,
+    nodes: ['f2'], edges: ['e4','e5','e6'],
+    query: {who:'priya_a', before:[], after:['Recovering from knee surgery, avoid squats'], note:'facts_visible_to(driver, "priya_a") now returns one fact.'},
+  },
+  {
+    label: 'Step 3 / 6', narration: 'A correction is just a new Fact with a SUPERSEDES edge back at the old one. facts_visible_to() filters out any fact something newer points at - Priya A stops seeing the old note without anyone deleting it.',
+    code: `graph_store.record_fact(\n    driver, 'Cleared for squats again',\n    about='priya_a', stated_by='priya_a', visible_to=['owner', 'priya_a'],\n    supersedes=old_fact_id,  # f2's id\n)`,
+    cypher: `CREATE (f3:Fact {...})\nMATCH (f3),(f2:Fact {id:$old_id}) CREATE (f3)-[:SUPERSEDES]->(f2)\n-- and the same ABOUT / VISIBLE_TO edges as before\n\n-- facts_visible_to's own filter:\nWHERE NOT EXISTS { MATCH (:Fact)-[:SUPERSEDES]->(f) }`,
+    nodes: ['f3'], edges: ['e7','e8','e9','e10'],
+    query: {who:'priya_a', before:['Recovering from knee surgery, avoid squats'], after:['Cleared for squats again'], removed:['Recovering from knee surgery, avoid squats'], note:'The old fact still exists in the graph (include_superseded=True would show it) - it is just excluded from the live recall path.'},
+  },
+  {
+    label: 'Step 4 / 6', narration: 'A fact visible to everyone is not a special code path - it is one VISIBLE_TO edge to the sentinel "global" Identity. Any identity key matching itself or "global" sees it.',
+    code: `graph_store.record_fact(\n    driver, 'Studio is closed on public holidays',\n    stated_by='owner', visible_to=[GLOBAL_IDENTITY_KEY],\n)`,
+    cypher: `CREATE (f:Fact {...})\nMATCH (f),(g:Identity {key:'global'}) CREATE (f)-[:VISIBLE_TO]->(g)\n\n-- facts_visible_to's own match clause:\nWHERE v.key IN [$identity_key, 'global']`,
+    nodes: ['f4'], edges: ['e11'],
+    query: {who:'priya_b', before:[], after:['Studio is closed on public holidays'], note:'Priya B has zero direct edges to this fact yet still sees it, via the global sentinel.'},
+  },
+  {
+    label: 'Step 5 / 6', narration: 'A fact extracted from an uploaded file gets a SOURCED_FROM edge to a Document node - this is the metadata link that was missing entirely in the caption/context you asked about earlier tonight.',
+    code: `graph_store.record_document(driver, 'physio_report.pdf',\n    user_context='Physio clearance note for training')\ngraph_store.record_fact(\n    driver, 'Physio cleared full range of motion as of Sept 2026',\n    about='priya_a', stated_by='owner', visible_to=['owner','priya_a'],\n    source_document='physio_report.pdf',\n)`,
+    cypher: `MERGE (d:Document {source_filename: $filename})\nSET d.user_context = coalesce($ctx, d.user_context)\n...\nMATCH (f),(d:Document {source_filename:$filename}) CREATE (f)-[:SOURCED_FROM]->(d)`,
+    nodes: ['f5','doc1'], edges: ['e12','e13','e14','e15'],
+    query: {who:'priya_a', before:['Cleared for squats again','Studio is closed on public holidays'], after:['Cleared for squats again','Studio is closed on public holidays','Physio cleared full range of motion as of Sept 2026'], note:'Querying which document a fact came from is now a one-hop graph traversal, not a lookup this mesh cannot do at all today.'},
+  },
+  {
+    label: 'Step 6 / 6', narration: 'record_fact never auto-creates an identity. A typo’d key matches zero rows on the MATCH clause - the relationship silently fails to attach rather than growing a phantom Identity node with no data behind it.',
+    code: `graph_store.record_fact(driver, 'orphan fact', visible_to=['nonexistent_identity'])\n\nassert graph_client.get_node(driver, 'Identity', {'key': 'nonexistent_identity'}) is None`,
+    cypher: `MATCH (f),(v:Identity {key:'nonexistent_identity'})  -- 0 rows matched\nCREATE (f)-[:VISIBLE_TO]->(v)                        -- never runs`,
+    nodes: [], edges: [],
+    query: {who:null, before:[], after:[], note:'No graph change happens here - the check is that nothing silently grows. That is the point of this last step.'},
+  },
+];
+
+const svg = document.querySelector('svg');
+const nsSVG = 'http://www.w3.org/2000/svg';
+function el(tag, attrs){ const e = document.createElementNS(nsSVG, tag); for(const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+function center(n){ return {x: n.x + n.w/2, y: n.y + n.h/2}; }
+const edgeStyle = {
+  visible: {stroke:'var(--edge-visible)', dash:'none'},
+  about: {stroke:'var(--edge-about)', dash:'5 4'},
+  supersede: {stroke:'var(--edge-supersede)', dash:'none', width:2.5},
+  source: {stroke:'var(--edge-source)', dash:'2 4'},
+};
+
+const nodeEls = {}, edgeEls = {};
+Object.entries(edgeDefs.reduce((m,e)=>(m[e.id]=e,m),{})).forEach(([id, e]) => {
+  const c1 = center(nodes[e.from]), c2 = center(nodes[e.to]);
+  const style = edgeStyle[e.kind];
+  const line = el('line', {x1:c1.x, y1:c1.y, x2:c2.x, y2:c2.y, stroke:style.stroke, 'stroke-width':style.width||1.5, 'stroke-dasharray':style.dash, class:'edge pending'});
+  svg.appendChild(line);
+  edgeEls[id] = line;
+});
+Object.entries(nodes).forEach(([id, n]) => {
+  const g = el('g', {class:'node pending'});
+  const fill = n.type === 'fact' ? 'var(--fact-soft)' : n.type === 'document' ? 'var(--doc-soft)' : 'var(--identity-soft)';
+  const stroke = n.type === 'fact' ? 'var(--fact)' : n.type === 'document' ? 'var(--doc)' : 'var(--identity)';
+  g.appendChild(el('rect', {x:n.x, y:n.y, width:n.w, height:n.h, rx:9, fill, stroke}));
+  const label = el('text', {x:n.x+12, y:n.y+24, 'font-size':12, 'font-weight':600, fill:'var(--ink)', 'font-family':'IBM Plex Sans, sans-serif'});
+  label.textContent = n.label;
+  g.appendChild(label);
+  const sub = el('text', {x:n.x+12, y:n.y+n.h-11, 'font-size':10, fill:'var(--ink-soft)', 'font-family':'IBM Plex Mono, monospace'});
+  sub.textContent = n.sub;
+  g.appendChild(sub);
+  svg.appendChild(g);
+  nodeEls[id] = g;
+});
+
+let current = 0;
+
+function renderGraph(){
+  const visibleNodes = new Set(), visibleEdges = new Set(), justNodes = new Set(), justEdges = new Set();
+  for(let i=0;i<=current;i++){
+    steps[i].nodes.forEach(id => visibleNodes.add(id));
+    steps[i].edges.forEach(id => visibleEdges.add(id));
+  }
+  steps[current].nodes.forEach(id => justNodes.add(id));
+  steps[current].edges.forEach(id => justEdges.add(id));
+  Object.entries(nodeEls).forEach(([id, g]) => g.classList.toggle('pending', !visibleNodes.has(id)));
+  Object.entries(edgeEls).forEach(([id, line]) => {
+    line.classList.toggle('pending', !visibleEdges.has(id));
+    line.classList.toggle('just-added', justEdges.has(id));
+  });
+}
+
+function renderQuery(){
+  const q = steps[current].query;
+  const heading = document.getElementById('qr-heading');
+  const box = document.getElementById('query-result');
+  if(!q){ heading.textContent = 'facts_visible_to()'; box.innerHTML = '<p class="qr-empty">No identity is asking yet - only identities exist so far.</p>'; return; }
+  heading.textContent = q.who ? `facts_visible_to(driver, "${q.who}")` : 'facts_visible_to()';
+  const removed = new Set(q.removed || []);
+  let html = '';
+  if(q.after.length === 0 && removed.size === 0){
+    html += '<p class="qr-empty">Returns [] - nothing visible yet.</p>';
+  } else {
+    html += '<ul class="qr-list">';
+    q.after.forEach(text => { html += `<li><span>${text}</span><span class="badge">visible</span></li>`; });
+    removed.forEach(text => { if(!q.after.includes(text)) html += `<li class="removed"><span>${text}</span><span class="badge">superseded</span></li>`; });
+    html += '</ul>';
+  }
+  html += `<p class="qr-empty" style="margin-top:.8rem;">${q.note}</p>`;
+  box.innerHTML = html;
+}
+
+function render(){
+  const s = steps[current];
+  document.getElementById('step-label').textContent = s.label;
+  document.getElementById('narration').textContent = s.narration;
+  document.getElementById('code').textContent = s.code;
+  document.getElementById('cypher').textContent = s.cypher;
+  document.getElementById('prev').disabled = current === 0;
+  document.getElementById('next').disabled = current === steps.length - 1;
+  document.querySelectorAll('#dots button').forEach((b,i) => b.classList.toggle('active', i === current));
+  renderGraph();
+  renderQuery();
+}
+
+const dots = document.getElementById('dots');
+steps.forEach((_, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.addEventListener('click', () => { current = i; render(); });
+  dots.appendChild(b);
+});
+document.getElementById('prev').addEventListener('click', () => { if(current>0){ current--; render(); }});
+document.getElementById('next').addEventListener('click', () => { if(current<steps.length-1){ current++; render(); }});
+document.getElementById('test-link').addEventListener('click', e => e.preventDefault());
+
+render();
+</script>

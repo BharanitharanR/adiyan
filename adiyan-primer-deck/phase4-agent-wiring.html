@@ -1,0 +1,306 @@
+<title>Wiring Memory Into An Agent</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --accent:#0F6E56; --accent-soft:#E1F5EE;
+  --hop:#378ADD; --hop-soft:#E6F1FB;
+  --hop-new:#0F6E56; --hop-new-soft:#E1F5EE;
+  --warn:#854F0B; --warn-soft:#FBF0DD;
+  --code-bg:#EFEEE7; --code-ink:#3A3C36; --code-add:#D8EFE5; --code-add-ink:#0B4E3D;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --accent:#5DCAA5; --accent-soft:#0F6E56;
+    --hop:#85B7EB; --hop-soft:#0C447C;
+    --hop-new:#5DCAA5; --hop-new-soft:#085041;
+    --warn:#EF9F27; --warn-soft:#3B2B08;
+    --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --accent:#5DCAA5; --accent-soft:#0F6E56;
+  --hop:#85B7EB; --hop-soft:#0C447C;
+  --hop-new:#5DCAA5; --hop-new-soft:#085041;
+  --warn:#EF9F27; --warn-soft:#3B2B08;
+  --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:960px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
+h1{font-size:1.75rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
+.lede{color:var(--ink-soft);font-size:.98rem;line-height:1.65;max-width:64ch;margin:0 0 1.3rem;}
+.keyfind{
+  display:flex;gap:.85rem;align-items:flex-start;padding:.95rem 1.1rem;border-radius:10px;
+  background:var(--accent-soft);border:1.5px solid var(--accent);margin-bottom:2rem;font-size:.92rem;line-height:1.55;
+}
+.keyfind .tag{
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.04em;text-transform:uppercase;font-weight:600;
+  background:var(--accent);color:var(--panel);padding:.25rem .5rem;border-radius:5px;flex-shrink:0;margin-top:.1rem;
+}
+h2.sect{font-size:1.1rem;font-weight:600;margin:0 0 .3rem;}
+p.sect-sub{font-size:.87rem;color:var(--ink-soft);margin:0 0 1rem;line-height:1.5;}
+.pipeline{display:flex;flex-direction:column;gap:.45rem;margin-bottom:1rem;}
+.hop{
+  display:flex;align-items:center;gap:.8rem;padding:.7rem .9rem;border-radius:9px;cursor:pointer;
+  background:var(--panel);border:1.5px solid var(--line);transition:border-color .15s,background .15s;
+  text-align:left;font-family:var(--sans);color:var(--ink);width:100%;
+}
+.hop:hover{border-color:var(--hop);}
+.hop.active{border-color:var(--ink);border-width:2px;}
+.hop.is-new{background:var(--hop-new-soft);border-color:var(--hop-new);}
+.hop-idx{
+  font-family:var(--mono);font-size:.72rem;width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;background:var(--hop-soft);color:var(--hop);font-weight:600;
+}
+.hop.is-new .hop-idx{background:var(--hop-new);color:var(--panel);}
+.hop-name{font-size:.9rem;font-weight:500;flex:1;}
+.hop-name .file{display:block;font-family:var(--mono);font-size:.72rem;color:var(--ink-soft);font-weight:400;margin-top:.1rem;}
+.hop-badge{font-family:var(--mono);font-size:.64rem;letter-spacing:.04em;text-transform:uppercase;padding:.22rem .45rem;border-radius:4px;flex-shrink:0;}
+.hop-badge.existing{background:var(--hop-soft);color:var(--hop);}
+.hop-badge.added{background:var(--hop-new);color:var(--panel);}
+.inspect{
+  background:var(--panel);border:1.5px solid var(--line);border-radius:11px;padding:1.1rem 1.2rem;margin-bottom:2rem;
+}
+.inspect h3{font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 .6rem;font-weight:600;}
+.inspect .what{font-size:.92rem;line-height:1.6;margin:0 0 .85rem;}
+.inspect .what code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--code-ink);padding:.08rem .33rem;border-radius:4px;}
+.held{font-family:var(--mono);font-size:.78rem;background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:.75rem .9rem;overflow-x:auto;line-height:1.6;white-space:pre;}
+.held-label{font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin:.85rem 0 .35rem;}
+.toggle-row{display:flex;gap:.5rem;margin-bottom:.9rem;}
+.tbtn{
+  font-family:var(--sans);font-size:.85rem;font-weight:500;color:var(--ink);background:var(--panel);
+  border:1.5px solid var(--line);border-radius:8px;padding:.5rem .95rem;cursor:pointer;
+}
+.tbtn.active{border-color:var(--accent);border-width:2px;color:var(--accent);}
+pre.code{
+  font-family:var(--mono);font-size:.77rem;line-height:1.6;background:var(--code-bg);color:var(--code-ink);
+  border-radius:10px;padding:1rem 1.1rem;overflow-x:auto;margin:0;
+}
+pre.code .add{display:block;background:var(--code-add);color:var(--code-add-ink);margin:0 -1.1rem;padding:0 1.1rem;}
+pre.code .ctx{color:var(--ink-soft);}
+.qa{margin-top:2.2rem;}
+.q{
+  background:var(--panel);border:1.5px solid var(--line);border-radius:10px;margin-bottom:.5rem;overflow:hidden;
+}
+.q summary{
+  cursor:pointer;padding:.8rem 1rem;font-size:.92rem;font-weight:500;list-style:none;display:flex;gap:.6rem;align-items:center;
+}
+.q summary::-webkit-details-marker{display:none;}
+.q summary::before{content:'+';font-family:var(--mono);color:var(--accent);font-weight:600;flex-shrink:0;}
+.q[open] summary::before{content:'−';}
+.q .a{padding:0 1rem 1rem 2.2rem;font-size:.89rem;line-height:1.65;color:var(--ink);}
+.q .a code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--code-ink);padding:.08rem .33rem;border-radius:4px;}
+.caveat{
+  background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;
+  padding:.75rem .95rem;font-size:.87rem;line-height:1.55;margin-top:.85rem;
+}
+.caveat b{color:var(--warn);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; memory design &middot; Phase 4</p>
+  <h1>How the memory hook gets wired into an agent</h1>
+  <p class="lede">Phase 3 built the platform contract. This is the question of how an agent actually uses it - and specifically, how the agent knows <i>whose</i> memory it's reading, since an agent sits two network hops away from WhatsApp and never sees a phone number.</p>
+
+  <div class="keyfind">
+    <span class="tag">Key finding</span>
+    <span>No new plumbing is needed to carry identity. <code>permissions.mint_token(chat_id, tier)</code> already puts the real chat_id in the JWT <code>sub</code> claim, and every agent already decodes that token on the permission-check line it already has. The identity was always there - nothing was reading it.</span>
+  </div>
+
+  <h2 class="sect">1. Follow the identity through the pipeline</h2>
+  <p class="sect-sub">Click any hop to see exactly what that layer holds in hand. Green hops are the only ones Phase 4 adds.</p>
+  <div class="pipeline" id="pipeline"></div>
+  <div class="inspect" id="inspect"></div>
+
+  <h2 class="sect">2. The actual diff in the agent</h2>
+  <p class="sect-sub">Real code from <span style="font-family:var(--mono);font-size:.88em;">mesh/micro_habits/agent_executor.py</span>. Toggle to see what changes.</p>
+  <div class="toggle-row">
+    <button class="tbtn active" id="btn-before" type="button">Today</button>
+    <button class="tbtn" id="btn-after" type="button">With the hook wired</button>
+  </div>
+  <pre class="code" id="codeview"></pre>
+
+  <div class="qa">
+    <h2 class="sect">Questions this usually raises</h2>
+    <p class="sect-sub">The ones worth having an answer ready for.</p>
+    <div id="questions"></div>
+  </div>
+</div>
+
+<script>
+const hops = [
+  {
+    name: 'WhatsApp message arrives', file: 'mesh/lib/utilities/whatsapp/openwa_receiver.py', status: 'existing',
+    what: 'The raw webhook payload. At this point there is only a <code>chat_id</code> in whatever JID form WhatsApp happened to use, plus a <code>pushName</code> - a display name that is <b>not</b> unique and is not safe to key anything on.',
+    held: `chat_id    = "14259744452672@lid"\npushName   = "Bharani"        # not unique - two contacts share this`,
+  },
+  {
+    name: 'Rules engine resolves identity', file: 'mesh/orchestrator/rules_engine.py', status: 'existing',
+    what: 'Calls <code>resolve_identity_key(chat_id)</code> - phone digits for a <code>@c.us</code> contact, the raw <code>@lid</code> otherwise. This is the value that is already the Mongo <code>_id</code> of the <code>orchestrator_clients</code> document, so whitelist and tier lookups happen against it.',
+    held: `chat_id       = "14259744452672@lid"\nidentity_key  = "14259744452672@lid"   # resolve_identity_key(chat_id)\ntier          = "standard"             # from orchestrator_clients.metadata`,
+  },
+  {
+    name: 'Orchestrator mints the call token', file: 'mesh/orchestrator/skills/handle_message.py:192', status: 'existing',
+    what: 'The line that makes all of this work without new plumbing: <code>permissions.mint_token(chat_id, tier)</code>. The caller\'s real chat_id becomes the JWT <code>sub</code> claim. This already happens on every single call orchestrator makes into a child agent today.',
+    held: `token = permissions.mint_token(chat_id, tier)\n\n# decoded JWT payload:\n{ "sub": "14259744452672@lid",\n  "tier": "standard",\n  "iat": 1757592000, "exp": ... }`,
+  },
+  {
+    name: 'A2A call crosses the network', file: 'mesh/lib/a2a_client.py', status: 'existing',
+    what: 'The token rides along as request metadata. The agent on the other side is a separate process on a separate port - it has no access to orchestrator\'s database, its chat cache, or anything else. The token is the only thing that crosses.',
+    held: `POST http://127.0.0.1:8430/\nmetadata: { token: "eyJhbGciOi..." }\nparts:    [ { skill_id: "log_micro_habit", entry: "..." } ]`,
+  },
+  {
+    name: 'Agent verifies the token', file: 'mesh/micro_habits/agent_executor.py:110', status: 'existing',
+    what: 'Every agent in this mesh already has this line, for the permission check. <code>claims</code> contains the caller\'s identity - it was always available here, just never used for anything except authorization.',
+    held: `claims = permissions.verify_token(context.metadata.get('token'))\n# -> { "sub": "14259744452672@lid", "tier": "standard", ... }\n\nif not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):\n    return  # already exists, unchanged`,
+  },
+  {
+    name: 'Derive the identity key, fetch context', file: 'memory_hook.fetch_context(...)', status: 'added',
+    what: 'The new pre-step. <code>resolve_identity_key(claims["sub"])</code> gives the exact same key orchestrator used - the same function, not a reimplementation - and <code>fetch_context</code> returns a prompt-ready block of every fact this identity is allowed to see. Deterministic: a graph query, not an optional tool the model may skip.',
+    held: `identity_key = resolve_identity_key(claims['sub'])\nmemory_hook.ensure_identity(identity_key)\ncontext = memory_hook.fetch_context(identity_key)\n\n# -> "What you know about this person:\\n- Prefers 6am sessions"`,
+  },
+  {
+    name: 'Record what was learned', file: 'memory_hook.record_fact(...)', status: 'added',
+    what: 'The new post-step, after the skill has run. Writes one structured fact with explicit <code>about</code> / <code>stated_by</code> / <code>visible_to</code> - no LLM judgment call deciding whether this is a new fact or an update to an old one.',
+    held: `memory_hook.record_fact(\n    f'Logged a micro habit: {params["entry"]}',\n    about=identity_key,\n    stated_by=identity_key,\n    visible_to=[identity_key, OWNER_KEY],\n)`,
+  },
+];
+
+const codeBefore = `<span class="ctx">        # Permission check - every call into this mesh goes through the</span>
+<span class="ctx">        # same permissions.is_allowed(), regardless of which agent it's</span>
+<span class="ctx">        # calling.</span>
+        claims = permissions.verify_token(context.metadata.get('token'))
+        if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):
+            await updater.reject(new_text_message('Not authorized for this.'))
+            return
+
+        try:
+            if skill_id == 'log_micro_habit':
+                result = await micro_habits.run(**params)
+            elif skill_id == 'list_micro_habits':
+                result = await list_micro_habits.run(**params)
+        except Exception as e:
+            await updater.failed(new_text_message(f'Could not process request: {e}'))
+            return
+
+        await updater.add_artifact(parts=[new_data_part(result)])
+        await updater.complete()`;
+
+const codeAfter = `<span class="ctx">        claims = permissions.verify_token(context.metadata.get('token'))</span>
+<span class="ctx">        if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):</span>
+<span class="ctx">            await updater.reject(new_text_message('Not authorized for this.'))</span>
+<span class="ctx">            return</span>
+<span class="add"></span>
+<span class="add">        # The caller's identity was already in the token - see mint_token's</span>
+<span class="add">        # own docstring: subject IS the chat_id for a real WhatsApp identity.</span>
+<span class="add">        # 'service'/'orchestrator' subjects have no person behind them, so</span>
+<span class="add">        # memory is skipped entirely rather than invented for a machine caller.</span>
+<span class="add">        identity_key = None</span>
+<span class="add">        subject = (claims or {}).get('sub')</span>
+<span class="add">        if subject and (claims or {}).get('tier') != 'service':</span>
+<span class="add">            identity_key = resolve_identity_key(subject)</span>
+<span class="add">            memory_hook.ensure_identity(identity_key)</span>
+<span class="add">            memory_context = memory_hook.fetch_context(identity_key)</span>
+<span class="add">            # passed into the skill, or prepended to its prompt - per skill</span>
+
+        try:
+            if skill_id == 'log_micro_habit':
+                result = await micro_habits.run(**params)
+            elif skill_id == 'list_micro_habits':
+                result = await list_micro_habits.run(**params)
+        except Exception as e:
+            await updater.failed(new_text_message(f'Could not process request: {e}'))
+            return
+<span class="add"></span>
+<span class="add">        if identity_key:</span>
+<span class="add">            memory_hook.record_fact(</span>
+<span class="add">                f'Logged a micro habit: {params.get("entry")}',</span>
+<span class="add">                about=identity_key, stated_by=identity_key,</span>
+<span class="add">                visible_to=[identity_key],</span>
+<span class="add">            )</span>
+
+        await updater.add_artifact(parts=[new_data_part(result)])
+        await updater.complete()`;
+
+const questions = [
+  {
+    q: 'If every agent copies these lines, is it really "platform-wired"?',
+    a: 'Not fully, no - and that is the honest state of it. Phase 4 proves the pattern on one agent by hand. Making it genuinely platform-level means either lifting it into a shared base executor that all agents inherit, or baking it into the <code>mesh/tools/new_agent.py</code> scaffold so every future agent gets it without knowing it exists. Both are Phase 5. Copying it into nine agents by hand would be the wrong outcome.',
+  },
+  {
+    q: 'What happens when the caller is a scheduled job, not a person?',
+    a: 'The token subject is <code>"orchestrator"</code> or <code>"service"</code>, not a chat_id - there is no person behind the call. The wiring skips memory entirely in that case rather than creating an Identity node for a machine. That check is the <code>tier != \'service\'</code> guard in the diff, and it matters: scheduler fires, cron triggers, and agent-to-agent calls all take this path.',
+  },
+  {
+    q: 'Why not resolve the identity key inside memory_hook instead?',
+    a: 'Because then <code>resolve_identity_key</code> would be called in two different modules with two different ideas of what is canonical - exactly how the original display-name bug was able to exist. The hook deliberately accepts an already-resolved key and refuses to do the resolution itself. The tradeoff is that every call site has to get it right, which is a code-review discipline rather than something enforced in code.',
+  },
+  {
+    q: 'The Neo4j driver is synchronous - is that blocking the async executor?',
+    a: 'Yes, technically. Same tradeoff already accepted for <code>mesh/scheduler/db.py</code> and <code>mesh/orchestrator/db.py</code>, which both use blocking pymongo from async handlers: the query volume is small and local, so the blocking cost is not measurable next to the LLM calls in the same request. If that stops being true, the driver has an async variant and the hook is the only file that would change.',
+  },
+  {
+    q: 'Who decides the visible_to list - the agent or the platform?',
+    a: 'Currently the agent, which is the weakest part of this design so far. An agent author writing <code>visible_to=[identity_key]</code> by hand can get it wrong, and getting it wrong is a privacy leak rather than a crash. A stronger version would have the platform derive the default scope from the caller\'s tier and require an explicit override to widen it - worth doing before this reaches more than one agent.',
+  },
+  {
+    q: 'What does the display name get used for now?',
+    a: 'Only <code>Identity.display_name</code>, for human readability when inspecting the graph - never as a lookup key. Note that the display name is not in the token at all, so an agent calling <code>ensure_identity(identity_key)</code> passes no name; orchestrator, which does have <code>contact_name</code>, is the layer that should populate it. That is a small gap in the current wiring.',
+  },
+];
+
+const pipeline = document.getElementById('pipeline');
+const inspect = document.getElementById('inspect');
+let active = 0;
+
+hops.forEach((h, i) => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'hop' + (h.status === 'added' ? ' is-new' : '');
+  btn.innerHTML = `
+    <span class="hop-idx">${i+1}</span>
+    <span class="hop-name">${h.name}<span class="file">${h.file}</span></span>
+    <span class="hop-badge ${h.status === 'added' ? 'added' : 'existing'}">${h.status === 'added' ? 'Phase 4 adds' : 'Already exists'}</span>
+  `;
+  btn.addEventListener('click', () => { active = i; render(); });
+  pipeline.appendChild(btn);
+});
+
+function render(){
+  document.querySelectorAll('.hop').forEach((b, i) => b.classList.toggle('active', i === active));
+  const h = hops[active];
+  inspect.innerHTML = `
+    <h3>Hop ${active+1} &middot; ${h.status === 'added' ? 'new in Phase 4' : 'unchanged, already in the mesh'}</h3>
+    <p class="what">${h.what}</p>
+    <p class="held-label">What this layer holds</p>
+    <div class="held">${h.held.replace(/</g,'&lt;')}</div>
+  `;
+}
+
+const codeview = document.getElementById('codeview');
+const btnBefore = document.getElementById('btn-before');
+const btnAfter = document.getElementById('btn-after');
+function showCode(which){
+  codeview.innerHTML = which === 'before' ? codeBefore : codeAfter;
+  btnBefore.classList.toggle('active', which === 'before');
+  btnAfter.classList.toggle('active', which === 'after');
+}
+btnBefore.addEventListener('click', () => showCode('before'));
+btnAfter.addEventListener('click', () => showCode('after'));
+
+const qbox = document.getElementById('questions');
+questions.forEach(item => {
+  const d = document.createElement('details');
+  d.className = 'q';
+  d.innerHTML = `<summary>${item.q}</summary><div class="a">${item.a}</div>`;
+  qbox.appendChild(d);
+});
+
+render();
+showCode('before');
+</script>

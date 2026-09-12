@@ -1,0 +1,240 @@
+<title>Designing Adiyan's Memory Graph</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
+  --accent:#0F6E56; --accent-soft:#E1F5EE; --accent-ink:#0B4E3D;
+  --tag-decision:#378ADD; --tag-decision-soft:#E6F1FB;
+  --tag-why:#5B5D57; --tag-why-soft:#EDECE6;
+  --tag-interview:#854F0B; --tag-interview-soft:#FBF0DD;
+  --tag-bug:#993C1D; --tag-bug-soft:#FAECE7;
+  --code-bg:#EFEEE7; --code-ink:#3A3C36;
+  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+    --accent:#5DCAA5; --accent-soft:#0F6E56; --accent-ink:#CFF3E4;
+    --tag-decision:#85B7EB; --tag-decision-soft:#0C447C;
+    --tag-why:#9A9C94; --tag-why-soft:#2A2C27;
+    --tag-interview:#EF9F27; --tag-interview-soft:#3B2B08;
+    --tag-bug:#F0997B; --tag-bug-soft:#4A1B0C;
+    --code-bg:#0F110F; --code-ink:#C9CBC2;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
+  --accent:#5DCAA5; --accent-soft:#0F6E56; --accent-ink:#CFF3E4;
+  --tag-decision:#85B7EB; --tag-decision-soft:#0C447C;
+  --tag-why:#9A9C94; --tag-why-soft:#2A2C27;
+  --tag-interview:#EF9F27; --tag-interview-soft:#3B2B08;
+  --tag-bug:#F0997B; --tag-bug-soft:#4A1B0C;
+  --code-bg:#0F110F; --code-ink:#C9CBC2;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:1040px;margin:0 auto;padding:2.8rem 1.5rem 4rem;}
+header{margin-bottom:2rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .6rem;}
+h1{font-size:2rem;font-weight:700;margin:0 0 .6rem;text-wrap:balance;line-height:1.15;}
+.lede{color:var(--ink-soft);font-size:1.02rem;line-height:1.65;max-width:66ch;margin:0 0 1.2rem;}
+.meta-row{display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.8rem;color:var(--ink-soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:.8rem 0;margin-bottom:.5rem;}
+.meta-row b{color:var(--ink);font-weight:600;}
+
+.jump{display:flex;flex-wrap:wrap;gap:.4rem;margin:1.4rem 0 0;}
+.jump button{
+  font-family:var(--mono);font-size:.72rem;color:var(--ink-soft);background:var(--panel);
+  border:1px solid var(--line);border-radius:20px;padding:.3rem .7rem;cursor:pointer;
+}
+.jump button:hover{border-color:var(--accent);color:var(--accent);}
+
+.timeline{position:relative;margin-top:2.2rem;}
+.timeline::before{
+  content:'';position:absolute;left:23px;top:8px;bottom:8px;width:2px;background:var(--line);
+}
+.step{position:relative;padding-left:64px;margin-bottom:2.6rem;scroll-margin-top:1rem;}
+.step-num{
+  position:absolute;left:0;top:0;width:48px;height:48px;border-radius:50%;
+  background:var(--panel);border:2px solid var(--accent);color:var(--accent);
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:600;font-size:1rem;
+  z-index:1;
+}
+.step-title{font-size:1.2rem;font-weight:700;margin:.1rem 0 .3rem;text-wrap:balance;}
+.step-sub{font-size:.85rem;color:var(--ink-soft);margin:0 0 .9rem;font-family:var(--mono);}
+.step-body{font-size:.94rem;line-height:1.65;margin-bottom:.9rem;}
+.step-body code{font-family:var(--mono);font-size:.87em;background:var(--code-bg);color:var(--code-ink);padding:.1rem .35rem;border-radius:4px;}
+
+.tags{display:flex;flex-direction:column;gap:.6rem;margin-top:1rem;}
+.tag-block{border-radius:10px;padding:.75rem .95rem;font-size:.86rem;line-height:1.55;}
+.tag-block .tag-label{font-family:var(--mono);font-size:.68rem;letter-spacing:.05em;text-transform:uppercase;font-weight:600;display:block;margin-bottom:.3rem;}
+.tag-block.decision{background:var(--tag-decision-soft);}
+.tag-block.decision .tag-label{color:var(--tag-decision);}
+.tag-block.why{background:var(--tag-why-soft);}
+.tag-block.why .tag-label{color:var(--tag-why);}
+.tag-block.interview{background:var(--tag-interview-soft);}
+.tag-block.interview .tag-label{color:var(--tag-interview);}
+.tag-block.bug{background:var(--tag-bug-soft);}
+.tag-block.bug .tag-label{color:var(--tag-bug);}
+
+pre.code{
+  font-family:var(--mono);font-size:.78rem;line-height:1.5;background:var(--code-bg);color:var(--code-ink);
+  border-radius:8px;padding:.75rem .9rem;overflow-x:auto;margin:.7rem 0 0;
+}
+.checks{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.7rem;}
+.check{
+  font-family:var(--mono);font-size:.74rem;background:var(--accent-soft);color:var(--accent-ink);
+  border-radius:6px;padding:.28rem .6rem;
+}
+.link-row{margin-top:.9rem;}
+.link-row a{color:var(--accent);font-size:.85rem;text-decoration:none;border-bottom:1px solid currentColor;}
+
+footer{margin-top:1rem;padding-top:1.5rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--ink-soft);line-height:1.6;}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Case study &middot; Adiyan multi-agent mesh</p>
+    <h1>Designing memory determinism into a live multi-agent system</h1>
+    <p class="lede">A running WhatsApp AI agent mesh had a real, evidenced bug: two different people were sharing one memory bucket. This walks through the design reasoning end to end - from root-causing the bug, to the access-control model it implied, to the architecture decision that model forced, to a phased build where every layer is provable in isolation before the next one is trusted.</p>
+    <div class="meta-row">
+      <span><b>System</b> Adiyan - an A2A-protocol multi-agent mesh (orchestrator + specialist agents) behind WhatsApp</span>
+      <span><b>Scope of this piece</b> Phases 1-2 of a 5-phase rollout, both built and verified live</span>
+    </div>
+    <div class="jump" id="jump"></div>
+  </header>
+
+  <div class="timeline" id="timeline"></div>
+
+  <footer>
+    Every claim on this page is grounded in something actually run this session - a log grep, a live query against real migrated data, or a test executed against a real Neo4j instance - not an assumption about what "should" happen. That discipline is itself part of the design approach worth naming in an interview.
+  </footer>
+</div>
+
+<script>
+const steps = [
+  {
+    title: 'Root-cause the vague complaint, don’t patch the symptom',
+    sub: 'Starting point: "Adiyan feels inconsistent"',
+    body: `The system already had two memory mechanisms - a short-term rolling chat cache, and mem0 for semantic long-term recall. Rather than accept "it's inconsistent" as a diagnosis, I traced the actual recall path end to end and found the specific mechanism: mem0 was partitioned by <code>contact_name</code> - the raw WhatsApp display name - not a stable identity key. A live query against the real, already-migrated <code>orchestrator_clients</code> data showed two different chat_ids both resolving to the display name "Bharani," meaning at least three distinct real identities were sharing one memory bucket in production.`,
+    tags: [
+      {kind:'why', label:'Why this matters', text:'A design decision made on a vague complaint fixes the wrong layer. This one was made on a query result against real data, not a hunch.'},
+      {kind:'interview', label:'Interview point', text:'"I don’t start designing until I can point at the exact line of code and the exact data that proves the problem exists."'},
+    ],
+  },
+  {
+    title: 'Turn a one-line ask into a concrete access-control model',
+    sub: 'Input: "memory should be distinct - owner-only, owner+specific user, and global"',
+    body: `That sentence is a requirement, not a design. I translated it into three concrete tiers with different audiences: <b>owner-only</b> (never leaves the owner's context), <b>owner + one specific registered user</b> (a shared thread between two parties), and <b>global</b> (every registered contact). Each tier needed a different answer to "who can this be shown to," which is exactly the question a flat, single-bucket memory store cannot answer today.`,
+    tags: [
+      {kind:'decision', label:'Decision', text:'Model visibility as a first-class, per-fact property - not an implicit property of which mem0 "user_id" happened to store it.'},
+      {kind:'interview', label:'Interview point', text:'"A one-line product ask (‘keep owner stuff separate’) often hides a real access-control model. I make that model explicit before touching code."'},
+    ],
+  },
+  {
+    title: 'Pick the data structure the access-control question actually needs',
+    sub: 'Architecture decision: a real graph database, not a Mongo array field',
+    body: `The concrete case that forced this: a coach’s note "Priya B hasn’t paid September fees" is <i>about</i> Priya B but must never be <i>visible to</i> her. A single <code>visible_to: [...]</code> array on a Mongo document could technically encode this, but every new relationship type (a correction, a source document, a batch-scoped fact) would mean touching every existing document’s shape. A graph makes "about" and "visible_to" two independent, native edge types from day one, and a brand-new relationship type later needs zero migration of anything that already exists.`,
+    tags: [
+      {kind:'decision', label:'Decision', text:'Neo4j (Community), addressed only through a thin driver wrapper - kept fully separate from the existing Mongo/Qdrant stores, not a replacement for either.'},
+      {kind:'why', label:'Why not just extend Mongo', text:'Because the actual entities in this problem - identities, facts, and the relationships between them - are the natural unit of a graph, not a document with an ever-growing array of special-cased fields.'},
+      {kind:'interview', label:'Interview point', text:'"I picked the data model based on the shape of the query I needed to answer, not out of familiarity or default."'},
+    ],
+  },
+  {
+    title: 'Make "individually testable" a real architectural constraint',
+    sub: 'Explicit requirement, before any code was written',
+    body: `I broke the build into five layers, each with a narrow contract and zero dependency on the layer above it: (1) bare graph primitives, (2) the memory schema built only on those primitives, (3) a platform-wide hook every agent can call, (4) wiring one real agent, (5) rolling the pattern out. A failure in layer 2 can never be confused with a bug in layer 1, because layer 2’s tests never touch anything layer 1 doesn’t already guarantee.`,
+    tags: [
+      {kind:'decision', label:'Decision', text:'No layer is trusted until its own isolated test suite passes against a real (not mocked) backing service.'},
+      {kind:'interview', label:'Interview point', text:'"Testability isn’t something I bolt on after the design - constraining each layer to a narrow, provable contract is itself a design decision that shapes the architecture."'},
+    ],
+  },
+  {
+    title: 'Phase 1 - bare graph primitives, no domain concepts at all',
+    sub: 'mesh/lib/graph_client.py',
+    body: `Five functions - <code>create_node</code>, <code>get_node</code>, <code>create_relationship</code>, <code>run_query</code>, <code>wipe_all</code>. This file has zero knowledge of "Fact" or "Identity" - it only knows nodes and relationships. That separation means the memory schema (Phase 2) can be tested without ever doubting whether the graph engine itself works, and vice versa.`,
+    code: `def create_relationship(driver, from_label, from_match, rel_type, to_label, to_match, properties=None):
+    """Matches one existing node on each side by their own properties
+    (not Neo4j's internal id) and creates a directed relationship."""`,
+    checks: ['create_node + get_node round-trip', 'get_node returns None for a miss', 'relationship is traversable', 'a never-created relationship type has zero matches', 'run_query returns plain dicts'],
+    tags: [
+      {kind:'interview', label:'Interview point', text:'"The lowest layer of my stack knows nothing about the business problem - that’s deliberate. It’s the layer most likely to be reused if the domain model changes later."'},
+    ],
+  },
+  {
+    title: 'Phase 2 - the actual memory schema, built only on Phase 1',
+    sub: 'mesh/lib/graph_store.py',
+    body: `This is the first file that knows what a Fact or Identity is: <code>(:Fact)-[:ABOUT]->(:Identity)</code>, <code>[:STATED_BY]</code>, <code>[:VISIBLE_TO]</code>, <code>[:SUPERSEDES]</code>, <code>[:SOURCED_FROM]->(:Document)</code>. Two choices worth naming: a "global" fact is just an edge to one sentinel Identity node, not an if/else branch in the query code - and a correction (<code>supersedes</code>) is a structural graph edge, not a hope that some LLM extraction step notices the correction later.`,
+    checks: ['fact about someone isn’t automatically visible to them', 'owner sees a confidential fact', 'correction hides the old fact, keeps history queryable', 'global fact reaches every identity via one sentinel node', 'a fact links back to its source document', 'a typo’d identity key creates no phantom node'],
+    tags: [
+      {kind:'decision', label:'Decision', text:'about ≠ visible_to, modeled as two independent edge types from the start - this is the exact distinction that a flat array field tends to blur.'},
+      {kind:'interview', label:'Interview point', text:'"I look for the place where a natural-language requirement (‘don’t show her that’) can be lost in translation to a boolean flag, and make sure the data model can’t collapse that distinction by accident."'},
+    ],
+  },
+  {
+    title: 'Live testing surfaced a real bug the design review didn’t',
+    sub: 'Verification discipline: run it, don’t just reason about it',
+    body: `The first live test run failed: <code>get_node</code> used a Cypher clause requiring a node’s <i>entire</i> property map to equal the lookup dict exactly, so any partial-property lookup (the normal case) silently matched nothing. Running against a real database also surfaced something a code review never would - this Neo4j version’s stricter parser rejects parameter maps inside <code>MATCH</code> patterns entirely. Both were fixed by rewriting the match as a dynamically-built, per-key equality clause.`,
+    code: `where_clause = ' AND '.join(f'n.{key} = $match.{key}' for key in match)
+session.run(f'MATCH (n:{label}) WHERE {where_clause} RETURN n', match=match)`,
+    tags: [
+      {kind:'bug', label:'Bug found live', text:'WHERE n = $match required full property-map equality - fixed to per-key equality, which also turned out to be the only form this Neo4j version’s parser accepts.'},
+      {kind:'interview', label:'Interview point', text:'"I don’t claim something works until I’ve run it against the real dependency. This bug would have shipped invisibly - every earlier design review of the code read correctly."'},
+    ],
+  },
+  {
+    title: 'Know your blast radius: what deliberately did not change',
+    sub: 'Short-term memory (chat_cache.py) and fuzzy memory (mem0_backend.py)',
+    body: `Adding a third memory tier didn’t touch the other two. The short-term rolling cache and mem0’s semantic recall still run exactly as before - this is additive infrastructure sitting alongside them, not a rewrite. Their own open issues (mem0’s display-name collision bug, for one) are still open, tracked separately, not silently folded into this work.`,
+    tags: [
+      {kind:'why', label:'Why call this out explicitly', text:'A design change that quietly touches more than it needed to is a hidden cost. Naming exactly what didn’t change is as much a design statement as naming what did.'},
+      {kind:'interview', label:'Interview point', text:'"Part of scoping a change well is being able to say precisely what it does NOT affect, and proving that, not just asserting it."'},
+    ],
+  },
+  {
+    title: 'What’s next, deliberately not built yet',
+    sub: 'Phases 3-5',
+    body: `Phase 3 is a platform-wide hook (<code>fetch_context</code> / <code>record_fact</code>) any agent calls without wiring memory access itself - the same way every agent already gets config and auth for free from the platform. Phase 4 wires exactly one real agent to prove the pattern before Phase 5 rolls it out mesh-wide. None of this is built yet - Phases 1 and 2 were kept deliberately narrow and complete rather than rushing ahead on unverified ground.`,
+    tags: [
+      {kind:'interview', label:'Interview point', text:'"I’d rather hand over two fully-verified layers than five half-finished ones - a partially-built stack is harder to reason about than a smaller, solid one."'},
+    ],
+  },
+];
+
+const timeline = document.getElementById('timeline');
+const jump = document.getElementById('jump');
+const tagMeta = {
+  decision: {cls:'decision', label:'Decision'},
+  why: {cls:'why', label:'Why'},
+  interview: {cls:'interview', label:'Interview point'},
+  bug: {cls:'bug', label:'Bug found live'},
+};
+
+steps.forEach((s, i) => {
+  const id = 'step-' + (i+1);
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.id = id;
+  let tagsHtml = '<div class="tags">';
+  (s.tags || []).forEach(t => {
+    tagsHtml += `<div class="tag-block ${t.kind}"><span class="tag-label">${tagMeta[t.kind].label}</span>${t.text}</div>`;
+  });
+  tagsHtml += '</div>';
+  const codeHtml = s.code ? `<pre class="code">${s.code.replace(/</g,'&lt;')}</pre>` : '';
+  const checksHtml = s.checks ? `<div class="checks">${s.checks.map(c => `<span class="check">✓ ${c}</span>`).join('')}</div>` : '';
+  div.innerHTML = `
+    <div class="step-num">${i+1}</div>
+    <div class="step-title">${s.title}</div>
+    <p class="step-sub">${s.sub}</p>
+    <p class="step-body">${s.body}</p>
+    ${codeHtml}${checksHtml}${tagsHtml}
+  `;
+  timeline.appendChild(div);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = (i+1) + '. ' + s.title.split(',')[0].split(' - ')[0].slice(0, 28);
+  btn.addEventListener('click', () => document.getElementById(id).scrollIntoView({behavior:'smooth', block:'start'}));
+  jump.appendChild(btn);
+});
+</script>

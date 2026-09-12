@@ -57,6 +57,41 @@ local defaults), just without the Mongo-backed override/edit path.
 https://www.mongodb.com/docs/manual/installation/ - then run it yourself,
 same standing rule as every other mesh process.
 
+## Neo4j
+
+**What:** Graph database.
+**Why Adiyan needs it:** Backs the structured memory graph
+(`mesh/lib/graph_client.py`/`graph_store.py`) - `Identity`/`Fact`/`Document`
+nodes and `about`/`stated_by`/`visible_to`/`supersedes`/`sourced_from`
+relationships, read and written through `mesh/lib/memory_hook.py`'s
+platform contract (`ensure_identity`/`fetch_context`/`record_fact`), which
+every agent's `ask()` call gets automatically (see
+`mesh/lib/bootstrap.py`'s executor wrapper and `mesh/lib/agent_sdk.py`'s
+`ask()` - the memory-graph rebuild's Phase 5). This is a separate store
+from MongoDB and mem0/Qdrant, deliberately: structured, durable facts
+(an address, a preference) live here as one canonical record each; mem0
+stays the fuzzy/conversational tier.
+**Default endpoint:** `bolt://localhost:7687` (Bolt/driver protocol,
+overridable via `ADIYAN_NEO4J_URI`); the browser UI is on
+`http://localhost:7474`.
+**Auth:** stays on (unlike Mongo's local no-auth default) - user `neo4j`,
+password `adiyan-graph-dev` unless overridden via `ADIYAN_NEO4J_USER`/
+`ADIYAN_NEO4J_PASSWORD`. `./install.sh` sets this password automatically
+on a fresh install (`neo4j-admin dbms set-initial-password`, which only
+works before the database has ever started).
+**Install:** `brew install neo4j` (a real Homebrew formula, unlike Qdrant)
+- `mesh/start_all.sh` starts/stops it directly (`neo4j console`), the same
+exception it already makes for MongoDB/Qdrant, since every agent's memory
+read/write degrades gracefully but silently without it (see
+`memory_hook.py`'s own try/except-and-log-a-warning shape).
+**Manual exploration:** Neo4j Browser (`http://localhost:7474`) is the
+Compass-equivalent GUI - connect with the Bolt URL/credentials above, then
+`MATCH (n) RETURN n` to see the whole graph. `python -m
+mesh.tools.seed_memory_graph` seeds a demo scenario to look at (the Phase
+1-4 test scripts under `mesh/lib/test_graph_*.py` wipe the graph on
+entry/exit, so there's nothing to browse after running them - the seeder
+exists specifically to leave data behind for this).
+
 ## Arize Phoenix
 
 **What:** OpenTelemetry trace collector + web UI for LLM observability.
