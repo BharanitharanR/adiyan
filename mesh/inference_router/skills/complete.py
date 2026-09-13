@@ -42,13 +42,16 @@ LOCAL_CONCURRENCY_LIMIT = 1
 _in_flight = 0
 
 
-async def _run_local(prompt: str, model: str, temperature: float) -> str:
+async def _run_local(prompt: str, model: str, temperature: float, think: Optional[bool]) -> Dict[str, Optional[str]]:
     global _in_flight
     _in_flight += 1
     try:
-        llm = ChatOllama(model=model, base_url=OLLAMA_URL, temperature=temperature)
+        llm = ChatOllama(model=model, base_url=OLLAMA_URL, temperature=temperature, reasoning=think)
         result = await llm.ainvoke(prompt)
-        return result.content
+        return {
+            'content': result.content,
+            'reasoning_content': (result.additional_kwargs or {}).get('reasoning_content'),
+        }
     finally:
         _in_flight -= 1
 
@@ -65,7 +68,7 @@ async def _run_on_peer(prompt: str, model: str) -> Optional[str]:
 
 async def run(
     caller_agent_id: str, stage: str, prompt: str, model: str = 'qwen3:8b-16k',
-    temperature: float = 0.4, community: Optional[str] = None,
+    temperature: float = 0.4, community: Optional[str] = None, think: Optional[bool] = None,
 ) -> Dict[str, Any]:
     # Resolved on the CALLER's behalf, by agent_id - config_sdk's stage
     # configs are keyed on agent_id in shared storage, not on which
@@ -91,8 +94,11 @@ async def run(
     # busy or having no peer available is never a reason to refuse to
     # answer; it's only ever a reason to prefer someone else if allowed to.
     try:
-        completion = await _run_local(prompt, cfg['model'], cfg['temperature'])
-        return {'completion': completion, 'served_by': 'local'}
+        local_result = await _run_local(prompt, cfg['model'], cfg['temperature'], think)
+        return {
+            'completion': local_result['content'], 'served_by': 'local',
+            'reasoning_content': local_result['reasoning_content'],
+        }
     except Exception as e:
         # Deliberately a blanket except, not a growing list of specific
         # exception types - real bug, confirmed live, twice: first

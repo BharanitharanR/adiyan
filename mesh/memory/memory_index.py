@@ -55,6 +55,45 @@ def _documents_db() -> sqlite3.Connection:
     return conn
 
 
+# Confirmed live this session (~/.Adiyan/logs/llm_calls.log): Docling's own
+# page boundaries are a print-layout artifact, unrelated to where sentences
+# end - a real book almost never ends a page mid-sentence-boundary-free, so
+# AdiyanReader's nightly page-at-a-time reading regularly fed Orpheus a
+# fragment like "...raising his head again, 'in your" with no closing
+# punctuation at all. Orpheus has no acoustic cue that this is a real
+# sentence end (virtually all of its training data is complete sentences),
+# which is a real, evidenced contributor to "muffled"/"dragging" audio at
+# chunk boundaries - distinct from the separate, much smaller SNAC
+# tail-truncation loss (~21ms) discussed elsewhere.
+_SENTENCE_BOUNDARY_RE = re.compile(r'[.!?]["\')\]]*(?=\s|$)')
+
+
+def _last_sentence_boundary(text: str) -> Optional[int]:
+    """Index just after the last real sentence-ending punctuation in text,
+    or None if text has no sentence boundary anywhere (e.g. an image/table-
+    only page, or a fragment shorter than one full sentence)."""
+    last = None
+    for m in _SENTENCE_BOUNDARY_RE.finditer(text):
+        last = m.end()
+    return last
+
+
+def _split_trailing_fragment(text: str) -> tuple:
+    """(complete_text, trailing_fragment) - trailing_fragment is empty if
+    text already ends on a real sentence boundary (or is empty/whitespace).
+    complete_text is '' if text has no sentence boundary anywhere yet, in
+    which case the whole thing IS the fragment, to be carried forward."""
+    stripped = text.rstrip()
+    if not stripped:
+        return stripped, ''
+    boundary = _last_sentence_boundary(stripped)
+    if boundary is None:
+        return '', stripped
+    if boundary >= len(stripped):
+        return stripped, ''
+    return stripped[:boundary].rstrip(), stripped[boundary:].lstrip()
+
+
 def _extract_pptx_markdown(content: bytes, filename: str) -> str:
     """Docling's own PPTX backend only extracts native text shapes and
     represents embedded pictures as bare '<!-- image -->' placeholders - it
@@ -360,10 +399,23 @@ class MemoryIndex:
                 points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
             )
 
+        # Stored page boundaries deliberately don't match Docling's raw
+        # per-page split 1:1 any more - see _split_trailing_fragment()'s
+        # own docstring for why. Any sentence Docling's pagination cut in
+        # half gets carried forward and completed at the start of the next
+        # stored page instead of being read aloud as a broken fragment;
+        # only the last page (nothing left to carry it into) keeps
+        # whatever trails off, because the book just ends where it ends.
+        carry = ''
         for page_no in range(1, num_pages + 1):
-            page_text = doc.export_to_markdown(page_no=page_no)
+            raw_text = doc.export_to_markdown(page_no=page_no) or ''
+            combined = f'{carry} {raw_text}'.strip() if carry else raw_text.strip()
+            if page_no == num_pages:
+                finalized, carry = combined, ''
+            else:
+                finalized, carry = _split_trailing_fragment(combined)
             self.pages_index.insert(Document(
-                text=page_text or ' ',  # a blank page still needs a non-empty embed input
+                text=finalized or ' ',  # a blank page still needs a non-empty embed input
                 metadata={'source_filename': source_key, 'page_number': page_no},
             ))
 

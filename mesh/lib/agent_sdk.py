@@ -33,8 +33,11 @@ name) - that's a deliberate, explicit, human-reviewed grant, not
 something this class auto-creates at runtime.
 """
 import base64
-from typing import Any, Dict, Optional, Type
+import json
+import logging
+from typing import Any, Dict, List, Optional, Type
 
+import httpx
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
@@ -43,11 +46,21 @@ from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
 from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
 
+logger = logging.getLogger('AgentSDK')
+
 # The tier-naming convention every *_service tier added tonight already
 # follows (adiyan_reader_service, and this file's own docstring example) -
 # centralized here once so "what does my agent's tier need to be called"
 # has exactly one answer, not one invented per agent.
 TIER_SUFFIX = '_service'
+
+# Orpheus's own token ceiling (mesh/adiyan_reader/tts.py's own
+# ORPHEUS_MAX_TOKENS, moved here as this call shape's default) - a fixed,
+# generously-sized cap that every successful generation this session
+# finished well under, not a per-chunk estimate that could (and did)
+# undershoot for a short chunk. Callers with a different real budget pass
+# their own num_predict; this is only the fallback.
+_RAW_DEFAULT_MAX_TOKENS = 6000
 
 # Every agent that calls Ollama directly hardcodes this same URL - centralized
 # here for the same reason WHATSAPP_MCP_URL was in notify_owner.py: one
@@ -66,6 +79,67 @@ CRON_TRIGGER_URL = 'http://127.0.0.1:8421/mcp'
 # for the actual "run locally or offload to a peer" decision, which
 # lives there now, not inline in this file.
 INFERENCE_ROUTER_URL = 'http://127.0.0.1:8441'
+
+
+async def _raw_ollama_stream(
+    prompt: str, model: str, max_tokens: int, temperature: float,
+    top_p: float, repetition_penalty: float, think: Optional[bool] = None,
+) -> List[str]:
+    """Streams a raw (non-chat-templated) completion from Ollama and
+    returns every token piece as its own string, in order - moved
+    verbatim from mesh/adiyan_reader/tts.py's own _generate_tokens() (see
+    that module's docstring for why raw=True is non-negotiable: Ollama's
+    default chat-templating breaks Orpheus's expected
+    "<|audio|>voice: text<|eot_id|>" format entirely, and the model
+    replies with ordinary conversational text instead of the
+    <custom_token_N> audio codes SNAC needs).
+
+    Module-level, not a method - this has no need of self.agent_id or any
+    other AdiyanAgent state; ask()'s raw=True branch is the only caller."""
+    payload = {
+        'model': model,
+        'prompt': prompt,
+        'raw': True,
+        'stream': True,
+        'options': {
+            'num_predict': max_tokens,
+            'temperature': temperature,
+            'top_p': top_p,
+            'repeat_penalty': repetition_penalty,
+        },
+    }
+    if think is not None:
+        # Top-level, not inside 'options' - matches Ollama's own /api/
+        # generate request shape (confirmed against the installed ollama
+        # client's generate() signature). Irrelevant for Orpheus itself
+        # (not a thinking model), but this helper has no caller-specific
+        # logic, so there's no reason to special-case it out.
+        payload['think'] = think
+    tokens: List[str] = []
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        async with client.stream('POST', f'{OLLAMA_URL}/api/generate', json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                data = json.loads(line)
+                if data.get('response'):
+                    tokens.append(data['response'])
+                if data.get('done'):
+                    if data.get('done_reason') == 'length':
+                        # max_tokens is already a generous, proven-sufficient
+                        # ceiling for any chunk this size ever needs (see
+                        # ask()'s own _RAW_DEFAULT_MAX_TOKENS docstring) -
+                        # hitting it anyway points to a genuine repetition
+                        # loop, not an undersized budget. A plain warning,
+                        # not a "raise the cap" instruction to act on.
+                        logger.warning(
+                            f'Raw generation hit max_tokens={max_tokens} before finishing '
+                            f'({len(prompt)}-char prompt) - likely a repetition loop, not an '
+                            'undersized budget. Output for this call is cut off.'
+                        )
+                    break
+    return tokens
 
 
 class AdiyanAgent:
@@ -105,6 +179,9 @@ class AdiyanAgent:
         temperature: float = 0.4, schema: Optional[Type[BaseModel]] = None,
         tools: Optional[list] = None, image_b64: Optional[str] = None,
         image_mimetype: Optional[str] = None, community: Optional[str] = None,
+        raw: bool = False, num_predict: Optional[int] = None,
+        top_p: float = 0.9, repetition_penalty: float = 1.1,
+        think: Optional[bool] = None,
     ) -> Any:
         """Calls the mesh's LLM. No permission key needed - every agent
         reaches it the same way, same as config/storage access.
@@ -176,23 +253,52 @@ class AdiyanAgent:
         string), and combines with `schema` if both are given (a
         structured read of an image), but never with `tools`.
 
+        raw/num_predict/top_p/repetition_penalty: a raw Ollama completion
+        (raw=True on the API call, bypassing chat-templating entirely) -
+        built for mesh/adiyan_reader/tts.py's Orpheus calls, which need
+        the model's own custom_token_N stream verbatim, not a parsed
+        completion. Returns the raw list of streamed token strings, not
+        text - SNAC decoding is the caller's job, not ask()'s. Always
+        local, never offloadable, for the same reason as schema/tools/
+        image: a raw token stream has no meaning to a peer that isn't
+        running the exact same model. Mutually exclusive with schema/
+        tools/image_b64 - pass at most one call shape per call.
+
         Memory read-side hook (Phase 5): if mesh/lib/bootstrap.py's
         executor wrapper resolved an identity for the caller of this whole
         A2A request, that identity's known facts are prepended to `prompt`
         automatically here - no caller of ask() changes. Deliberately NOT
-        applied when schema or image_b64 is given: schema calls
+        applied when schema, image_b64, or raw is given: schema calls
         (classify_skill/extract_parameters in skill_router.py, the two
         highest-volume callers of this method) expect the model to parse
         structured output strictly from `prompt` alone, and a stray
         "what you know about this person" block ahead of that instruction
-        risks degrading extraction accuracy for no benefit - there's
-        nothing about someone's known facts that should change which
-        skill_id a message routes to. The `tools` (ReAct) and plain-text
-        paths below are genuine answer-generation, where this is exactly
-        the fix for the gap named earlier tonight: recall today only
-        happens if the model chooses to call an optional tool; this
-        happens unconditionally."""
-        memory_context = memory_hook.CURRENT_CONTEXT.get() if schema is None and image_b64 is None else ''
+        risks degrading extraction accuracy for no benefit. raw is
+        excluded for a sharper reason: it would inject that same block
+        straight into an Orpheus synthesis prompt, and Orpheus - having no
+        idea that text isn't meant to be spoken - would literally
+        vocalize your own stored facts at the start of a voice note. The
+        `tools` (ReAct) and plain-text paths below are genuine answer-
+        generation, where this is exactly the fix for the gap named
+        earlier tonight: recall today only happens if the model chooses
+        to call an optional tool; this happens unconditionally.
+
+        think: explicit thinking-mode toggle for models that support it
+        (confirmed live this session: qwen3:8b-16k reports 'thinking' in
+        its own /api/show capabilities) - True forces it on, False forces
+        it off, None (the default) leaves whatever the model does by
+        default untouched, so every existing caller is byte-for-byte
+        unaffected by this parameter's mere existence. Applies to every
+        call shape (plain-text, schema, tools, image, raw) since it's a
+        model-level generation setting, not tied to any one of them.
+        Thinking content, when the model produces it, is captured
+        separately from the actual answer (langchain-ollama's own
+        additional_kwargs['reasoning_content'], never mixed into the
+        returned text/object) and included in this call's line in
+        ~/.Adiyan/logs/llm_calls.log for the text/tools/image paths - not
+        guaranteed for schema calls, since with_structured_output's own
+        parsing doesn't reliably preserve it."""
+        memory_context = memory_hook.CURRENT_CONTEXT.get() if schema is None and image_b64 is None and not raw else ''
         if memory_context:
             prompt = f'{memory_context}\n\n{prompt}'
 
@@ -208,7 +314,7 @@ class AdiyanAgent:
             cfg = await config_sdk.get_stage_config(
                 self.agent_id, stage, {'model': model, 'temperature': temperature},
             )
-            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
+            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'], reasoning=think)
             message = HumanMessage(content=[
                 {'type': 'text', 'text': prompt},
                 {'type': 'image_url', 'image_url': f'data:{image_mimetype};base64,{image_b64}'},
@@ -219,7 +325,10 @@ class AdiyanAgent:
                     llm_log.log_call(self.agent_id, stage, 'image+schema', cfg['model'], prompt, result)
                     return result
                 result = await llm.ainvoke([message])
-                llm_log.log_call(self.agent_id, stage, 'image', cfg['model'], prompt, result.content)
+                # The full message, not result.content - _stringify() pulls
+                # out reasoning_content too when think produced any, and
+                # this call's own return value below is untouched either way.
+                llm_log.log_call(self.agent_id, stage, 'image', cfg['model'], prompt, result)
                 return result.content
             except Exception as e:
                 llm_log.log_call(self.agent_id, stage, 'image', cfg['model'], prompt, None, error=str(e))
@@ -229,7 +338,9 @@ class AdiyanAgent:
             cfg = await config_sdk.get_stage_config(
                 self.agent_id, stage, {'model': model, 'temperature': temperature},
             )
-            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature']).bind_tools(tools)
+            llm = ChatOllama(
+                model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'], reasoning=think,
+            ).bind_tools(tools)
             try:
                 result = await llm.ainvoke(prompt)
             except Exception as e:
@@ -242,7 +353,7 @@ class AdiyanAgent:
             cfg = await config_sdk.get_stage_config(
                 self.agent_id, stage, {'model': model, 'temperature': temperature},
             )
-            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'])
+            llm = ChatOllama(model=cfg['model'], base_url=OLLAMA_URL, temperature=cfg['temperature'], reasoning=think)
             structured = llm.with_structured_output(schema)
             try:
                 result = await structured.ainvoke(prompt)
@@ -252,6 +363,30 @@ class AdiyanAgent:
             llm_log.log_call(self.agent_id, stage, 'schema', cfg['model'], prompt, result)
             return result
 
+        if raw:
+            # Always local, never offloadable - same class as schema/tools/
+            # image above. cfg['model'] still goes through the normal
+            # dashboard-editable stage config, so Orpheus's own model name
+            # becomes an ordinary config_sdk setting instead of a value
+            # only changeable by editing tts.py.
+            cfg = await config_sdk.get_stage_config(
+                self.agent_id, stage, {'model': model, 'temperature': temperature},
+            )
+            effective_max_tokens = num_predict or _RAW_DEFAULT_MAX_TOKENS
+            try:
+                tokens = await _raw_ollama_stream(
+                    prompt, cfg['model'], effective_max_tokens, cfg['temperature'], top_p, repetition_penalty, think,
+                )
+            except Exception as e:
+                llm_log.log_call(self.agent_id, stage, 'raw', cfg['model'], prompt, None, error=str(e))
+                raise
+            # Joined, not the raw list - a human reading llm_calls.log wants
+            # to see the actual <custom_token_N> sequence Orpheus produced
+            # (to spot a repetition loop or an early stop at a glance), not
+            # a Python list repr of a few hundred short strings.
+            llm_log.log_call(self.agent_id, stage, 'raw', cfg['model'], prompt, ''.join(tokens))
+            return tokens
+
         # A fixed platform identity, not self.agent_id/self._tier - ask()
         # itself never mints against the calling agent's own tier for
         # this call. Routing an LLM call is a platform capability every
@@ -259,16 +394,31 @@ class AdiyanAgent:
         # each agent's own permission grant (see platform_llm_client's
         # own description in permissions_config.json).
         token = permissions.mint_token('adiyan_platform', 'platform_llm_client')
+        payload = {
+            'caller_agent_id': self.agent_id, 'stage': stage, 'prompt': prompt,
+            'model': model, 'temperature': temperature, 'community': community,
+        }
+        if think is not None:
+            # Only sent when actually requested - a running inference_router
+            # process started before this key existed would otherwise 500 on
+            # EVERY plain-text call, not just ones that asked for think,
+            # since Python raises on any unexpected kwarg regardless of its
+            # value. Confirmed live this session: this is exactly what
+            # happened before this guard was added, right up until that
+            # process gets restarted onto the new code.
+            payload['think'] = think
         try:
-            result = await _call_agent(INFERENCE_ROUTER_URL, 'complete', {
-                'caller_agent_id': self.agent_id, 'stage': stage, 'prompt': prompt,
-                'model': model, 'temperature': temperature, 'community': community,
-            }, token=token)
+            result = await _call_agent(INFERENCE_ROUTER_URL, 'complete', payload, token=token)
         except Exception as e:
             llm_log.log_call(self.agent_id, stage, 'text', model, prompt, None, error=str(e))
             raise
-        llm_log.log_call(self.agent_id, stage, 'text', model, prompt, result.get('completion'))
-        return result.get('completion')
+        completion = result.get('completion')
+        reasoning_content = result.get('reasoning_content')
+        # Logged shape only - completion (the actual return value below)
+        # never carries the thinking trace mixed in.
+        log_value = f'[thinking]\n{reasoning_content}\n[/thinking]\n\n{completion}' if reasoning_content else completion
+        llm_log.log_call(self.agent_id, stage, 'text', model, prompt, log_value)
+        return completion
 
     async def search_knowledge_base(self, query: str, top_k: int = 3) -> Dict[str, Any]:
         """Long-term memory: searches documents the owner has uploaded

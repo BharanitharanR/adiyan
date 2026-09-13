@@ -108,6 +108,26 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         )
         speech_text = await tts.rewrite_for_speech(page_text, rewrite_cfg)
 
+    # Emotion tagging (<laugh> <chuckle> <sigh> <gasp> <yawn> <cough>
+    # <sniffle> <groan> - Orpheus's own literal text tokens): a second,
+    # small model inserts tags inline before Orpheus ever sees the text -
+    # Orpheus itself only turns text into audio, it never decides where an
+    # emotion belongs. gemma4:e2b is the seeded default here specifically
+    # because it was the only one of three models tested live this session
+    # that didn't tag fictional sounds (wind, an engine, a pun) or corrupt
+    # the surrounding text. Passed into tts.synthesize() below, not applied
+    # here on the whole page - confirmed live this session that gemma4:e2b
+    # tags correctly under ~450 chars but silently returns a full page
+    # (1500+ chars) completely unchanged, so this has to run per-chunk,
+    # after tts.synthesize()'s own chunking, not once up front. See that
+    # function's own docstring. Fails open to untagged text on any error,
+    # same as rewrite_for_speech above - a quality enhancement, never a
+    # reason a page fails to get read.
+    emotion_cfg = await config_sdk.get_stage_config(
+        AGENT_ID, 'add_emotion_tags', {'model': 'gemma4:e2b', 'temperature': 0.2, 'base_url': OLLAMA_URL},
+        description='Small model that inserts Orpheus emotion tags into each TTS chunk - restricted to real character reactions during dialogue, never scenery/idiom.',
+    )
+
     tts_cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'synthesize_speech', {
             'model': 'legraphista/Orpheus:3b-ft-q8', 'base_url': OLLAMA_URL,
@@ -134,7 +154,7 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
         AGENT_ID, 'default_voice', tts.DEFAULT_VOICE,
         description='Which voice a reading job uses when none is specified or the requested one isn\'t in available_voices.',
     )
-    audio = await tts.synthesize(speech_text, voice, tts_cfg)
+    audio = await tts.synthesize(speech_text, voice, tts_cfg, emotion_cfg=emotion_cfg)
     # WhatsApp's voice-note (PTT) bubble has no caption field the way
     # send_document's does - confirmed live, OpenWA's own send-audio API
     # takes no caption param at all (mesh/lib/utilities/whatsapp/

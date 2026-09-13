@@ -10,11 +10,17 @@ script is a raw CLI tool (argparse, an interactive input loop, local audio
 playback via sounddevice) built for a person running it by hand at a
 terminal, not something an A2A agent calls headlessly. This module keeps
 only the actual synthesis path (Ollama call -> SNAC decode -> audio bytes),
-made async (httpx, matching every other agent's own Ollama calls) instead
-of TTS.py's synchronous requests.Session, with model/voice/generation
-params passed in as an explicit cfg dict (config_sdk-driven at the call
-site - mesh/adiyan_reader/skills/read_next_page.py) instead of argparse
-flags or module-level globals.
+with model/voice/generation params passed in as an explicit cfg dict
+(config_sdk-driven at the call site - mesh/adiyan_reader/skills/
+read_next_page.py) instead of argparse flags or module-level globals.
+
+The Ollama call itself goes through mesh/lib/agent_sdk.py's ask(raw=True)
+(see _generate_tokens() below), not a private httpx client of this
+module's own - the same platform hook every other LLM call in the mesh
+already gets: every prompt/response logged centrally
+(~/.Adiyan/logs/llm_calls.log), the model name dashboard-editable via
+config_sdk. Moved there specifically to get that logging on the one call
+shape (raw, streamed, unparsed tokens) that used to bypass it entirely.
 
 Confirmed live this session: Ollama's /api/generate chat-templates the
 prompt by default, which breaks Orpheus's expected raw
@@ -37,8 +43,6 @@ import tempfile
 import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import httpx
 
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.lib import config_sdk
@@ -167,6 +171,169 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
     except Exception as e:
         logger.warning(f'rewrite_for_speech failed, falling back to raw cleaned text: {e}')
         return cleaned
+
+
+async def add_emotion_tags(text: str, cfg: Dict[str, Any]) -> str:
+    """Inserts Orpheus's own emotion tags (<laugh> <chuckle> <sigh> <gasp>
+    <yawn> <cough> <sniffle> <groan> - the literal text tokens this specific
+    fine-tune recognizes, see this module's own docstring) inline into
+    `text`, via a small text model - not Orpheus itself, which only ever
+    turns text into audio, never edits its own input.
+
+    Prompt-tuned live this session against three adversarial test sets
+    (a page with genuine emotional beats, a page with none at all, and a
+    page full of idiom/personification traps like "the wind sighed" or
+    "he coughed up the cash") before being wired in here - see
+    adiyan-primer-deck/'s own emotion-tagging artifact for the actual
+    before/after examples that shaped every rule in the seeded template.
+    gemma4:e2b (this stage's seeded default) was the only model of the
+    three tested that passed the idiom-trap set cleanly; qwen3:4b and
+    qwen3:8b both either corrupted the surrounding text or tagged fictional
+    sounds (the wind, an engine, a pun) that no real person was making.
+
+    Same fail-open shape as rewrite_for_speech() - any failure (bad model
+    output, Ollama unreachable) falls back to the original, untagged text
+    rather than blocking the whole reading pipeline over an optional
+    enhancement. Never invents content: the prompt requires the model to
+    return the page unchanged, word for word, if nothing in it actually
+    calls for a tag - a page with zero real emotional beats should come
+    back byte-identical."""
+    try:
+        seeded = _seeded('prompt_with_emotions_prompt_template')
+        template = await config_sdk.get_constant(
+            AGENT_ID, 'prompt_with_emotions_prompt_template', seeded['value'], description=seeded['description'],
+        )
+        try:
+            prompt = template.format(page_text=text)
+        except Exception:
+            prompt = seeded['value'].format(page_text=text)
+        tagged = (await _agent.ask(
+            prompt, stage='add_emotion_tags', model=cfg['model'], temperature=cfg.get('temperature', 0.2),
+        ) or '').strip()
+        return tagged or text
+    except Exception as e:
+        logger.warning(f'add_emotion_tags failed, falling back to untagged text: {e}')
+        return text
+
+
+# Confirmed live this session, both directions: gemma4:e2b (this stage's
+# seeded model) tags correctly - real tags, no word deletion, idiom traps
+# correctly skipped - on a multi-sentence window up to ~450 chars. Below
+# that, a single isolated TTS chunk (~50-70 chars, no surrounding dialogue
+# visible) gives it no evidence a conversation is happening, so it
+# under-tags real moments. Above ~580 chars it goes binary: low/default
+# temperature makes it silently echo the page back unchanged, high
+# temperature makes it willing to tag again but reintroduces the word-
+# deletion bug. 400 is a deliberate safety margin under the observed
+# ~450-580 char cliff, not the exact measured edge.
+EMOTION_WINDOW_MAX_CHARS = 400
+
+
+def _group_chunks_for_emotion_tagging(chunks: List[str], max_chars: int = EMOTION_WINDOW_MAX_CHARS) -> List[List[str]]:
+    """Groups consecutive TTS chunks (each already <= MAX_CHUNK_CHARS from
+    _split_into_speech_chunks) into windows for a single add_emotion_tags()
+    call each - not one call per page (too long, see that constant's own
+    docstring) and not one call per chunk (too little surrounding dialogue
+    context for the "only tag during a real conversation" rule to have
+    anything to work with)."""
+    windows: List[List[str]] = []
+    current: List[str] = []
+    current_len = 0
+    for chunk in chunks:
+        added_len = len(chunk) + (1 if current else 0)  # +1 for the joining space
+        if current and current_len + added_len > max_chars:
+            windows.append(current)
+            current, current_len = [], 0
+            added_len = len(chunk)
+        current.append(chunk)
+        current_len += added_len
+    if current:
+        windows.append(current)
+    return windows
+
+
+_EMOTION_TAG_RE = re.compile(r'<(?:laugh|chuckle|sigh|gasp|yawn|cough|sniffle|groan)>')
+_WORD_RE = re.compile(r"[A-Za-z']+")
+
+
+def _accept_tagged_piece(original: str, piece: str) -> bool:
+    """Decides whether one resplit piece is trustworthy enough to replace
+    its corresponding original chunk - per CHUNK, not per window, and
+    deterministic (checking which words are actually present), not
+    another prompt asking the model to behave. Confirmed live this
+    session, twice more even after multiple rounds of prompt tuning aimed
+    at fixing this: gemma4:e2b sometimes still replaces the trigger word
+    with its tag instead of adding the tag beside it (\"Professor
+    McGonagall gasped.\" -> \"Professor McGonagall <gasp>.\", losing
+    \"gasped\" entirely). No amount of prompt wording has made that fail
+    reliably, so this catches it in code instead: every real word (letters
+    only, case-insensitive - punctuation ignored on purpose, see below)
+    that appeared in `original` must still appear in `piece` after
+    stripping the tag(s) back out. Confirmed live: a naive word-COUNT
+    check isn't enough here - stripping "<gasp>" out of "McGonagall
+    <gasp>." leaves the trailing "." floating as its own whitespace-
+    split token, which inflates the count enough to slip past a bare
+    length comparison even though "gasped" itself is gone. Comparing
+    actual word identities, not just how many tokens are left, is what
+    catches that.
+
+    A piece with no tag in it at all is also rejected here, even if it
+    differs from `original` in some harmless way (whitespace, a
+    fixed-up quote) - see _tag_chunks_windowed()'s own docstring for why
+    that incidental drift should never propagate into a chunk that had
+    nothing to tag in the first place."""
+    if not _EMOTION_TAG_RE.search(piece):
+        return False
+    stripped = _EMOTION_TAG_RE.sub('', piece)
+    from collections import Counter
+    original_words = Counter(w.lower() for w in _WORD_RE.findall(original))
+    piece_words = Counter(w.lower() for w in _WORD_RE.findall(stripped))
+    return all(piece_words[word] >= count for word, count in original_words.items())
+
+
+async def _tag_chunks_windowed(chunks: List[str], cfg: Dict[str, Any]) -> List[str]:
+    """add_emotion_tags(), applied per-window instead of per-page or
+    per-chunk - see _group_chunks_for_emotion_tagging()'s own docstring for
+    why. Re-splits each window's tagged text back onto its original chunk
+    boundaries using the same sentence regex _split_into_speech_chunks()
+    uses (a tag is always inserted inside a sentence, never across one, so
+    the sentence count should match the original chunk count going in).
+    If it doesn't - the model merged, dropped, or otherwise reshaped a
+    sentence - that window's original, untagged chunks are used instead
+    rather than risk silently misaligning tagged text onto the wrong
+    chunk. Same fail-open principle as add_emotion_tags() itself: a
+    window that doesn't tag cleanly should never break the reading
+    pipeline or scramble which sentence goes where.
+
+    Each resplit piece is then accepted or rejected individually via
+    _accept_tagged_piece(), not as a whole window - confirmed live this
+    session: when only one sentence in a window actually gets a tag, the
+    join-then-resplit roundtrip can still introduce small incidental
+    drift (a double space collapsed, a missing quote closed) into the
+    OTHER sentences in that same window, which never had anything to tag
+    at all. Trusting the resplit per-chunk, only when that specific
+    chunk actually gained a real tag, keeps every untagged sentence
+    byte-identical to its original regardless of what happened elsewhere
+    in the same window."""
+    windows = _group_chunks_for_emotion_tagging(chunks)
+    result: List[str] = []
+    for window in windows:
+        joined = ' '.join(window)
+        tagged = await add_emotion_tags(joined, cfg)
+        if tagged.strip() == joined.strip():
+            result.extend(window)
+            continue
+        pieces = [p for p in re.split(r'(?<=[.!?])\s+', tagged.strip()) if p]
+        if len(pieces) != len(window):
+            logger.warning(
+                f'add_emotion_tags window returned {len(pieces)} sentences for '
+                f'{len(window)} original chunks - using untagged chunks for this window.',
+            )
+            result.extend(window)
+            continue
+        for original, piece in zip(window, pieces):
+            result.append(piece if _accept_tagged_piece(original, piece) else original)
+    return result
 
 
 MAX_CHUNK_CHARS = 300
@@ -315,56 +482,27 @@ def _convert_frame_to_audio(multiframe: List[int]) -> Optional[bytes]:
 
 async def _generate_tokens(prompt: str, cfg: Dict[str, Any], max_tokens: int) -> List[str]:
     """Streams raw completion tokens from Ollama for the given already-
-    formatted Orpheus prompt. raw=True is the one non-negotiable flag - see
-    this module's own docstring. max_tokens is ORPHEUS_MAX_TOKENS unless a
-    caller explicitly overrides it via cfg - see that constant's own
-    docstring for why a fixed ceiling replaced a per-chunk estimate that
-    could (and did) undershoot for a short chunk."""
-    payload = {
-        'model': cfg['model'],
-        'prompt': prompt,
-        'raw': True,
-        'stream': True,
-        'options': {
-            'num_predict': max_tokens,
-            'temperature': cfg.get('temperature', 0.6),
-            'top_p': cfg.get('top_p', 0.9),
-            # Canopy Labs' own docs recommend 1.1 as the minimum-for-stability
-            # default. Bumped to 1.3 here after live testing this session
-            # kept producing exact-phrase repetition loops ("resh, resh,
-            # resh...") even at 1.1, on both merged and single-sentence
-            # chunks - an experiment based on this deployment's own observed
-            # failures, not a documented Orpheus recommendation.
-            'repeat_penalty': cfg.get('repetition_penalty', 1.3),
-        },
-    }
-    tokens: List[str] = []
-    async with httpx.AsyncClient(timeout=cfg.get('timeout', 300.0)) as client:
-        async with client.stream('POST', f"{cfg.get('base_url', 'http://localhost:11434')}/api/generate", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                import json
-                data = json.loads(line)
-                if data.get('response'):
-                    tokens.append(data['response'])
-                if data.get('done'):
-                    if data.get('done_reason') == 'length':
-                        # max_tokens is already the fixed, proven-sufficient
-                        # ceiling (ORPHEUS_MAX_TOKENS) for any chunk this
-                        # size ever needs - hitting it anyway points to a
-                        # genuine repetition loop, not an undersized budget.
-                        # No number fixes that deterministically, so this
-                        # stays a plain warning, not a "raise the cap"
-                        # instruction to act on.
-                        logger.warning(
-                            f'Orpheus generation hit max_tokens={max_tokens} before finishing '
-                            f'({len(prompt)}-char prompt) - likely a repetition loop, not an '
-                            'undersized budget. Audio for this chunk is cut off.'
-                        )
-                    break
-    return tokens
+    formatted Orpheus prompt, via mesh/lib/agent_sdk.py's ask(raw=True) -
+    the same platform hook every other LLM call in this mesh already gets
+    (central logging in ~/.Adiyan/logs/llm_calls.log, dashboard-editable
+    stage config), rather than this module's own private httpx client.
+    raw=True inside ask() is still the one non-negotiable flag underneath
+    - see this module's own docstring on why Ollama's default chat-
+    templating breaks Orpheus's expected format entirely. max_tokens is
+    ORPHEUS_MAX_TOKENS unless a caller explicitly overrides it via cfg -
+    see that constant's own docstring for why a fixed ceiling replaced a
+    per-chunk estimate that could (and did) undershoot for a short chunk."""
+    return await _agent.ask(
+        prompt, stage='synthesize_speech', model=cfg['model'], temperature=cfg.get('temperature', 0.6),
+        raw=True, num_predict=max_tokens, top_p=cfg.get('top_p', 0.9),
+        # Canopy Labs' own docs recommend 1.1 as the minimum-for-stability
+        # default. Bumped to 1.3 here after live testing this session
+        # kept producing exact-phrase repetition loops ("resh, resh,
+        # resh...") even at 1.1, on both merged and single-sentence
+        # chunks - an experiment based on this deployment's own observed
+        # failures, not a documented Orpheus recommendation.
+        repetition_penalty=cfg.get('repetition_penalty', 1.3),
+    )
 
 
 def _tokens_to_pcm_segments(tokens: List[str]) -> List[bytes]:
@@ -421,13 +559,28 @@ def _wav_to_opus_ogg(wav_bytes: bytes) -> bytes:
         Path(ogg_path).unlink(missing_ok=True)
 
 
-async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
+async def synthesize(
+    text: str, voice: str, cfg: Dict[str, Any], emotion_cfg: Optional[Dict[str, Any]] = None,
+) -> bytes:
     """Text -> Opus/OGG audio bytes, ready for OpenWAService.send_voice().
 
     Synthesized in sentence-respecting chunks (_split_into_speech_chunks),
     not as one call over the whole page - see that function's own
     docstring for why: a short chunk reads accurately and completely every
     time in testing, a long one measurably degrades.
+
+    emotion_cfg: when given, _tag_chunks_windowed() groups this page's
+    already-split chunks into ~400-char multi-sentence windows and runs
+    add_emotion_tags() once per window, then re-splits the tagged result
+    back onto the original chunk boundaries - not once on the whole page,
+    and not once per individual chunk. Confirmed live this session:
+    gemma4:e2b (the seeded model for this stage) needs a multi-sentence
+    window to reliably recognize "this is a real conversation" (a single
+    isolated chunk like "Professor McGonagall gasped." has no visible
+    dialogue around it and gets silently skipped), but a whole page
+    (1500+ chars) makes it either refuse outright or start deleting the
+    words it tags - see _group_chunks_for_emotion_tagging()'s own
+    docstring for the exact thresholds this was tuned against.
 
     Chunk *generation* runs sequentially, not concurrently - this already
     competes with real WhatsApp traffic for the same single-slot Ollama the
@@ -450,7 +603,8 @@ async def synthesize(text: str, voice: str, cfg: Dict[str, Any]) -> bytes:
 
     text = clean_for_speech(text)
     chunks = _split_into_speech_chunks(text)
-
+    if emotion_cfg is not None:
+        chunks = await _tag_chunks_windowed(chunks, emotion_cfg)
     all_segments: List[bytes] = []
     decode_task: Optional[asyncio.Task] = None
     flushed_any = False

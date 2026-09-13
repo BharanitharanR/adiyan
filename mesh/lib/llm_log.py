@@ -41,10 +41,16 @@ def _stringify(value: Any) -> str:
         return value
     to_text = getattr(value, 'content', None)
     if isinstance(to_text, str):
+        # think=True on ask() (mesh/lib/agent_sdk.py) surfaces the model's
+        # reasoning trace here, langchain-ollama's own separate field -
+        # never mixed into .content itself, so a caller reading the
+        # returned text back from ask() never sees it either.
+        reasoning = (getattr(value, 'additional_kwargs', None) or {}).get('reasoning_content')
+        prefix = f'[thinking]\n{reasoning}\n[/thinking]\n\n' if reasoning else ''
         tool_calls = getattr(value, 'tool_calls', None)
         if tool_calls:
-            return f'{to_text}\n[tool_calls: {tool_calls}]'
-        return to_text
+            return f'{prefix}{to_text}\n[tool_calls: {tool_calls}]'
+        return f'{prefix}{to_text}'
     model_dump_json = getattr(value, 'model_dump_json', None)
     if callable(model_dump_json):
         try:
