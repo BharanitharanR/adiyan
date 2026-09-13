@@ -1,0 +1,196 @@
+<title>Teaching ask() to Speak Orpheus</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#ECE2CA; --paper-2:#E0D2AC; --ink:#241F14;
+  --ink-soft:rgba(36,31,20,.66); --ink-faint:rgba(36,31,20,.4);
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --good:#4B6B3A; --good-soft:#DCE6D2;
+  --bad:#8A3B2A; --bad-soft:#EDD9CF;
+  --info:#4A5A7A; --info-soft:#D9DEE9;
+  --code-bg:#E0D2AC; --code-ink:#241F14; --code-add:#D2DFC6; --code-add-ink:#33481F;
+  --serif:'Playfair Display',serif; --sans:'Mulish',sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#1B160D; --paper-2:#272013; --ink:#ECE2CA;
+    --ink-soft:rgba(236,226,202,.68); --ink-faint:rgba(236,226,202,.42);
+    --accent:#D6AD5F; --accent-soft:#4A3A1C;
+    --good:#8FBF7A; --good-soft:#243318;
+    --bad:#E08B6F; --bad-soft:#3A2117;
+    --info:#9AAFDC; --info-soft:#212A3B;
+    --code-bg:#272013; --code-ink:#ECE2CA; --code-add:#243318; --code-add-ink:#B8D9A0;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D; --paper-2:#272013; --ink:#ECE2CA;
+  --ink-soft:rgba(236,226,202,.68); --ink-faint:rgba(236,226,202,.42);
+  --accent:#D6AD5F; --accent-soft:#4A3A1C;
+  --good:#8FBF7A; --good-soft:#243318;
+  --bad:#E08B6F; --bad-soft:#3A2117;
+  --info:#9AAFDC; --info-soft:#212A3B;
+  --code-bg:#272013; --code-ink:#ECE2CA; --code-add:#243318; --code-add-ink:#B8D9A0;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:960px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
+.crumb{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);margin-bottom:1rem;}
+.crumb a{color:var(--accent);text-decoration:none;border-bottom:1px solid currentColor;}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .6rem;}
+h1{font-family:var(--serif);font-size:1.9rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.2;}
+.lede{color:var(--ink-soft);font-size:.98rem;line-height:1.7;max-width:66ch;margin:0 0 1.8rem;}
+
+h2.sect{font-family:var(--serif);font-size:1.25rem;font-weight:700;margin:2.2rem 0 .35rem;}
+p.sect-sub{font-size:.87rem;color:var(--ink-soft);margin:0 0 1rem;line-height:1.55;}
+
+.gap-banner{
+  display:flex;gap:.85rem;align-items:flex-start;padding:.95rem 1.15rem;border-radius:8px;
+  background:var(--bad-soft);border:1.5px solid var(--bad);margin-bottom:1.8rem;font-size:.9rem;line-height:1.55;
+}
+.gap-tag{font-family:var(--mono);font-size:.65rem;letter-spacing:.04em;text-transform:uppercase;font-weight:700;background:var(--bad);color:var(--paper);padding:.25rem .55rem;border-radius:4px;flex-shrink:0;margin-top:.1rem;}
+
+.toggle-row{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap;}
+.tbtn{
+  font-family:var(--sans);font-size:.85rem;font-weight:600;color:var(--ink);background:var(--paper-2);
+  border:1.5px solid var(--accent-soft);border-radius:6px;padding:.5rem 1rem;cursor:pointer;
+}
+.tbtn.active{border-color:var(--accent);border-width:2px;color:var(--accent);background:var(--accent-soft);}
+pre.code{
+  font-family:var(--mono);font-size:.78rem;line-height:1.65;background:var(--code-bg);color:var(--code-ink);
+  border-radius:8px;padding:1rem 1.1rem;overflow-x:auto;margin:0 0 1.6rem;
+}
+pre.code .add{display:block;background:var(--code-add);color:var(--code-add-ink);margin:0 -1.1rem;padding:0 1.1rem;}
+pre.code .ctx{color:var(--ink-faint);}
+
+.flow{display:flex;flex-direction:column;gap:0;}
+.step{display:flex;gap:.9rem;padding:.85rem 1.05rem;border-radius:8px;background:var(--paper-2);border:1.5px solid var(--accent-soft);align-items:flex-start;}
+.step + .step{margin-top:.4rem;}
+.step-badge{font-family:var(--mono);font-size:.63rem;letter-spacing:.03em;text-transform:uppercase;padding:.25rem .55rem;border-radius:4px;flex-shrink:0;margin-top:.1rem;white-space:nowrap;}
+.step-badge.new{background:var(--good);color:var(--paper);}
+.step-badge.existing{background:var(--info);color:var(--paper);}
+.step-body{flex:1;}
+.step-title{font-weight:600;font-size:.92rem;}
+.step-detail{font-size:.85rem;color:var(--ink-soft);margin-top:.25rem;line-height:1.5;}
+.step-detail code{font-family:var(--mono);font-size:.87em;background:var(--code-bg);color:var(--code-ink);padding:.06rem .3rem;border-radius:4px;}
+
+.guard-box{
+  margin-top:1rem;padding:.95rem 1.15rem;border-radius:8px;background:var(--info-soft);border:1.5px solid var(--info);
+  font-size:.87rem;line-height:1.6;
+}
+.guard-box b{color:var(--info);}
+</style>
+
+<div class="wrap">
+  <p class="crumb"><a href="#" onclick="return false;">Adiyan Primer Deck</a> / ask() raw mode</p>
+  <p class="eyebrow">Adiyan &middot; platform capability &middot; proposal</p>
+  <h1>Teaching ask() to speak Orpheus's language</h1>
+  <p class="lede">Right now Orpheus TTS calls Ollama directly, bypassing every platform benefit every other agent gets for free - logging, dashboard-editable stage config, and (critically) the memory-context hook. Here's exactly what closes that gap.</p>
+
+  <div class="gap-banner">
+    <span class="gap-tag">Confirmed gap</span>
+    <span><code>mesh/adiyan_reader/tts.py</code>'s <code>_generate_tokens()</code> builds its own <code>httpx.AsyncClient</code> straight to Ollama's <code>/api/generate</code> - it has never once passed through <code>AdiyanAgent.ask()</code>, so it gets none of tonight's platform work: not the central log, not tiered prompts, not stage config from the dashboard.</span>
+  </div>
+
+  <h2 class="sect">1. What ask() needs to learn</h2>
+  <p class="sect-sub">One new parameter, checked before the existing four branches - raw mode is always local, same class as schema/tools/image.</p>
+  <div class="toggle-row">
+    <button class="tbtn active" id="btn-before" type="button">Today</button>
+    <button class="tbtn" id="btn-after" type="button">With raw mode added</button>
+  </div>
+  <pre class="code" id="codeview"></pre>
+
+  <h2 class="sect">2. Where the logic actually moves from</h2>
+  <p class="sect-sub"><code>tts.py</code>'s own <code>_generate_tokens()</code> body relocates almost unchanged - this isn't new logic, it's the same raw-streaming call finding a shared home.</p>
+  <div class="flow" id="flow"></div>
+
+  <div class="guard-box">
+    <b>The one guard that matters most:</b> raw mode must be added to the SAME exclusion list as <code>schema</code>/<code>image_b64</code> for memory-context prepending. Without it, <code>ask()</code> would inject <code>"What you know about this person:\n- ..."</code> straight into the Orpheus prompt - and Orpheus, having no idea that text isn't meant to be read aloud, would <i>literally vocalize your own stored facts</i> at the start of every voice note. This is a real, concrete failure mode this design has to rule out on purpose, not something to notice after the fact.
+  </div>
+
+  <h2 class="sect">3. What tts.py looks like afterward</h2>
+  <p class="sect-sub">One call, everything else in the file untouched.</p>
+  <pre class="code">async def _generate_tokens(prompt: str, cfg, max_tokens: int) -> List[str]:
+    return await _agent.ask(
+        prompt, stage='synthesize_speech', model=cfg['model'],
+        raw=True, num_predict=max_tokens, top_p=cfg.get('top_p', 0.9),
+        repetition_penalty=cfg.get('repetition_penalty', 1.1),
+    )</pre>
+  <p class="sect-sub">Every other function in <code>tts.py</code> - chunking, SNAC decode, WAV/Opus assembly - never changes. Only the one function that talks to Ollama does.</p>
+</div>
+
+<script>
+const codeBefore = `<span class="ctx">    async def ask(</span>
+<span class="ctx">        self, prompt: str, *, stage='default', model='qwen3:8b-16k',</span>
+<span class="ctx">        temperature=0.4, schema=None, tools=None, image_b64=None,</span>
+<span class="ctx">        image_mimetype=None, community=None,</span>
+<span class="ctx">    ) -> Any:</span>
+<span class="ctx">        memory_context = CURRENT_CONTEXT.get() if schema is None and image_b64 is None else ''</span>
+<span class="ctx">        if memory_context:</span>
+<span class="ctx">            prompt = f'{memory_context}\\n\\n{prompt}'</span>
+<span class="ctx">
+        if image_b64 is not None: ...
+        if tools is not None: ...
+        if schema is not None: ...
+        # falls through to Inference Router for plain text</span>`;
+
+const codeAfter = `<span class="ctx">    async def ask(</span>
+<span class="ctx">        self, prompt: str, *, stage='default', model='qwen3:8b-16k',</span>
+<span class="ctx">        temperature=0.4, schema=None, tools=None, image_b64=None,</span>
+<span class="ctx">        image_mimetype=None, community=None,</span>
+<span class="add">        raw: bool = False, num_predict: Optional[int] = None,</span>
+<span class="add">        top_p: float = 0.9, repetition_penalty: float = 1.1,</span>
+<span class="ctx">    ) -> Any:</span>
+<span class="add">        # raw excluded here too - see this page's own guard note below on why</span>
+<span class="ctx">        memory_context = CURRENT_CONTEXT.get() if schema is None and image_b64 is None</span>
+<span class="add">            and not raw else ''</span>
+<span class="ctx">        if memory_context:</span>
+<span class="ctx">            prompt = f'{memory_context}\\n\\n{prompt}'</span>
+<span class="ctx">
+        if image_b64 is not None: ...
+        if tools is not None: ...
+        if schema is not None: ...</span>
+<span class="add">
+        if raw:</span>
+<span class="add">            # Always local, never offloadable - same class as schema/tools/</span>
+<span class="add">            # image above. Streams Ollama's raw completion API (raw=True,</span>
+<span class="add">            # the exact call tts.py's _generate_tokens already makes today,</span>
+<span class="add">            # relocated here) and returns the raw token list unparsed -</span>
+<span class="add">            # SNAC decoding is the caller's job, not ask()'s.</span>
+<span class="add">            cfg = await config_sdk.get_stage_config(</span>
+<span class="add">                self.agent_id, stage, {'model': model, 'temperature': temperature},</span>
+<span class="add">            )</span>
+<span class="add">            tokens = await _raw_ollama_stream(</span>
+<span class="add">                prompt, cfg['model'], num_predict, cfg['temperature'], top_p, repetition_penalty,</span>
+<span class="add">            )</span>
+<span class="add">            llm_log.log_call(self.agent_id, stage, 'raw', cfg['model'], prompt, ''.join(tokens))</span>
+<span class="add">            return tokens
+</span>
+<span class="ctx">        # falls through to Inference Router for plain text</span>`;
+
+const btnBefore = document.getElementById('btn-before');
+const btnAfter = document.getElementById('btn-after');
+const codeview = document.getElementById('codeview');
+function show(which){
+  codeview.innerHTML = which === 'before' ? codeBefore : codeAfter;
+  btnBefore.classList.toggle('active', which === 'before');
+  btnAfter.classList.toggle('active', which === 'after');
+}
+btnBefore.addEventListener('click', () => show('before'));
+btnAfter.addEventListener('click', () => show('after'));
+show('before');
+
+const steps = [
+  {badge:'existing', title:'Ollama raw-completion streaming', file:'tts.py’s _generate_tokens() body → relocated into agent_sdk.py as _raw_ollama_stream()', detail:'The httpx.AsyncClient().stream(...) call, the raw=True payload flag, the token-by-token collection loop - moves essentially verbatim. This was always general-purpose logic; it just lived in the one file that happened to need it first.'},
+  {badge:'new', title:'Central logging', file:'llm_log.log_call(..., mode=\'raw\', ...)', detail:'The joined token string gets logged like any other response - meaning a garbled or looping TTS generation becomes visible in the same central log used to debug everything else tonight, instead of invisible unless you add a print statement by hand.'},
+  {badge:'new', title:'Dashboard-editable stage config', file:'config_sdk.get_stage_config(agent_id, \'synthesize_speech\', ...)', detail:'The model name and temperature for Orpheus synthesis become the same kind of dashboard-editable setting every reasoning stage already has - not a hardcoded default only editable by changing code.'},
+  {badge:'existing', title:'SNAC decoding, unchanged', file:'tts.py’s _tokens_to_pcm_segments() / _convert_frame_to_audio()', detail:'ask() returns the raw token list, exactly the shape tts.py already works with today - nothing downstream of the Ollama call needs to know it moved.'},
+];
+const flow = document.getElementById('flow');
+steps.forEach(s => {
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.innerHTML = `<span class="step-badge ${s.badge}">${s.badge === 'new' ? 'New' : 'Moved, unchanged'}</span>
+    <div class="step-body"><div class="step-title">${s.title}</div><div class="step-file" style="font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);margin-top:.1rem;">${s.file}</div><div class="step-detail">${s.detail}</div></div>`;
+  flow.appendChild(div);
+});
+</script>

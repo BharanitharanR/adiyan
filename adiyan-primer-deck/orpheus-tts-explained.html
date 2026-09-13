@@ -1,0 +1,233 @@
+<title>How Orpheus Powers AdiyanReader</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --ollama:#4A5A6A; --ollama-soft:#D7DEE2;
+  --snac:#854F0B; --snac-soft:#FBF0DD;
+  --mesh:#8A6EA8; --mesh-soft:#E9DCEF;
+  --code-bg:#E0D2AC; --code-ink:#241F14;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#8A6B32;
+    --ollama:#9AA8B8; --ollama-soft:#2A3542;
+    --snac:#EF9F27; --snac-soft:#3B2B08;
+    --mesh:#B79ACB; --mesh-soft:#3D2E4A;
+    --code-bg:#272013; --code-ink:#ECE2CA;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#8A6B32;
+  --ollama:#9AA8B8; --ollama-soft:#2A3542;
+  --snac:#EF9F27; --snac-soft:#3B2B08;
+  --mesh:#B79ACB; --mesh-soft:#3D2E4A;
+  --code-bg:#272013; --code-ink:#ECE2CA;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:980px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
+.eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
+h1{font-family:var(--serif);font-size:1.65rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.2;}
+.lede{color:var(--ink-soft);font-size:.96rem;line-height:1.65;max-width:68ch;margin:0 0 1.8rem;}
+
+h2.sect{font-size:1.05rem;font-weight:600;margin:2.2rem 0 .3rem;}
+p.sect-sub{font-size:.86rem;color:var(--ink-soft);margin:0 0 1rem;line-height:1.5;}
+
+.pipeline{display:flex;flex-direction:column;gap:0;}
+.node{
+  display:flex;align-items:flex-start;gap:.9rem;padding:.85rem 1.05rem;border-radius:10px;cursor:pointer;
+  background:var(--panel);border:1.5px solid var(--line);transition:border-color .15s;
+}
+.node:hover{border-color:var(--accent);}
+.node.active{border-color:var(--ink);border-width:2px;}
+.connector{width:2px;height:14px;background:var(--line);margin-left:calc(1.05rem + 11px);}
+.node-badge{
+  font-family:var(--mono);font-size:.62rem;letter-spacing:.03em;text-transform:uppercase;
+  padding:.22rem .5rem;border-radius:5px;flex-shrink:0;margin-top:.1rem;white-space:nowrap;
+}
+.node-badge.mesh{background:var(--mesh);color:var(--panel);}
+.node-badge.ollama{background:var(--ollama);color:var(--panel);}
+.node-badge.snac{background:var(--snac);color:var(--panel);}
+.node-badge.plain{background:var(--line);color:var(--ink-soft);}
+.node-body{flex:1;}
+.node-title{font-size:.9rem;font-weight:600;}
+.node-file{font-family:var(--mono);font-size:.7rem;color:var(--ink-soft);margin-top:.15rem;}
+
+.detail{
+  margin-top:1rem;padding:1.1rem 1.2rem;border-radius:11px;background:var(--panel);border:1.5px solid var(--line);
+  font-size:.88rem;line-height:1.65;
+}
+.detail code{font-family:var(--mono);font-size:.87em;background:var(--code-bg);color:var(--code-ink);padding:.08rem .33rem;border-radius:4px;}
+.detail pre.code{
+  font-family:var(--mono);font-size:.78rem;line-height:1.55;background:var(--code-bg);color:var(--code-ink);
+  border-radius:8px;padding:.75rem .9rem;overflow-x:auto;margin:.7rem 0 0;
+}
+
+.snac-demo{display:flex;flex-direction:column;gap:.6rem;margin-top:.5rem;}
+.frame-row{display:flex;gap:.3rem;flex-wrap:wrap;align-items:center;}
+.tok{
+  font-family:var(--mono);font-size:.72rem;padding:.3rem .5rem;border-radius:5px;text-align:center;min-width:44px;
+}
+.tok.c0{background:var(--ollama-soft);color:var(--ollama);}
+.tok.c1{background:var(--snac-soft);color:var(--snac);}
+.tok.c2{background:var(--accent-soft);color:var(--accent);}
+.frame-label{font-family:var(--mono);font-size:.72rem;color:var(--ink-soft);width:70px;flex-shrink:0;}
+
+.mesh-map{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem;}
+.mesh-step{display:flex;gap:.7rem;align-items:baseline;font-size:.85rem;}
+.mesh-step .n{font-family:var(--mono);color:var(--mesh);font-weight:600;width:20px;flex-shrink:0;}
+
+.tag-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.8rem;}
+@media (max-width:640px){.tag-grid{grid-template-columns:repeat(2,1fr);}}
+.tag-cell{
+  border-radius:8px;padding:.55rem .7rem;font-family:var(--mono);font-size:.78rem;text-align:center;
+  border:1.5px solid var(--line);
+}
+.tag-cell.confirmed{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
+.tag-cell.unknown{background:var(--panel);color:var(--ink-soft);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; AdiyanReader &middot; text-to-speech pipeline</p>
+  <h1>How Orpheus actually turns a book page into a WhatsApp voice note</h1>
+  <p class="lede">Click any stage to see the real code behind it. This is the exact pipeline in <code>mesh/adiyan_reader/tts.py</code>, not a simplified version - including where AdiyanReader sits in the wider mesh and how last night's emotion-tag test fits in.</p>
+
+  <h2 class="sect">1. The pipeline, stage by stage</h2>
+  <p class="sect-sub">A page of real book text goes through 7 stages before it's a voice note. Click each one.</p>
+  <div class="pipeline" id="pipeline"></div>
+  <div class="detail" id="detail"></div>
+
+  <h2 class="sect">2. Why text tokens become audio at all</h2>
+  <p class="sect-sub">The part that looks like magic: Ollama outputs plain text, but that text <i>is</i> the audio, encoded.</p>
+  <div class="detail">
+    <p>Orpheus doesn't generate audio directly - it generates <b>text tokens that look like <code>&lt;custom_token_17423&gt;</code></b>. Each one is really a numeric code from <a href="#" style="color:var(--accent);pointer-events:none;">SNAC</a> (a neural audio codec), smuggled through Ollama's ordinary text-completion API as a token string. Every 7 of these tokens forms one "frame" of audio, split across 3 hierarchical codebooks:</p>
+    <div class="snac-demo">
+      <div class="frame-row"><span class="frame-label">codebook 0</span><span class="tok c0">tok 0</span></div>
+      <div class="frame-row"><span class="frame-label">codebook 1</span><span class="tok c1">tok 1</span><span class="tok c1">tok 4</span></div>
+      <div class="frame-row"><span class="frame-label">codebook 2</span><span class="tok c2">tok 2</span><span class="tok c2">tok 3</span><span class="tok c2">tok 5</span><span class="tok c2">tok 6</span></div>
+    </div>
+    <p style="margin-top:.7rem;">That's SNAC's fixed 7-tokens-per-timestep interleaving (<code>_convert_frame_to_audio</code>). A local SNAC decoder model (<code>hubertsiuzdak/snac_24khz</code>, loaded once via <code>torch</code>, on whatever GPU is available) turns those 3 codebooks back into a real slice of 16-bit PCM audio - the actual waveform. Ollama never touches real audio at any point; it only ever predicts the next token, same as it does for text.</p>
+  </div>
+
+  <h2 class="sect">3. Where the emotion tags fit</h2>
+  <p class="sect-sub">Last night's test, explained by the pipeline above.</p>
+  <div class="detail">
+    <p>A tag like <code>&lt;laugh&gt;</code> is just literal text inserted into the chunk before step 4 (Orpheus prompt) - <code>&lt;|audio|&gt;tara: I'm going to laugh now. &lt;laugh&gt;.&lt;|eot_id|&gt;</code>. Orpheus was trained so that seeing this exact text in context shifts which <code>&lt;custom_token_N&gt;</code> values it predicts next - producing SNAC codes that decode to an actual laugh sound instead of the word "laugh." Nothing downstream (SNAC, the WAV writer, the Opus transcode) knows or cares that a tag was involved - it's audio like any other by the time it reaches step 5.</p>
+    <p style="margin-top:.6rem;">Confirmed working on this deployment's model (<code>legraphista/Orpheus:3b-ft-q8</code>, a community GGUF quantization - not guaranteed to match the original checkpoint's full tag vocabulary):</p>
+    <div class="tag-grid" id="tag-grid"></div>
+  </div>
+
+  <h2 class="sect">4. Where this sits in the wider mesh</h2>
+  <p class="sect-sub">AdiyanReader is one A2A agent among many - this is its own nightly loop, not something Orchestrator drives turn by turn.</p>
+  <div class="detail">
+    <div class="mesh-map" id="mesh-map"></div>
+  </div>
+</div>
+
+<script>
+const stages = [
+  {
+    badge: 'mesh', badgeLabel: 'Book text', title: 'Page text fetched from the knowledge base', file: 'mesh/memory/memory_index.py (via Memory Agent)',
+    detail: 'AdiyanReader doesn\'t store book text itself - it asks Memory Agent for the next page of whichever book this reading job is on. That text came from Docling\'s own markdown export when the book was first uploaded, which is why the very next step exists.',
+  },
+  {
+    badge: 'plain', badgeLabel: 'Cleanup', title: 'clean_for_speech() strips markdown', file: 'mesh/adiyan_reader/tts.py',
+    detail: 'Docling\'s markdown export is real text but with structure baked in - "## Heading" markers, "&lt;!-- image --&gt;" placeholders. Confirmed live: "&lt;!-- image --&gt;" got vocalized as the literal word "image" mid-sentence before this existed. Regex-stripped here, not by an LLM - this is mechanical formatting removal, not a judgment call.',
+    code: `text = re.sub(r'&lt;!--.*?--&gt;', '', text, flags=re.DOTALL)\ntext = re.sub(r'^#{1,6}\\s*', '', text, flags=re.MULTILINE)\ntext = re.sub(r'\\*\\*(.+?)\\*\\*', r'\\1', text)  # **bold**`,
+  },
+  {
+    badge: 'ollama', badgeLabel: 'Prose check', title: 'looks_like_prose() decides: read as-is, or rewrite first?', file: 'mesh/adiyan_reader/tts.py',
+    detail: 'A table-of-contents page has no real sentences - just headings jammed together. Reading that aloud verbatim produced genuinely bad, garbled audio in testing, even with every other fix applied. If less than half the page\'s characters fall inside real sentence-ending punctuation, it fails this check and gets rewritten by a reasoning model (qwen3:8b-16k) into an honest spoken description first - "this page is a table of contents listing chapters 1 through 12" rather than reading fragments.',
+  },
+  {
+    badge: 'plain', badgeLabel: 'Chunking', title: '_split_into_speech_chunks() breaks the page into ≤300-char pieces', file: 'mesh/adiyan_reader/tts.py',
+    detail: 'Confirmed live: Orpheus (a 3B model) reads a short sentence accurately every time, but coherence measurably degrades over one long generation - a full page (1500+ chars) came back garbled even after other fixes. Splits on sentence-ending punctuation; a heading-only run with no punctuation at all gets a second word-boundary split so no chunk ever exceeds the limit.',
+  },
+  {
+    badge: 'ollama', badgeLabel: 'Orpheus', title: 'Each chunk becomes a raw completion prompt to Ollama', file: 'mesh/adiyan_reader/tts.py → _generate_tokens()',
+    detail: 'The literal prompt format Orpheus expects: &lt;|audio|&gt;voice: text&lt;|eot_id|&gt;. raw=True on the Ollama call is non-negotiable - confirmed live that Ollama\'s default chat-templating breaks this format entirely, making the model reply with ordinary conversational text instead of audio tokens. repetition_penalty is tuned to 1.3 here (Canopy Labs\' own documented default is 1.1), after live testing kept producing exact-phrase repetition loops at their recommended value.',
+    code: `prompt = f'&lt;|audio|&gt;{voice}: {chunk}&lt;|eot_id|&gt;'\npayload = {'model': cfg['model'], 'prompt': prompt, 'raw': True, 'stream': True,\n           'options': {'num_predict': 6000, 'repeat_penalty': 1.3, ...}}`,
+  },
+  {
+    badge: 'snac', badgeLabel: 'SNAC decode', title: 'Custom tokens decoded into real PCM audio', file: 'mesh/adiyan_reader/tts.py → _convert_frame_to_audio()',
+    detail: 'Every 7 tokens is one frame across 3 hierarchical codebooks (see section 2 below). A local neural model (hubertsiuzdak/snac_24khz, via torch, on mps/cuda/cpu) decodes each frame into a slice of real 16-bit PCM. This pipelines against the *next* chunk\'s generation - while SNAC decodes chunk N on this machine\'s GPU, chunk N+1 is already streaming in from Ollama, so neither resource sits idle.',
+  },
+  {
+    badge: 'plain', badgeLabel: 'Assembly', title: 'PCM segments joined into one WAV, then transcoded to Opus/OGG', file: 'mesh/adiyan_reader/tts.py → _write_wav() / _wav_to_opus_ogg()',
+    detail: 'A 150ms silence gap is inserted between (not within) chunks - each chunk is an independent SNAC decode, and splicing them with zero gap produces an audible click at every boundary. The final ffmpeg transcode to Opus/OGG exists because WhatsApp\'s voice-note (PTT) UI - the mic bubble + waveform - only reliably renders with audio/ogg;codecs=opus, not raw WAV.',
+  },
+  {
+    badge: 'mesh', badgeLabel: 'Delivery', title: 'Sent as a real WhatsApp voice note', file: 'mesh/lib/agent_sdk.py → send_voice_to()',
+    detail: 'Goes through the permission-checked mcp.whatsapp.send_voice tool, not a direct OpenWA call - this codebase deliberately moved away from agents constructing OpenWAService directly, after that pattern once bypassed the platform\'s own permission check entirely.',
+  },
+];
+
+const pipeline = document.getElementById('pipeline');
+const detail = document.getElementById('detail');
+let active = 0;
+
+stages.forEach((s, i) => {
+  if (i > 0) {
+    const c = document.createElement('div');
+    c.className = 'connector';
+    pipeline.appendChild(c);
+  }
+  const div = document.createElement('div');
+  div.className = 'node';
+  div.innerHTML = `
+    <span class="node-badge ${s.badge}">${s.badgeLabel}</span>
+    <div class="node-body">
+      <div class="node-title">${i+1}. ${s.title}</div>
+      <div class="node-file">${s.file}</div>
+    </div>
+  `;
+  div.addEventListener('click', () => { active = i; render(); });
+  pipeline.appendChild(div);
+});
+
+function render(){
+  document.querySelectorAll('.node').forEach((n, i) => n.classList.toggle('active', i === active));
+  const s = stages[active];
+  const codeHtml = s.code ? `<pre class="code">${s.code}</pre>` : '';
+  detail.innerHTML = `<p>${s.detail}</p>${codeHtml}`;
+}
+render();
+
+const tagResults = [
+  {tag: 'laugh', status: 'confirmed'},
+  {tag: 'sigh', status: 'confirmed'},
+  {tag: 'sniffle', status: 'confirmed'},
+  {tag: 'yawn', status: 'unknown'},
+  {tag: 'gasp', status: 'unknown'},
+  {tag: 'chuckle', status: 'unknown'},
+  {tag: 'cough', status: 'unknown'},
+  {tag: 'groan', status: 'unknown'},
+];
+const tagGrid = document.getElementById('tag-grid');
+tagResults.forEach(t => {
+  const cell = document.createElement('div');
+  cell.className = 'tag-cell ' + t.status;
+  cell.textContent = (t.status === 'confirmed' ? '✓ ' : '? ') + '<' + t.tag + '>';
+  tagGrid.appendChild(cell);
+});
+
+const meshSteps = [
+  'A cron_trigger MCP job fires read_next_page nightly (one-shot, re-registered for the next literal midnight after each fire) - not a poll loop.',
+  'read_next_page asks Memory Agent for this reading job\'s current page (mesh.memory.skills.get_book_page), advances current_page in mesh/adiyan_reader/db.py.',
+  'The whole pipeline on this page (sections 1-2 above) runs, producing one Opus/OGG voice note.',
+  'Both a short text summary AND the voice note are delivered to the phone number this reading job is registered against.',
+  'Comprehension questions are generated from the same page text (a separate qwen3:8b-16k call) and queued, dispatched the next morning by a second, independent cron_trigger fire (mesh/adiyan_reader/skills/dispatch_questions.py).',
+];
+const meshMap = document.getElementById('mesh-map');
+meshSteps.forEach((step, i) => {
+  const div = document.createElement('div');
+  div.className = 'mesh-step';
+  div.innerHTML = `<span class="n">${i+1}</span><span>${step}</span>`;
+  meshMap.appendChild(div);
+});
+</script>

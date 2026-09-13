@@ -1,38 +1,38 @@
 <title>The Best Outcome</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
-  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
-  --accent:#0F6E56; --accent-soft:#E1F5EE;
-  --without:#993C1D; --without-soft:#FAECE7;
-  --with:#0F6E56; --with-soft:#E1F5EE;
-  --agent:#378ADD; --agent-soft:#E6F1FB;
-  --bubble-user:#EFEEE7; --bubble-user-ink:#3A3C36;
-  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --without:#8A3B2A; --without-soft:#EDD9CF;
+  --with:#8A6B32; --with-soft:#DCCBA0;
+  --agent:#4A5A6A; --agent-soft:#D7DEE2;
+  --bubble-user:#E0D2AC; --bubble-user-ink:#241F14;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
-    --accent:#5DCAA5; --accent-soft:#0F6E56;
-    --without:#F0997B; --without-soft:#4A1B0C;
-    --with:#5DCAA5; --with-soft:#085041;
-    --agent:#85B7EB; --agent-soft:#0C447C;
-    --bubble-user:#2A2C27; --bubble-user-ink:#C9CBC2;
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#8A6B32;
+    --without:#E08B6F; --without-soft:#3A2117;
+    --with:#D6AD5F; --with-soft:#4A3A1C;
+    --agent:#9AA8B8; --agent-soft:#2A3542;
+    --bubble-user:#2A2C27; --bubble-user-ink:#ECE2CA;
   }
 }
 :root[data-theme="dark"]{
-  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
-  --accent:#5DCAA5; --accent-soft:#0F6E56;
-  --without:#F0997B; --without-soft:#4A1B0C;
-  --with:#5DCAA5; --with-soft:#085041;
-  --agent:#85B7EB; --agent-soft:#0C447C;
-  --bubble-user:#2A2C27; --bubble-user-ink:#C9CBC2;
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#8A6B32;
+  --without:#E08B6F; --without-soft:#3A2117;
+  --with:#D6AD5F; --with-soft:#4A3A1C;
+  --agent:#9AA8B8; --agent-soft:#2A3542;
+  --bubble-user:#2A2C27; --bubble-user-ink:#ECE2CA;
 }
 *{box-sizing:border-box;}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
 .wrap{max-width:960px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
 .eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
-h1{font-size:1.7rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
+h1{font-family:var(--serif);font-size:1.7rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
 .lede{color:var(--ink-soft);font-size:.97rem;line-height:1.65;max-width:66ch;margin:0 0 1.8rem;}
 
 .tabs{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.4rem;}

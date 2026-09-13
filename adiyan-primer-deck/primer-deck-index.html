@@ -1,0 +1,107 @@
+<title>Adiyan Primer Deck</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#4A3A1C;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#4A3A1C;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:920px;margin:0 auto;padding:2.8rem 1.5rem 4rem;}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .6rem;}
+h1{font-family:var(--serif);font-size:2rem;font-weight:700;margin:0 0 .6rem;text-wrap:balance;line-height:1.15;}
+.lede{color:var(--ink-soft);font-size:1rem;line-height:1.7;max-width:66ch;margin:0 0 2rem;}
+.lede a{color:var(--accent);}
+
+h2.sect{font-family:var(--serif);font-size:1.3rem;font-weight:700;margin:2.4rem 0 .3rem;border-bottom:1.5px solid var(--line);padding-bottom:.5rem;}
+p.sect-sub{font-size:.86rem;color:var(--ink-soft);margin:0 0 1.1rem;line-height:1.5;}
+
+.card-grid{display:grid;grid-template-columns:1fr 1fr;gap:.9rem;}
+@media (max-width:680px){.card-grid{grid-template-columns:1fr;}}
+.card{
+  display:block;text-decoration:none;color:inherit;background:var(--panel);border:1.5px solid var(--line);
+  border-radius:10px;padding:1.1rem 1.2rem;transition:border-color .15s,transform .1s;
+}
+.card:hover{border-color:var(--accent);transform:translateY(-1px);}
+.card-num{font-family:var(--mono);font-size:.7rem;color:var(--accent);letter-spacing:.04em;text-transform:uppercase;}
+.card-title{font-weight:700;font-size:.98rem;margin:.3rem 0 .35rem;line-height:1.3;}
+.card-desc{font-size:.83rem;color:var(--ink-soft);line-height:1.5;}
+
+footer{margin-top:3rem;padding-top:1.5rem;border-top:1.5px solid var(--line);font-size:.83rem;color:var(--ink-soft);line-height:1.6;}
+footer code{font-family:var(--mono);background:var(--panel);padding:.1rem .35rem;border-radius:4px;}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; primer deck</p>
+  <h1>How Adiyan's memory, agents, and voice actually work</h1>
+  <p class="lede">A linked set of interactive walkthroughs built during real debugging sessions on Adiyan - each one grounded in the actual code and, where something broke, the actual log evidence. Same look throughout, styled to match <a href="#" onclick="return false;">Adiyan's own documentation</a>.</p>
+
+  <h2 class="sect">Memory &amp; the graph rebuild</h2>
+  <p class="sect-sub">Phases 1 through 5 of moving structured facts off fuzzy, paraphrase-prone recall onto a real, permissioned graph.</p>
+  <div class="card-grid" id="memory-cards"></div>
+
+  <h2 class="sect">Platform wiring</h2>
+  <p class="sect-sub">How a capability reaches every agent with zero per-agent code, not just the ones it was built for.</p>
+  <div class="card-grid" id="platform-cards"></div>
+
+  <h2 class="sect">Real bugs, found and fixed live</h2>
+  <p class="sect-sub">Each of these exists because something broke in production and got traced to its actual root cause.</p>
+  <div class="card-grid" id="bugs-cards"></div>
+
+  <h2 class="sect">AdiyanReader &amp; voice</h2>
+  <p class="sect-sub">How a page of a real book becomes a WhatsApp voice note, and what it would take to bring that pipeline onto the same platform rails as everything else.</p>
+  <div class="card-grid" id="voice-cards"></div>
+
+  <footer>
+    Every page here is a live Claude Artifact, not a static export - open any card, then use its own back-link to return here. Source for all of it lives under <code>adiyan-primer-deck/</code> in the Adiyan repo.
+  </footer>
+</div>
+
+<script>
+const sections = {
+  'memory-cards': [
+    {n:'01', title:'Who can see what a person told Adiyan', desc:'Click an identity, see which stored facts it can reach - today\'s model vs. the tiered fix.', url:'https://claude.ai/code/artifact/8556a9bd-d3d6-4c63-a046-b5e9ba7d3553'},
+    {n:'02', title:'The memory graph, as a real fitness-coach scenario', desc:'Two clients named Priya, one shared coach - about vs. visible_to, with 3 toggleable complexity layers.', url:'https://claude.ai/code/artifact/701da1e4-4dec-4ff4-ab27-adf9953e8f16'},
+    {n:'03', title:'Designing Adiyan\'s memory graph', desc:'The full 9-step design reasoning, from root-causing a live bug to a phased, testable build - with interview talking points.', url:'https://claude.ai/code/artifact/7c5d25cb-66fb-4805-9eab-678c7737f6db'},
+    {n:'04', title:'What Phase 2 actually does', desc:'Step through graph_store.py function by function - the real Cypher each one issues.', url:'https://claude.ai/code/artifact/deaca101-ee40-4808-b46c-18100ecceb3c'},
+    {n:'05', title:'Short-term memory, untouched', desc:'The three memory tiers side by side, and exactly what the graph rebuild did (and didn\'t) change.', url:'https://claude.ai/code/artifact/7624bbda-2507-40d7-8bb1-444974791548'},
+    {n:'06', title:'The best-case outcome, in four real scenarios', desc:'Same message, with and without shared memory - including the one where "correct" was previously an accident.', url:'https://claude.ai/code/artifact/6a5c9135-ef18-41a6-b4fe-fad4d6ed9060'},
+  ],
+  'platform-cards': [
+    {n:'07', title:'Wiring memory into one real agent', desc:'The 7-hop pipeline from WhatsApp to a skill, with the real before/after diff.', url:'https://claude.ai/code/artifact/e9fd111c-8da3-4297-8aa0-f43dba600017'},
+    {n:'08', title:'Zero-code memory wiring, for every agent', desc:'Pick any agent - the two platform hooks never move, because they were never inside any agent\'s own file.', url:'https://claude.ai/code/artifact/dd11bb9c-ed34-463d-ac9d-0804b28d9f78'},
+    {n:'09', title:'Model-tiered prompts', desc:'Type a model name, see its tier live - then the two real prompt variants it actually drives.', url:'https://claude.ai/code/artifact/d78701f2-1147-4d24-bd8a-a1cd94b3e984'},
+    {n:'10', title:'Teaching ask() to speak Orpheus', desc:'What it takes to route TTS synthesis through the same platform hook as every other LLM call.', url:'https://claude.ai/code/artifact/417679a6-90d2-4bc0-b126-e1f7f73bf3c8'},
+  ],
+  'bugs-cards': [
+    {n:'11', title:'Why a correct finding got thrown away', desc:'Your exact failing run, replayed step by step - and why the fix reuses code instead of adding new logic.', url:'https://claude.ai/code/artifact/4b190c5a-d698-4c5b-8371-92a9935c0fcb'},
+  ],
+  'voice-cards': [
+    {n:'12', title:'How Orpheus powers AdiyanReader', desc:'Click through all 7 pipeline stages, the SNAC token math, and where the emotion-tag test fits in.', url:'https://claude.ai/code/artifact/70447363-730f-442c-a790-c484cdb3e258'},
+  ],
+};
+
+for (const [id, cards] of Object.entries(sections)) {
+  const grid = document.getElementById(id);
+  cards.forEach(c => {
+    const a = document.createElement('a');
+    a.className = 'card';
+    a.href = c.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.innerHTML = `<div class="card-num">${c.n}</div><div class="card-title">${c.title}</div><div class="card-desc">${c.desc}</div>`;
+    grid.appendChild(a);
+  });
+}
+</script>

@@ -1,35 +1,35 @@
 <title>The ReAct Loop Fix</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
-  --paper:#F7F6F2; --panel:#FFFFFF; --ink:#1B1D1A; --ink-soft:#5B5D57; --line:#DEDCD4;
-  --accent:#0F6E56; --accent-soft:#E1F5EE;
-  --bad:#993C1D; --bad-soft:#FAECE7;
-  --good:#0F6E56; --good-soft:#E1F5EE;
-  --code-bg:#EFEEE7; --code-ink:#3A3C36; --code-add:#D8EFE5; --code-add-ink:#0B4E3D; --code-del:#F6DCD5; --code-del-ink:#7A2F17;
-  --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --bad:#8A3B2A; --bad-soft:#EDD9CF;
+  --good:#8A6B32; --good-soft:#DCCBA0;
+  --code-bg:#E0D2AC; --code-ink:#241F14; --code-add:#D2DFC6; --code-add-ink:#33481F; --code-del:#EDD9CF; --code-del-ink:#6B2E1D;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
-    --accent:#5DCAA5; --accent-soft:#0F6E56;
-    --bad:#F0997B; --bad-soft:#4A1B0C;
-    --good:#5DCAA5; --good-soft:#085041;
-    --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8; --code-del:#3A1B12; --code-del-ink:#F0997B;
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#8A6B32;
+    --bad:#E08B6F; --bad-soft:#3A2117;
+    --good:#D6AD5F; --good-soft:#4A3A1C;
+    --code-bg:#272013; --code-ink:#ECE2CA; --code-add:#243318; --code-add-ink:#B8D9A0; --code-del:#3A2117; --code-del-ink:#E08B6F;
   }
 }
 :root[data-theme="dark"]{
-  --paper:#17181A; --panel:#1F211F; --ink:#EDEDE7; --ink-soft:#9A9C94; --line:#34362F;
-  --accent:#5DCAA5; --accent-soft:#0F6E56;
-  --bad:#F0997B; --bad-soft:#4A1B0C;
-  --good:#5DCAA5; --good-soft:#085041;
-  --code-bg:#0F110F; --code-ink:#C9CBC2; --code-add:#0D3A2D; --code-add-ink:#9FE3C8; --code-del:#3A1B12; --code-del-ink:#F0997B;
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#8A6B32;
+  --bad:#E08B6F; --bad-soft:#3A2117;
+  --good:#D6AD5F; --good-soft:#4A3A1C;
+  --code-bg:#272013; --code-ink:#ECE2CA; --code-add:#243318; --code-add-ink:#B8D9A0; --code-del:#3A2117; --code-del-ink:#E08B6F;
 }
 *{box-sizing:border-box;}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
 .wrap{max-width:940px;margin:0 auto;padding:2.6rem 1.5rem 3.5rem;}
 .eyebrow{font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .5rem;}
-h1{font-size:1.65rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.2;}
+h1{font-family:var(--serif);font-size:1.65rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.2;}
 .lede{color:var(--ink-soft);font-size:.96rem;line-height:1.65;max-width:66ch;margin:0 0 1.6rem;}
 
 h2.sect{font-size:1.05rem;font-weight:600;margin:2rem 0 .3rem;}
