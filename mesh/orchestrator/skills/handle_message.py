@@ -611,16 +611,26 @@ async def run(
             # source script via indic_transliteration) and fuzzy-matches
             # it against "adiyan" (rapidfuzz) - see
             # _word_matches_spoken_summon()'s own docstring for the real
-            # scores that set its threshold. Whichever word matches is
-            # folded into `text` as the real summon phrase (which
-            # strip_summon_phrase removes again further down, same as it
-            # would for a typed "@adiyan"), rather than teaching
-            # rules_engine.check() itself about audio-only phrasing.
+            # scores that set its threshold. Every matching word is
+            # stripped, not just the first - confirmed live this session
+            # that Whisper can transcribe more than one wake-word-like
+            # token in a single clip (a real clip came back as 'அடியேன்
+            # அடியான் சென்னி மைல் பாண் நம்பர்' - 'அடியேன்', a Tamil
+            # honorific one vowel-sign away from 'அடியான்', fuzzy-matches
+            # just as well). Breaking after the first match left the
+            # second one sitting in the routed text/query as noise. The
+            # real summon phrase is folded in once regardless of how many
+            # matched (strip_summon_phrase removes it again further down,
+            # same as it would for a typed "@adiyan"), rather than
+            # teaching rules_engine.check() itself about audio-only
+            # phrasing.
+            summoned_word_matched = False
             for word in text.split():
                 if _word_matches_spoken_summon(word):
                     text = re.sub(re.escape(word), '', text, count=1).strip()
-                    text = f'{rules_engine.DEFAULT_SUMMON_PHRASE} {text}'
-                    break
+                    summoned_word_matched = True
+            if summoned_word_matched:
+                text = f'{rules_engine.DEFAULT_SUMMON_PHRASE} {text}'
         else:
             # Confirmed live this session: `text` was left at whatever
             # message_body already was on a failed transcription - for a
