@@ -221,7 +221,26 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
     if media['omitted']:
         # Blob was too large to inline (WEBHOOK_MEDIA_INLINE_MAX_BYTES) -
         # fetch it directly rather than losing the content.
-        if message['from_me']:
+        #
+        # from_me alone isn't enough - same gap _resolve_from_number()'s
+        # own docstring already documents, now confirmed live here too: a
+        # genuine voice note recorded on the owner's own phone and sent to
+        # their OWN self-chat arrives as a normal incoming `message` event,
+        # not the echoed `message.sent` event from_me is derived from
+        # (openwa_receiver.py's own 'from_me': event_type == 'message.sent')
+        # - so from_me computes False even though WhatsApp itself
+        # unambiguously considers this content "sent by this account."
+        # download_media()'s archive-backed endpoint then 404s
+        # unconditionally, per its own docstring, since OpenWA's archive
+        # excludes anything sent by the connected account regardless of
+        # what Adiyan's own from_me flag says - and that 404 was silently
+        # losing the entire message, with no error surfacing anywhere,
+        # exactly the "voice note just vanishes" symptom confirmed live
+        # this session. A self-chat message is structurally always from
+        # the owner - there's no other possible sender - so is_self_chat
+        # alone is sufficient here, same reasoning _resolve_from_number()
+        # already applies for identity resolution.
+        if message['from_me'] or message.get('is_self_chat'):
             content_b64 = await _resolve_outbound_media(message)
         else:
             downloaded = await _openwa.download_media(message['lid'], message['whatsapp_message_id'])
@@ -271,7 +290,20 @@ async def handle_webhook(request: Request) -> JSONResponse:
         return JSONResponse({'status': 'duplicate_ignored'})
     dedup.mark_seen(_dedup_conn, whatsapp_message_id)
 
-    resolved_media = await _resolve_media(message)
+    # Confirmed live this session: _resolve_media() raising here (the
+    # from_me/is_self_chat mismatch just above, before it was fixed) took
+    # down the ENTIRE message with it - uncaught, before the try/except
+    # below ever runs, silently losing text/image/document/audio alike
+    # rather than just the one media blob that failed to resolve. A media
+    # fetch failing is exactly the same class of thing send_document/
+    # send_image already treat as recoverable elsewhere in this mesh, not
+    # a reason a real incoming message (which may carry real text/a real
+    # caption alongside the media) should vanish with zero trace.
+    try:
+        resolved_media = await _resolve_media(message)
+    except Exception as e:
+        logger.error(f'Failed to resolve media for {whatsapp_message_id!r}, continuing without it: {e}')
+        resolved_media = None
     image = resolved_media if resolved_media and resolved_media['kind'] == 'image' else None
     document = resolved_media if resolved_media and resolved_media['kind'] == 'document' else None
     audio = resolved_media if resolved_media and resolved_media['kind'] in ('ptt', 'audio') else None
