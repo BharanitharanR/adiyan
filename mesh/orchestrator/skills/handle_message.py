@@ -419,7 +419,15 @@ async def _ingest_into_knowledge_base(
     not just an access-control label) is contact_name when WhatsApp gave
     one, falling back to the raw chat_id - the same 'Unknown' fallback
     openwa_receiver.py already applies means contact_name is effectively
-    always populated in practice."""
+    always populated in practice.
+
+    owner_identity is deliberately chat_id, not username above - a display
+    name can be arbitrary or reused (see memory_index.py's own
+    _scope_filters() docstring), but chat_id is the same stable identity
+    permissions.mint_token() already uses for this exact sender. Every
+    upload defaults to visibility='private' (memory_index.py's own default)
+    - it's visible only to whoever uploaded it, and the owner, unless later
+    explicitly marked global."""
     memory_url = router.get_agent_url('memory')
     if memory_url is None:
         return "Knowledge Bank isn't reachable right now - try again in a moment.", None
@@ -438,6 +446,7 @@ async def _ingest_into_knowledge_base(
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'mimetype': mimetype,
             'username': contact_name or chat_id,
+            'owner_identity': chat_id,
         }, token=token)
     except Exception as e:
         logger.error(f'Ingestion failed for {chat_id}: {e}')

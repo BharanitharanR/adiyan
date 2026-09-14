@@ -137,14 +137,34 @@ async def _get_message(key: str, **kwargs: str) -> str:
 # and mesh/lib/mcp_registry.py - see docs/TOOL_RESOLUTION_DESIGN.md.
 
 
-def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_search_top_k: int, react_cfg: Dict[str, Any]):
+def _make_tools(
+    contact_name: Optional[str], requester_id: Optional[str], is_owner: bool,
+    observation_char_cap: int, doc_search_top_k: int, react_cfg: Dict[str, Any],
+):
     """Tool functions as closures, not module-level - contact_name varies
     per call, and multiple analyse_this calls can run concurrently with
     different callers; module-level shared state would let them corrupt
     each other. observation_char_cap/doc_search_top_k are likewise per-call
     (fetched once in run() from config_sdk) rather than the module-level
     defaults, so a live config change takes effect on the next call without
-    a restart."""
+    a restart.
+
+    requester_id/is_owner: every KB-touching tool below (search_documents,
+    read_document, search_within_document, list_documents) passes these
+    through EXPLICITLY as call params, not just via the token this loop
+    mints for itself. That token's own subject is always 'analysis'
+    (permissions.mint_token('analysis', 'service')) - Memory Agent's own
+    scoping (mesh/memory/agent_executor.py) would otherwise see this whole
+    ReAct loop as one anonymous service identity with no documents of its
+    own, either seeing nothing scoped to a real person, or - worse, if that
+    fallback identity ever collided with a real one - the wrong person's
+    documents. requester_id/is_owner are the REAL end user's identity,
+    already verified by Orchestrator/Analysis Agent's own token checks
+    before this function was ever called (see analysis/agent_executor.py's
+    own comment) - forwarding them here is what actually closes the
+    confirmed-live leak this whole scoping change exists for (a Vizag-trip
+    question that got answered using an unrelated coach's Aadhar photo, per
+    _merge_document_list()'s own docstring below)."""
 
     @tool
     async def search_documents(query: str) -> str:
@@ -153,7 +173,9 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         or says nothing matched."""
         token = permissions.mint_token('analysis', 'service')
         try:
-            result = await call_agent(MEMORY_AGENT_URL, 'resolve_document', {'query': query}, token=token)
+            result = await call_agent(MEMORY_AGENT_URL, 'resolve_document', {
+                'query': query, 'requester_id': requester_id, 'is_owner': is_owner,
+            }, token=token)
         except Exception as e:
             return f'search_documents failed: {describe_exception(e)}'
         if not result.get('found'):
@@ -172,7 +194,9 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         use search_within_document instead."""
         token = permissions.mint_token('analysis', 'service')
         try:
-            result = await call_agent(MEMORY_AGENT_URL, 'get_document_text', {'source_filename': source_filename}, token=token)
+            result = await call_agent(MEMORY_AGENT_URL, 'get_document_text', {
+                'source_filename': source_filename, 'requester_id': requester_id, 'is_owner': is_owner,
+            }, token=token)
         except Exception as e:
             return f'read_document failed: {describe_exception(e)}'
         if not result.get('found'):
@@ -202,6 +226,7 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'search_document_chunks', {
                 'source_filename': source_filename, 'query': query, 'top_k': doc_search_top_k,
+                'requester_id': requester_id, 'is_owner': is_owner,
             }, token=token)
         except Exception as e:
             return f'search_within_document failed: {describe_exception(e)}'
@@ -221,7 +246,9 @@ def _make_tools(contact_name: Optional[str], observation_char_cap: int, doc_sear
         it as evidence for your answer."""
         token = permissions.mint_token('analysis', 'service')
         try:
-            result = await call_agent(MEMORY_AGENT_URL, 'list_documents', {}, token=token)
+            result = await call_agent(MEMORY_AGENT_URL, 'list_documents', {
+                'requester_id': requester_id, 'is_owner': is_owner,
+            }, token=token)
         except Exception as e:
             return f'list_documents failed: {describe_exception(e)}'
         docs = result.get('documents', [])
@@ -486,7 +513,10 @@ def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]
     }
 
 
-async def run(instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None) -> Dict[str, Any]:
+async def run(
+    instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None,
+    requester_id: Optional[str] = None, is_owner: bool = False,
+) -> Dict[str, Any]:
     cfg = await config_sdk.get_stage_config(AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'])
     strict_seed = _seeded('strict_grounding')
     strict = await config_sdk.get_constant(AGENT_ID, 'strict_grounding', strict_seed['value'], description=strict_seed['description'])
@@ -494,7 +524,7 @@ async def run(instruction: str, source_filename: Optional[str] = None, contact_n
     observation_char_cap = await config_sdk.get_constant(AGENT_ID, 'observation_char_cap', cap_seed['value'], description=cap_seed['description'])
     top_k_seed = _seeded('doc_search_top_k')
     doc_search_top_k = await config_sdk.get_constant(AGENT_ID, 'doc_search_top_k', top_k_seed['value'], description=top_k_seed['description'])
-    tools, tools_by_name = _make_tools(contact_name, observation_char_cap, doc_search_top_k, cfg)
+    tools, tools_by_name = _make_tools(contact_name, requester_id, is_owner, observation_char_cap, doc_search_top_k, cfg)
 
     scratchpad = Scratchpad()
     if source_filename:

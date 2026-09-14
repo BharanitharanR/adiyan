@@ -1,7 +1,18 @@
 """The coach's/business owner's uploaded knowledge base - documents (PDFs,
-photos, presentations, via Docling) ingested and made searchable, global,
-not scoped to any one contact. Local Ollama embeddings (nomic-embed-text)
-backed by the Qdrant instance Adiyan already runs against.
+photos, presentations, via Docling) ingested and made searchable. Local
+Ollama embeddings (nomic-embed-text) backed by the Qdrant instance Adiyan
+already runs against.
+
+Scoped per-requester by default (visibility='private', owner_identity=the
+uploader's chat_id), not global - confirmed live this session that the
+previous unscoped design let one registered client's private document
+(an Aadhaar card) surface in a different requester's search. A document
+becomes visible to everyone only via an explicit visibility='global' tag
+at ingest time; the owner (permissions_config.json's 'owner' tier) always
+bypasses scoping and sees everything, same as it already can for every
+other action. See _scope_filters() below for the actual filter, and
+mesh/tools/scope_existing_knowledge_base.py for the one-off migration that
+tagged every document ingested before this fix existed.
 
 Per-contact conversation memory used to live in this same file, backed by a
 plain LlamaIndex VectorStoreIndex - it moved to mesh/memory/mem0_backend.py,
@@ -19,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
-from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
+from llama_index.core.vector_stores import FilterCondition, FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -40,6 +51,29 @@ CREATE TABLE IF NOT EXISTS kb_documents (
 )
 """
 
+# Access-scoping columns, added via ALTER TABLE below rather than in the
+# CREATE TABLE above - this table predates the knowledge-base scoping fix
+# (confirmed live this session: search_knowledge_base's own docstring said
+# "Global, not scoped to any one contact," and a real query surfaced one
+# registered client's Aadhaar card to a different requester). SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so _ensure_scope_columns() below probes
+# pragma table_info() instead of relying on catching the OperationalError
+# from a repeat ALTER TABLE. DEFAULT 'private' on new rows: an ingested
+# document is invisible to anyone but its own uploader (and the owner, who
+# bypasses scoping entirely - see this module's own _scope_filters())
+# unless explicitly marked 'global'.
+_SCOPE_COLUMNS = {
+    'owner_identity': "ALTER TABLE kb_documents ADD COLUMN owner_identity TEXT",
+    'visibility': "ALTER TABLE kb_documents ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'",
+}
+
+
+def _ensure_scope_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute('PRAGMA table_info(kb_documents)').fetchall()}
+    for column, ddl in _SCOPE_COLUMNS.items():
+        if column not in existing:
+            conn.execute(ddl)
+
 
 def _safe_filename(filename: str) -> str:
     """Strips any directory component and anything that isn't safe as a
@@ -52,7 +86,33 @@ def _safe_filename(filename: str) -> str:
 def _documents_db() -> sqlite3.Connection:
     conn = sqlite3.connect(state_db_path(AGENT_ID))
     conn.execute(DOCUMENTS_TABLE_SCHEMA)
+    _ensure_scope_columns(conn)
     return conn
+
+
+def _scope_filters(requester_id: Optional[str]) -> MetadataFilters:
+    """OR-combined Qdrant metadata filter: a chunk is visible if it was
+    marked 'global' at ingest time, OR its owner_identity matches this
+    exact requester. Callers pass this only when the requester ISN'T the
+    owner - see every call site below, which skips filtering entirely
+    (None) for is_owner=True instead of calling this with some sentinel
+    "match everything" identity.
+
+    requester_id is expected to be the sender's real chat_id (the same
+    identity permissions.mint_token() puts in a token's 'sub' claim,
+    confirmed stable and collision-free unlike a display name) - never a
+    contact_name, which can be arbitrary/duplicated across contacts and
+    was never the identity ingestion actually keys ownership by. See
+    mesh/orchestrator/skills/handle_message.py's own comment on why
+    _ingest_into_knowledge_base() passes chat_id, not contact_name, as
+    owner_identity."""
+    return MetadataFilters(
+        condition=FilterCondition.OR,
+        filters=[
+            MetadataFilter(key='visibility', value='global', operator=FilterOperator.EQ),
+            MetadataFilter(key='owner_identity', value=requester_id or '', operator=FilterOperator.EQ),
+        ],
+    )
 
 
 # Confirmed live this session (~/.Adiyan/logs/llm_calls.log): Docling's own
@@ -270,6 +330,7 @@ class MemoryIndex:
 
     def ingest_document(
         self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
+        owner_identity: Optional[str] = None, visibility: str = 'private',
     ) -> tuple:
         """Returns (chunks_count, source_filename) - source_filename is the composite
         <username>/<filename> key this document is now stored under everywhere
@@ -291,7 +352,18 @@ class MemoryIndex:
         username folds into source_filename's own identity (<username>/<filename>), not
         just the physical path - so two different uploaders using the same original
         filename never collide, in Qdrant chunk metadata and the raw-file index alike,
-        not only on disk."""
+        not only on disk. username is a display label though (contact_name or chat_id,
+        whichever the caller had) - owner_identity is the separate, deliberately more
+        rigid field every scoped read (retrieve_knowledge_base, get_document_text, ...)
+        actually filters on, and should be the sender's real chat_id specifically (see
+        _scope_filters()'s own docstring for why). Defaults to username when not given,
+        for any caller that hasn't been updated to pass a real chat_id yet - keeps this
+        a strict superset of the old unscoped behavior's callers, never a break.
+
+        visibility defaults to 'private' (invisible to anyone but owner_identity and
+        the owner) - a document only becomes globally searchable by an explicit,
+        deliberate choice, never by omission."""
+        owner_identity = owner_identity or username
         safe_user = _safe_filename(username)
         safe_name = _safe_filename(filename)
         source_key = f'{safe_user}/{safe_name}'
@@ -334,6 +406,8 @@ class MemoryIndex:
                     'source_filename': source_key,
                     'chunk_index': i,
                     'ingested_at': timestamp,
+                    'owner_identity': owner_identity,
+                    'visibility': visibility,
                 },
             ))
 
@@ -344,8 +418,9 @@ class MemoryIndex:
         conn = _documents_db()
         conn.execute(
             'INSERT OR REPLACE INTO kb_documents '
-            '(source_filename, stored_path, mimetype, ingested_at, chunks) VALUES (?, ?, ?, ?, ?)',
-            (source_key, str(stored_path), mimetype, timestamp, len(chunks)),
+            '(source_filename, stored_path, mimetype, ingested_at, chunks, owner_identity, visibility) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (source_key, str(stored_path), mimetype, timestamp, len(chunks), owner_identity, visibility),
         )
         conn.commit()
         conn.close()
@@ -524,15 +599,30 @@ class MemoryIndex:
         matches = difflib.get_close_matches(query_normalized, display_to_source.keys(), n=1, cutoff=0.4)
         return display_to_source[matches[0]] if matches else None
 
-    def retrieve_knowledge_base(self, query: str, top_k: int = KB_DEFAULT_TOP_K) -> List[str]:
+    def retrieve_knowledge_base(
+        self, query: str, top_k: int = KB_DEFAULT_TOP_K,
+        requester_id: Optional[str] = None, is_owner: bool = False,
+    ) -> List[str]:
         """Return up to top_k relevant knowledge-base chunks, most relevant first.
-        Global - not scoped to any one contact, unlike retrieve()."""
-        retriever = self.kb_index.as_retriever(similarity_top_k=top_k)
+
+        Scoped to requester_id unless is_owner - confirmed live this session
+        that "Global, not scoped to any one contact" (this method's own
+        former docstring) was a real gap, not just a description: a real
+        query surfaced one registered client's Aadhaar card to a different
+        requester. Every chunk now carries 'visibility'/'owner_identity' at
+        ingest time (see ingest_document()); a chunk is included here only
+        if it's marked 'global' or owned by requester_id - unless is_owner,
+        which bypasses this filter entirely (the owner administers every
+        client's uploads, same reasoning permissions_config.json's 'owner'
+        tier already grants '*' for everything else)."""
+        filters = None if is_owner else _scope_filters(requester_id)
+        retriever = self.kb_index.as_retriever(similarity_top_k=top_k, filters=filters)
         nodes = retriever.retrieve(query)
         return [n.node.get_content() for n in nodes]
 
     def search_within_document(
         self, source_filename: str, query: str, top_k: int = DOC_SEARCH_DEFAULT_TOP_K,
+        requester_id: Optional[str] = None, is_owner: bool = False,
     ) -> List[Dict[str, Any]]:
         """Semantic search scoped to ONE already-known document, not the whole
         knowledge base - the fix for a confirmed-live gap: Analysis Agent's only
@@ -548,10 +638,16 @@ class MemoryIndex:
         each matching chunk's own text plus its score and chunk_index (not just
         the matched text alone) so a caller can cite exactly which part of the
         document an answer came from - mirrors what find_source_document()
-        already keeps from a retrieved node rather than discarding it."""
-        filters = MetadataFilters(filters=[
-            MetadataFilter(key='source_filename', value=source_filename, operator=FilterOperator.EQ),
-        ])
+        already keeps from a retrieved node rather than discarding it.
+
+        Also scoped like retrieve_knowledge_base() above (AND-ed with the
+        source_filename filter, not a separate check) - knowing a document's
+        exact filename (e.g. from a stale list_documents() result, or a
+        guess) must not be enough to read it if it isn't yours."""
+        scope_filters = [MetadataFilter(key='source_filename', value=source_filename, operator=FilterOperator.EQ)]
+        if not is_owner:
+            scope_filters.append(_scope_filters(requester_id))
+        filters = MetadataFilters(condition=FilterCondition.AND, filters=scope_filters)
         retriever = self.kb_index.as_retriever(similarity_top_k=top_k, filters=filters)
         nodes = retriever.retrieve(query)
         return [
@@ -559,18 +655,31 @@ class MemoryIndex:
             for n in nodes
         ]
 
-    def list_documents(self) -> List[str]:
+    def list_documents(self, requester_id: Optional[str] = None, is_owner: bool = False) -> List[str]:
         """Every source_filename currently on file in the raw-document index
         (kb_documents table), most recently ingested first - lets a caller
         see what's available without guessing or relying on a query
         happening to match, unlike find_source_document()'s similarity
-        search below."""
+        search below. Scoped the same way as every other read here - a
+        confirmed-live incident (see analyse_this's own _merge_document_list
+        docstring) had this method hand back another client's Aadhar photo's
+        filename to an unrelated requester's trip-planning question, which
+        the ReAct loop then genuinely opened and reported on as if relevant."""
         conn = _documents_db()
-        rows = conn.execute('SELECT source_filename FROM kb_documents ORDER BY ingested_at DESC').fetchall()
+        if is_owner:
+            rows = conn.execute('SELECT source_filename FROM kb_documents ORDER BY ingested_at DESC').fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT source_filename FROM kb_documents "
+                "WHERE visibility = 'global' OR owner_identity = ? ORDER BY ingested_at DESC",
+                (requester_id or '',),
+            ).fetchall()
         conn.close()
         return [row[0] for row in rows]
 
-    def find_source_document(self, query: str) -> Optional[str]:
+    def find_source_document(
+        self, query: str, requester_id: Optional[str] = None, is_owner: bool = False,
+    ) -> Optional[str]:
         """The source_filename of the single best-matching knowledge-base
         chunk for query, or None if the knowledge base has nothing at all,
         OR if the best match's own similarity score falls below
@@ -583,8 +692,13 @@ class MemoryIndex:
         Reuses the same chunk-level semantic search retrieve_knowledge_base()
         does - "which document answers this" is a different question from
         "what does it say," but the same search answers both, just keeping
-        the winning chunk's metadata this time instead of discarding it."""
-        retriever = self.kb_index.as_retriever(similarity_top_k=1)
+        the winning chunk's metadata this time instead of discarding it.
+        Scoped the same way - this backs both resolve_document (Analysis
+        Agent's search_documents tool) and share_knowledge_document, so an
+        unscoped match here would leak either a filename or the raw file
+        itself to the wrong requester."""
+        filters = None if is_owner else _scope_filters(requester_id)
+        retriever = self.kb_index.as_retriever(similarity_top_k=1, filters=filters)
         nodes = retriever.retrieve(query)
         if not nodes:
             return None
@@ -593,22 +707,31 @@ class MemoryIndex:
             return None
         return best.node.metadata.get('source_filename')
 
-    def get_document_text(self, source_filename: str) -> Optional[str]:
+    def get_document_text(
+        self, source_filename: str, requester_id: Optional[str] = None, is_owner: bool = False,
+    ) -> Optional[str]:
         """Full text of a document ingested via ingest_document(), reconstructed by
         concatenating every stored chunk for source_filename in chunk_index order -
         not a similarity search (kb_index.as_retriever() only supports "most similar
         to a query," never "every chunk belonging to this exact document"), so this
         goes straight through the underlying Qdrant client instead. None if no chunks
-        are on file for source_filename at all.
+        are on file for source_filename at all, OR if it's on file but requester_id
+        isn't allowed to see it (same scoping every other read in this class applies -
+        an exact-key lookup is not exempt just because it isn't a similarity search).
 
         LlamaIndex stores each chunk's own text inside its payload's _node_content
         field (a JSON-serialized TextNode), not as a plain top-level field - confirmed
         by inspecting a real stored point directly, not assumed."""
+        must = [FieldCondition(key='source_filename', match=MatchValue(value=source_filename))]
+        should = None
+        if not is_owner:
+            should = [
+                FieldCondition(key='visibility', match=MatchValue(value='global')),
+                FieldCondition(key='owner_identity', match=MatchValue(value=requester_id or '')),
+            ]
         points, _ = self._qdrant_client.scroll(
             collection_name=KB_COLLECTION_NAME,
-            scroll_filter=Filter(
-                must=[FieldCondition(key='source_filename', match=MatchValue(value=source_filename))]
-            ),
+            scroll_filter=Filter(must=must, should=should),
             limit=10000,
             with_payload=True,
         )
@@ -622,21 +745,33 @@ class MemoryIndex:
                 texts.append(json.loads(node_content).get('text', ''))
         return '\n\n'.join(texts)
 
-    def get_document(self, source_filename: str) -> Optional[Dict[str, str]]:
+    def get_document(
+        self, source_filename: str, requester_id: Optional[str] = None, is_owner: bool = False,
+    ) -> Optional[Dict[str, str]]:
         """Raw bytes (base64) plus mimetype for a document previously ingested via
         ingest_document(), keyed by the same source_filename its chunks carry in Qdrant -
         or None if no such document is on file (never actually ingested, or ingested
-        before this raw-storage index existed, or its stored file went missing).
+        before this raw-storage index existed, or its stored file went missing), OR if
+        requester_id isn't allowed to see it (same scoping as every other read here -
+        this is the single highest-stakes one, since it hands back the actual file
+        bytes for delivery over WhatsApp, not just a snippet or a filename).
 
         The returned 'filename' is just the original basename, not the internal
         <username>/<filename> key - that composite form is this index's own identity
         for avoiding cross-user collisions, not something that should show up as a
         WhatsApp attachment's displayed name."""
         conn = _documents_db()
-        row = conn.execute(
-            'SELECT stored_path, mimetype FROM kb_documents WHERE source_filename = ?',
-            (source_filename,),
-        ).fetchone()
+        if is_owner:
+            row = conn.execute(
+                'SELECT stored_path, mimetype FROM kb_documents WHERE source_filename = ?',
+                (source_filename,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT stored_path, mimetype FROM kb_documents "
+                "WHERE source_filename = ? AND (visibility = 'global' OR owner_identity = ?)",
+                (source_filename, requester_id or ''),
+            ).fetchone()
         conn.close()
         if row is None:
             return None

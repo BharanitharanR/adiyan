@@ -7,14 +7,20 @@ get_document_text.py's own docstring: this needs a filename AND a query
 already in hand, which only makes sense mid-investigation from Analysis
 Agent (mesh/analysis/skills/analyze.py), not something a free-text message
 to Memory Agent's own card would ever classify into on its own.
+
+requester_id/is_owner scope this the same way get_document_text.py's do -
+see memory_index.py's search_within_document() own docstring.
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mesh.memory.constants import OLLAMA_URL, QDRANT_URL
 from mesh.memory.memory_index import DOC_SEARCH_DEFAULT_TOP_K, get_memory_index
 
 
-def run(source_filename: str, query: str, top_k: int = DOC_SEARCH_DEFAULT_TOP_K) -> Dict[str, Any]:
+def run(
+    source_filename: str, query: str, top_k: int = DOC_SEARCH_DEFAULT_TOP_K,
+    requester_id: Optional[str] = None, is_owner: bool = False,
+) -> Dict[str, Any]:
     memory_index = get_memory_index(QDRANT_URL, OLLAMA_URL)
     if memory_index is None:
         return {'found': False, 'available': False}
@@ -23,7 +29,9 @@ def run(source_filename: str, query: str, top_k: int = DOC_SEARCH_DEFAULT_TOP_K)
     # as a float across the wire regardless of what the caller sent.
     # Confirmed live once already this session for recall.py's own top_k -
     # cast explicitly rather than let LlamaIndex's retriever choke on it.
-    chunks = memory_index.search_within_document(source_filename, query, top_k=int(top_k))
+    chunks = memory_index.search_within_document(
+        source_filename, query, top_k=int(top_k), requester_id=requester_id, is_owner=is_owner,
+    )
     if not chunks:
         return {'found': False, 'available': True}
     return {'found': True, 'available': True, 'chunks': chunks}

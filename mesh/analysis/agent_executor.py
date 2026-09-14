@@ -87,6 +87,21 @@ class AnalysisAgentExecutor(AgentExecutor):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
 
+        # This call's own token is who's REALLY asking - Orchestrator mints
+        # it with the sender's real chat_id/tier (rules_engine.check()),
+        # never with an internal service identity, for every path that
+        # reaches analyse_this. Forwarded into analyze.run() so its ReAct
+        # loop's own knowledge-base tools can pass the real identity on to
+        # Memory Agent explicitly - see analyze.py's _make_tools() own
+        # comment for why that forwarding has to be explicit rather than
+        # left to Memory Agent inferring it from ITS OWN token (which would
+        # instead see this agent's own service identity, sub='analysis').
+        # setdefault, not an overwrite, in case a future direct caller ever
+        # has a legitimate reason to pass its own already-correct values.
+        claims = claims or {}
+        params.setdefault('requester_id', claims.get('sub'))
+        params.setdefault('is_owner', claims.get('tier') == 'owner')
+
         try:
             result = await analyze.run(**params)
         except Exception as e:

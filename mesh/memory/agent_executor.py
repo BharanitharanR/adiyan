@@ -45,6 +45,19 @@ from mesh.memory.skills_catalog import get_skills
 
 AGENT_CODE_DIR = Path(__file__).parent
 
+# Skills whose access must be scoped to whoever's actually asking - see
+# memory_index.py's own module docstring for the confirmed-live leak this
+# closes. requester_id/is_owner are deliberately NOT caller-supplied params
+# the way query/top_k are (a caller could just claim to be the owner or
+# claim someone else's chat_id) - they're injected below from the token
+# permissions.verify_token() already authenticated this call with,
+# overridden only when the caller already supplied its own (real) values -
+# see the setdefault() call below for exactly which caller that is and why.
+_SCOPED_SKILLS = {
+    'search_knowledge_base', 'share_knowledge_document', 'resolve_document',
+    'get_document_text', 'search_document_chunks', 'list_documents',
+}
+
 
 class RecallParams(BaseModel):
     contact_name: str = Field(description="The exact contact identifier to look up - not a display name guess.")
@@ -136,6 +149,24 @@ class MemoryAgentExecutor(AgentExecutor):
         if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
+
+        if skill_id in _SCOPED_SKILLS:
+            # setdefault, not an unconditional overwrite: a direct free-text
+            # or DataPart call from Orchestrator has no requester_id/is_owner
+            # of its own in params, so this token's own claims (Orchestrator
+            # always mints with the real sender's chat_id/tier - see
+            # rules_engine.check()) are the right answer. But a call
+            # forwarded through Analysis Agent's ReAct loop (see
+            # mesh/analysis/skills/analyze.py's _make_tools()) already
+            # carries the REAL end-user's identity as an explicit param -
+            # this call's own token claims would instead say sub='analysis',
+            # tier='analysis_service' (Analysis Agent's own service
+            # identity, not the human who actually asked), which must not
+            # silently replace what Analysis Agent already resolved and
+            # forwarded correctly.
+            claims = claims or {}
+            params.setdefault('requester_id', claims.get('sub'))
+            params.setdefault('is_owner', claims.get('tier') == 'owner')
 
         result = handler(**params)
         await updater.add_artifact(parts=[new_data_part(result)])
