@@ -536,7 +536,19 @@ async def run(
             if indic_summon_phrase and indic_summon_phrase in text:
                 text = f"{rules_engine.DEFAULT_SUMMON_PHRASE} {text.replace(indic_summon_phrase, '').strip()}"
         else:
+            # Confirmed live this session: `text` was left at whatever
+            # message_body already was on a failed transcription - for a
+            # raw audio FILE attachment (WhatsApp's own 'audio' kind, as
+            # opposed to a recorded 'ptt' voice memo), that's frequently
+            # the literal OS filename WhatsApp auto-populates as a
+            # caption ("WhatsApp Audio 2026-09-14 at 11.23.31.opus"),
+            # which then reached a real classify_skill call as if it were
+            # the actual request. Cleared here so a failed transcription
+            # falls through to the same silent-stranger/no-command
+            # handling an empty typed message already gets, instead of
+            # classifying meaningless leftover text.
             logger.warning(f'Voice note transcription failed or produced nothing for {chat_id}')
+            text = ''
 
     # Threaded into every humanize() call below - the underlying skill's
     # raw result is grounded in whatever language its own source documents/
