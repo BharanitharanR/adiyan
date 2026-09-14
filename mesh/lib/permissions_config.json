@@ -77,7 +77,7 @@
       ]
     },
     "standard": {
-      "description": "Default tier for a newly registered client - everything a client could already do before permission checks existed.",
+      "description": "Default tier for a newly registered client - everything a client could already do before permission checks existed. analysis.analyse_this added 2026-09-14: confirmed live that its absence here silently dropped EVERY client message handle_message.py's own _fallback_to_analysis() routes here (anything that doesn't classify into a more specific skill) - not a deliberate restriction, just never granted when analyse_this was first split into its own permission-gated skill. Without it, a client asking something outside the named-skill set (a negotiation follow-up, a general question, anything search_knowledge_base's plain retrieval can't answer) got total silence with only an internal 'Not authorized for this' error, never surfaced to them.",
       "allow": [
         "scheduler.schedule_job",
         "scheduler.run_routine",
@@ -93,6 +93,7 @@
         "adiyan_reader.start_reading",
         "adiyan_reader.read_next_page",
         "adiyan_reader.read_now",
+        "analysis.analyse_this",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document",
         "mcp.whatsapp.send_image"
