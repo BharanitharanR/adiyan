@@ -112,17 +112,16 @@ async def run(reading_job_id: str) -> Dict[str, Any]:
     # <sniffle> <groan> - Orpheus's own literal text tokens): a second,
     # small model inserts tags inline before Orpheus ever sees the text -
     # Orpheus itself only turns text into audio, it never decides where an
-    # emotion belongs. gemma4:e2b is the seeded default here specifically
-    # because it was the only one of three models tested live this session
-    # that didn't tag fictional sounds (wind, an engine, a pun) or corrupt
-    # the surrounding text. Passed into tts.synthesize() below, not applied
-    # here on the whole page - confirmed live this session that gemma4:e2b
-    # tags correctly under ~450 chars but silently returns a full page
-    # (1500+ chars) completely unchanged, so this has to run per-chunk,
-    # after tts.synthesize()'s own chunking, not once up front. See that
-    # function's own docstring. Fails open to untagged text on any error,
-    # same as rewrite_for_speech above - a quality enhancement, never a
-    # reason a page fails to get read.
+    # emotion belongs. Passed into tts.synthesize() below, not applied
+    # here on the whole page - see tts.synthesize()'s own docstring for
+    # why this has to run windowed, not per-page or per-chunk. Every
+    # tagged sentence is verified word-for-word before being kept
+    # (tts._accept_tagged_piece) regardless of which model runs here, so
+    # switching models can't silently reintroduce the word-deletion
+    # corruption qwen3:8b-16k showed earlier in testing - a bad tag now
+    # gets discarded in code, not trusted on the model's word alone.
+    # Fails open to untagged text on any error, same as rewrite_for_speech
+    # above - a quality enhancement, never a reason a page fails to read.
     emotion_cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'add_emotion_tags', {'model': 'gemma4:e2b', 'temperature': 0.2, 'base_url': OLLAMA_URL},
         description='Small model that inserts Orpheus emotion tags into each TTS chunk - restricted to real character reactions during dialogue, never scenery/idiom.',

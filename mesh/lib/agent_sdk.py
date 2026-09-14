@@ -84,6 +84,7 @@ INFERENCE_ROUTER_URL = 'http://127.0.0.1:8441'
 async def _raw_ollama_stream(
     prompt: str, model: str, max_tokens: int, temperature: float,
     top_p: float, repetition_penalty: float, think: Optional[bool] = None,
+    stop: Optional[List[str]] = None,
 ) -> List[str]:
     """Streams a raw (non-chat-templated) completion from Ollama and
     returns every token piece as its own string, in order - moved
@@ -108,6 +109,16 @@ async def _raw_ollama_stream(
             'repeat_penalty': repetition_penalty,
         },
     }
+    if stop:
+        # Inside 'options', not top-level - matches Ollama's own Options
+        # shape (confirmed against the installed ollama client's Options
+        # type, which carries 'stop' alongside temperature/top_p/etc., not
+        # as a sibling of 'model'/'prompt' the way 'think' is). Needed for
+        # any raw-completion model that doesn't reliably stop on its own -
+        # confirmed live this session with sarvam-1 (mashriram/sarvam-1),
+        # which kept generating a fabricated follow-up exchange past its
+        # real answer without one.
+        payload['options']['stop'] = stop
     if think is not None:
         # Top-level, not inside 'options' - matches Ollama's own /api/
         # generate request shape (confirmed against the installed ollama
@@ -181,7 +192,7 @@ class AdiyanAgent:
         image_mimetype: Optional[str] = None, community: Optional[str] = None,
         raw: bool = False, num_predict: Optional[int] = None,
         top_p: float = 0.9, repetition_penalty: float = 1.1,
-        think: Optional[bool] = None,
+        think: Optional[bool] = None, stop: Optional[List[str]] = None,
     ) -> Any:
         """Calls the mesh's LLM. No permission key needed - every agent
         reaches it the same way, same as config/storage access.
@@ -297,7 +308,17 @@ class AdiyanAgent:
         returned text/object) and included in this call's line in
         ~/.Adiyan/logs/llm_calls.log for the text/tools/image paths - not
         guaranteed for schema calls, since with_structured_output's own
-        parsing doesn't reliably preserve it."""
+        parsing doesn't reliably preserve it.
+
+        stop: only meaningful with raw=True - a list of strings that halt
+        generation the moment Ollama produces one of them (the match
+        itself is not included in the returned tokens). Built for raw-
+        completion models with no reliable stopping point of their own -
+        confirmed live this session with sarvam-1 (mashriram/sarvam-1),
+        few-shot-prompted to answer a question, which kept generating a
+        second, fabricated question-and-answer exchange past its real
+        answer with nothing to stop it. Ignored (never sent to Ollama) for
+        any other call shape."""
         memory_context = memory_hook.CURRENT_CONTEXT.get() if schema is None and image_b64 is None and not raw else ''
         if memory_context:
             prompt = f'{memory_context}\n\n{prompt}'
@@ -376,6 +397,7 @@ class AdiyanAgent:
             try:
                 tokens = await _raw_ollama_stream(
                     prompt, cfg['model'], effective_max_tokens, cfg['temperature'], top_p, repetition_penalty, think,
+                    stop,
                 )
             except Exception as e:
                 llm_log.log_call(self.agent_id, stage, 'raw', cfg['model'], prompt, None, error=str(e))

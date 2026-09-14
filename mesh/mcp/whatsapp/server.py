@@ -200,9 +200,11 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
     """None if this message carries no media. Otherwise the complete blob as
     {kind, mimetype, data (base64), filename} - mechanical WhatsApp I/O only
     (fetching the full blob when OpenWA didn't inline it), never an opinion
-    on what the content means. kind is 'image' or 'document', straight from
-    openwa_receiver.py's own parse of OpenWA's message type; filename is
-    only ever populated for a document (WhatsApp never gives an image one).
+    on what the content means. kind is 'image', 'document', 'ptt' (a voice
+    note recorded in-app), or 'audio' (an audio file sent as an attachment),
+    straight from openwa_receiver.py's own parse of OpenWA's message type;
+    filename is only ever populated for a document (WhatsApp never gives
+    one for the other three kinds).
 
     What an image means is still Orchestrator's own routing-layer decision
     (mesh/lib/vision.py's classify_image, used from
@@ -227,7 +229,16 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
 
     if not content_b64:
         return None
-    default_mimetype = 'image/jpeg' if media['kind'] == 'image' else 'application/octet-stream'
+    if media['kind'] == 'image':
+        default_mimetype = 'image/jpeg'
+    elif media['kind'] in ('ptt', 'audio'):
+        # A real voice note's actual encoding, same one AdiyanReader's own
+        # TTS output uses (mesh/adiyan_reader/tts.py) - WhatsApp voice notes
+        # are Opus-in-OGG in practice, so this is the correct default, not
+        # a generic fallback guess.
+        default_mimetype = 'audio/ogg; codecs=opus'
+    else:
+        default_mimetype = 'application/octet-stream'
     return {
         'kind': media['kind'],
         'mimetype': media['mimetype'] or default_mimetype,
@@ -263,6 +274,7 @@ async def handle_webhook(request: Request) -> JSONResponse:
     resolved_media = await _resolve_media(message)
     image = resolved_media if resolved_media and resolved_media['kind'] == 'image' else None
     document = resolved_media if resolved_media and resolved_media['kind'] == 'document' else None
+    audio = resolved_media if resolved_media and resolved_media['kind'] in ('ptt', 'audio') else None
 
     try:
         await call_agent(ORCHESTRATOR_URL, 'handle_message', {
@@ -272,6 +284,7 @@ async def handle_webhook(request: Request) -> JSONResponse:
             'from_number': await _resolve_from_number(message),
             'image': image,
             'document': document,
+            'audio': audio,
             'is_self_chat': message['is_self_chat'],
         })
         return JSONResponse({'status': 'forwarded'})

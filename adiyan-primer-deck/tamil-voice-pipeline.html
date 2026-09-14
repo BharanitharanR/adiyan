@@ -1,0 +1,203 @@
+<title>Tamil Voice Message Pipeline</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --ok:#3D6B35; --ok-soft:#DCE9D5;
+  --bad:#8A3B2A; --bad-soft:#EDD9CF;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#4A3A1C;
+    --ok:#8FC17E; --ok-soft:#243318;
+    --bad:#E08B6F; --bad-soft:#3A2117;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#4A3A1C;
+  --ok:#8FC17E; --ok-soft:#243318;
+  --bad:#E08B6F; --bad-soft:#3A2117;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:840px;margin:0 auto;padding:2.6rem 1.5rem 4rem;}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .6rem;}
+h1{font-family:var(--serif);font-size:1.9rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
+.lede{color:var(--ink-soft);font-size:.98rem;line-height:1.7;max-width:64ch;margin:0 0 2rem;}
+h2.sect{font-family:var(--serif);font-size:1.25rem;font-weight:700;margin:2.4rem 0 .4rem;}
+p.sect-sub{font-size:.86rem;color:var(--ink-soft);margin:0 0 1.2rem;line-height:1.55;}
+
+.problem{background:var(--bad-soft);border:1.5px solid var(--bad);border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1rem;font-size:.92rem;line-height:1.65;}
+.problem b{color:var(--bad);}
+
+figure{margin:0;}
+figcaption{font-size:.82rem;color:var(--ink-soft);margin-top:.6rem;text-align:center;}
+svg text{font-family:var(--mono);}
+
+.stepper{display:flex;gap:.5rem;margin:1.2rem 0;}
+.step-btn{font-family:var(--sans);font-size:.85rem;font-weight:600;color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:6px;padding:.5rem 1rem;cursor:pointer;flex:1;}
+.step-btn:disabled{opacity:.4;cursor:default;}
+.step-dots{display:flex;gap:.4rem;justify-content:center;margin-top:.8rem;}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--line);}
+.dot.active{background:var(--accent);}
+
+.test-card{background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:1.3rem 1.4rem;min-height:220px;}
+.test-title{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);font-weight:700;margin-bottom:.7rem;}
+.tamil{font-size:1.05rem;line-height:1.7;margin-bottom:.3rem;}
+.gloss{font-size:.82rem;color:var(--ink-soft);font-style:italic;margin-bottom:.9rem;}
+.verdict{display:inline-flex;align-items:center;gap:.4rem;font-family:var(--mono);font-size:.78rem;font-weight:700;padding:.3rem .7rem;border-radius:20px;}
+.verdict.ok{background:var(--ok-soft);color:var(--ok);}
+.verdict.bad{background:var(--bad-soft);color:var(--bad);}
+.explain{font-size:.86rem;line-height:1.6;margin-top:.8rem;color:var(--ink-soft);}
+
+.checklist{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.7rem;}
+.checklist li{display:flex;gap:.7rem;align-items:flex-start;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;padding:.85rem 1rem;font-size:.9rem;line-height:1.55;}
+.checklist .num{font-family:var(--mono);font-weight:700;color:var(--accent);flex-shrink:0;width:1.4rem;}
+
+.moral{margin-top:2rem;padding:1.1rem 1.3rem;border-radius:11px;background:var(--panel);border:1.5px dashed var(--line);font-size:.9rem;line-height:1.65;}
+.moral b{color:var(--accent);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; new capability &middot; before the build</p>
+  <h1>Teaching Adiyan to hear Tamil voice notes</h1>
+  <p class="lede">A voice note arrives on WhatsApp, gets turned into Tamil text, and a small Indic-language model answers - all running locally, no cloud calls. Here's exactly what that pipeline looks like, and the real test evidence behind each piece, before any of it gets wired into the live mesh.</p>
+
+  <div class="problem">
+    <b>Starting point:</b> WhatsApp voice notes are currently invisible to Adiyan. <code>openwa_receiver.py</code> only recognizes <code>image</code> and <code>document</code> media types - a voice note (<code>ptt</code>) is silently dropped before it ever reaches the orchestrator. Nothing crashes; it just never arrives.
+  </div>
+
+  <h2 class="sect">The pipeline</h2>
+  <p class="sect-sub">Four stages, three of them touching code that doesn't exist yet.</p>
+
+  <figure>
+    <svg viewBox="0 0 780 190" role="img" aria-label="Pipeline: WhatsApp voice note flows through receiver, Whisper transcription, and a few-shot Sarvam-1 prompt, to a Tamil reply." style="width:100%;height:auto;">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="95" y1="95" x2="175" y2="95" marker-end="url(#arrow)"/>
+        <line x1="285" y1="95" x2="365" y2="95" marker-end="url(#arrow)"/>
+        <line x1="475" y1="95" x2="555" y2="95" marker-end="url(#arrow)"/>
+        <line x1="665" y1="95" x2="730" y2="95" marker-end="url(#arrow)"/>
+      </g>
+      <g font-size="11">
+        <circle cx="45" cy="95" r="42" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="45" y="90" text-anchor="middle">Voice</text>
+        <text x="45" y="103" text-anchor="middle">note</text>
+
+        <rect x="180" y="60" width="105" height="70" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="232" y="90" text-anchor="middle">Receiver</text>
+        <text x="232" y="104" text-anchor="middle" font-size="9.5" fill="currentColor" opacity="0.75">extend to ptt/audio</text>
+        <text x="232" y="43" text-anchor="middle" font-size="9.5" font-style="italic">new code</text>
+
+        <rect x="370" y="60" width="105" height="70" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="422" y="86" text-anchor="middle">Whisper</text>
+        <text x="422" y="100" text-anchor="middle" font-size="9.5" opacity="0.75">--language ta</text>
+        <text x="422" y="114" text-anchor="middle" font-size="9.5" opacity="0.75">(already installed)</text>
+
+        <rect x="560" y="60" width="105" height="70" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="612" y="82" text-anchor="middle">Sarvam-1</text>
+        <text x="612" y="96" text-anchor="middle" font-size="9.5" opacity="0.75">few-shot Q&amp;A</text>
+        <text x="612" y="110" text-anchor="middle" font-size="9.5" opacity="0.75">+ stop sequence</text>
+        <text x="612" y="43" text-anchor="middle" font-size="9.5" font-style="italic">new prompt</text>
+
+        <circle cx="732" cy="95" r="42" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="732" y="90" text-anchor="middle">Tamil</text>
+        <text x="732" y="103" text-anchor="middle">reply</text>
+      </g>
+      <g font-size="9.5" fill="currentColor" opacity="0.7">
+        <text x="130" y="150" text-anchor="middle">audio bytes</text>
+        <text x="325" y="150" text-anchor="middle">raw audio file</text>
+        <text x="515" y="150" text-anchor="middle">Tamil text</text>
+        <text x="700" y="150" text-anchor="middle">Tamil text</text>
+      </g>
+    </svg>
+    <figcaption>Every arrow crosses a real boundary in the codebase - three of the four boxes need new code.</figcaption>
+  </figure>
+
+  <h2 class="sect">Real test evidence, not a guess</h2>
+  <p class="sect-sub">Sarvam-1 is a raw completion model, not a chat model - three live tests against the actual local model, step through them.</p>
+
+  <div class="stepper">
+    <button class="step-btn" id="prev">&larr; Back</button>
+    <button class="step-btn" id="next">Next test &rarr;</button>
+  </div>
+
+  <div class="test-card" id="card"></div>
+  <div class="step-dots" id="dots"></div>
+
+  <div class="moral">
+    <b>Why this matters for the build:</b> a real WhatsApp voice note transcribes to a natural question, not a fill-in-the-blank sentence - test 2's exact shape. Left alone, sarvam-1 just echoes it back. The fix (test 3) is a few-shot <code>கேள்வி: ... பதில்: ...</code> wrapper, plus a stop sequence at the next <code>கேள்வி:</code> marker so it doesn't ramble into an invented follow-up conversation - the same fix already used for Orpheus's own hallucinated continuations earlier this session.
+  </div>
+
+  <h2 class="sect">What's about to get built</h2>
+  <p class="sect-sub">In this order - each step is independently testable before the next one depends on it.</p>
+
+  <ol class="checklist">
+    <li><span class="num">1</span><span><b>Receiver:</b> extend <code>openwa_receiver.py</code> to recognize <code>ptt</code>/<code>audio</code> messages (currently only <code>image</code>/<code>document</code>) and download the media the same way those two already do.</span></li>
+    <li><span class="num">2</span><span><b>Transcription module:</b> a new function that shells out to the local <code>whisper</code> CLI with <code>--language ta</code>, returns the transcribed text - fails open (no crash) if Whisper errors, same convention as every other optional-enhancement step in this mesh.</span></li>
+    <li><span class="num">3</span><span><b>Stop-sequence support in <code>ask(raw=True)</code>:</b> <code>_raw_ollama_stream()</code> doesn't support a stop sequence yet - needed so sarvam-1 halts right after answering instead of inventing a follow-up exchange.</span></li>
+    <li><span class="num">4</span><span><b>Seeded few-shot prompt template:</b> the <code>கேள்வி: ... பதில்: ...</code> wrapper, stored the same way <code>add_emotion_tags</code>'s prompt is - dashboard-editable, not hardcoded.</span></li>
+    <li><span class="num">5</span><span><b>Wire into <code>handle_message.run()</code>:</b> a new <code>audio</code> parameter, parallel to how <code>image</code>/<code>document</code> already branch - transcribe, then feed the transcribed text through the sarvam-1 step, then reply.</span></li>
+  </ol>
+</div>
+
+<script>
+const tests = [
+  {
+    title: 'Test 1 — fill-in-the-blank completion',
+    tamil: 'தமிழ்நாட்டின் தலைநகரம்:',
+    gloss: '"The capital of Tamil Nadu is:"',
+    verdict: 'ok', verdictText: 'CORRECT',
+    response: 'சென்னை.  |  Capital of Tamil Nadu: Chennai.',
+    explain: 'A completion-shaped prompt - an incomplete sentence, not a question. Sarvam-1 filled it in correctly and even added a bilingual restatement on its own. This is the shape sarvam-1 was actually trained for.',
+  },
+  {
+    title: 'Test 2 — a real, natural question',
+    tamil: 'இன்று வானிலை எப்படி இருக்கும்?',
+    gloss: '"How will the weather be today?"',
+    verdict: 'bad', verdictText: 'FAILED — no answer',
+    response: '"இன்று வானிலை எப்படி இருக்கும்?"  (just echoed the question back, in quotes)',
+    explain: 'This is the shape a real transcribed WhatsApp voice note actually arrives in - a natural spoken question. Sarvam-1 has no instruction-following training, so it didn\'t answer at all - it just continued as if quoting the sentence in a document.',
+  },
+  {
+    title: 'Test 3 — same question, few-shot wrapped',
+    tamil: 'கேள்வி: ...முந்தைய உதாரணம்...\nகேள்வி: இன்று வானிலை எப்படி இருக்கும்?\nபதில்:',
+    gloss: 'Same question as Test 2, now preceded by one worked Q&A example',
+    verdict: 'ok', verdictText: 'ANSWERED — but needs a stop sequence',
+    response: 'இன்று வானிலை நன்றாக இருக்கிறது.  ("Today the weather is good.")  ...then invented an unrelated follow-up Q&A pair unprompted.',
+    explain: 'The few-shot wrapper works - a real, on-topic, correctly-formed Tamil answer. But without a stop sequence, it kept generating and fabricated a whole new question-and-answer pair about weekend plans. Needs a stop token at the next "கேள்வி:" marker, and note: the weather answer itself is invented too - sarvam-1 has no real weather data, same limitation any bare LLM has without a tool behind it.',
+  },
+];
+
+let i = 0;
+const card = document.getElementById('card');
+const dots = document.getElementById('dots');
+const prevBtn = document.getElementById('prev');
+const nextBtn = document.getElementById('next');
+
+function render(){
+  const t = tests[i];
+  card.innerHTML = `
+    <div class="test-title">${t.title}</div>
+    <div class="tamil">${t.tamil.replace(/\n/g, '<br>')}</div>
+    <div class="gloss">${t.gloss}</div>
+    <div class="verdict ${t.verdict}">${t.verdict === 'ok' ? '✓' : '✕'} ${t.verdictText}</div>
+    <div class="explain"><b style="color:var(--accent);">Model output:</b> ${t.response}</div>
+    <div class="explain">${t.explain}</div>
+  `;
+  dots.innerHTML = tests.map((_, idx) => `<div class="dot${idx === i ? ' active' : ''}"></div>`).join('');
+  prevBtn.disabled = i === 0;
+  nextBtn.disabled = i === tests.length - 1;
+}
+prevBtn.addEventListener('click', () => { if (i > 0) { i--; render(); }});
+nextBtn.addEventListener('click', () => { if (i < tests.length - 1) { i++; render(); }});
+render();
+</script>

@@ -199,9 +199,16 @@ class OpenWAAdapter:
         # them back into separate `image`/`document` A2A call params).
         # `filename` is only ever populated for a document - WhatsApp never
         # gives an image one.
+        # 'ptt' (push-to-talk - a real WhatsApp voice note recorded in-app)
+        # and 'audio' (a regular audio file sent as an attachment) are
+        # captured the same way as image/document - confirmed live that
+        # without this, a voice note was silently dropped here entirely,
+        # same failure shape document uploads had before that was fixed.
+        # Neither carries a filename (WhatsApp never gives one, same as
+        # image).
         media = None
         raw_type = data.get('type')
-        if raw_type in ('image', 'document') and data.get('media'):
+        if raw_type in ('image', 'document', 'ptt', 'audio') and data.get('media'):
             raw_media = data['media']
             media = {
                 'kind': raw_type,

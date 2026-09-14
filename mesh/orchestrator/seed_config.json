@@ -3,6 +3,10 @@
     "humanize_prompt_template": {
       "value": "The user said: \"{original_message}\"\n\nHere is the structured result from handling their request: {result}\n\nWrite a short, natural WhatsApp reply based only on what is in this result - do not invent anything not present in it.",
       "description": "Prompt used to rewrite an agent's raw answer into a natural WhatsApp-toned reply before sending."
+    },
+    "sarvam_qa_prompt_template": {
+      "value": "கேள்வி: இந்தியாவின் தலைநகரம் என்ன?\nபதில்: இந்தியாவின் தலைநகரம் புது தில்லி.\n\nகேள்வி: இரண்டு கூட்டல் இரண்டு எவ்வளவு?\nபதில்: இரண்டு கூட்டல் இரண்டு நான்கு.\n\nகேள்வி: {question}\nபதில்:",
+      "description": "Few-shot completion wrapper for sarvam-1 (a raw completion model, not chat-tuned) - two worked examples in the same Question/Answer shape, then the real transcribed question. Needs a {question} placeholder. Must be paired with stop=['கேள்வி:'] on the ask() call, or sarvam-1 will keep generating and invent a fabricated follow-up exchange past the real answer."
     }
   }
 }
