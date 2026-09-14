@@ -521,20 +521,42 @@ async def run(
         if transcribed:
             text = transcribed
             audio_pending = True
-            # Confirmed live this session: Whisper transcribes spoken Tamil
-            # into Tamil script, so a speaker saying "Adiyan" comes back as
-            # "அடியன்" - never the literal Latin "@adiyan" the gate check
-            # below looks for. Detected here and folded into `text` as the
-            # real summon phrase (which strip_summon_phrase removes again
-            # further down, same as it would for a typed "@adiyan"),
-            # rather than teaching rules_engine.check() itself about a
-            # second, audio-only phrase.
-            indic_summon_phrase = await config_sdk.get_constant(
-                AGENT_ID, 'summon_phrase_indic', 'அடியன்',
-                description='Indic-script equivalent of the summon phrase, checked only for transcribed voice notes - Whisper never produces the literal "@adiyan" from spoken Tamil.',
-            )
-            if indic_summon_phrase and indic_summon_phrase in text:
-                text = f"{rules_engine.DEFAULT_SUMMON_PHRASE} {text.replace(indic_summon_phrase, '').strip()}"
+            # No spoken audio can ever produce a literal "@" character, so
+            # the typed gate check ('@adiyan' in text.lower()) can NEVER
+            # pass for a voice note, in ANY language - confirmed live this
+            # session for both directions: spoken Tamil transcribes the
+            # name as "அடியன்", and spoken ENGLISH transcribes it as plain
+            # "Adiyan"/"adiyan", neither ever with an "@". A real English
+            # voice note ("Adiyan, send me my pan number.") was silently
+            # failing this exact check the whole time, indistinguishable
+            # from a genuine non-summoned message, despite transcribing
+            # perfectly and correctly clearing every other check.
+            #
+            # Every spoken form of the name is checked here and folded
+            # into `text` as the real summon phrase (which
+            # strip_summon_phrase removes again further down, same as it
+            # would for a typed "@adiyan"), rather than teaching
+            # rules_engine.check() itself about audio-only phrasing.
+            spoken_summon_terms = [
+                await config_sdk.get_constant(
+                    AGENT_ID, 'summon_phrase_indic', 'அடியன்',
+                    description='Indic-script spoken form of the summon phrase (e.g. Tamil "அடியன்") - checked only for transcribed voice notes, since Whisper never produces the literal "@adiyan" from spoken audio in any language.',
+                ),
+                await config_sdk.get_constant(
+                    AGENT_ID, 'summon_phrase_spoken_en', 'adiyan',
+                    description='English spoken form of the summon phrase (no "@", since nobody can say that character aloud) - checked only for transcribed voice notes.',
+                ),
+            ]
+            for term in spoken_summon_terms:
+                if term and term.lower() in text.lower():
+                    # Case-insensitive removal (English "Adiyan"/"adiyan"
+                    # can appear either way from Whisper) - re.sub, not
+                    # str.replace, since replace is case-sensitive and
+                    # would miss a capitalized "Adiyan" while matching on
+                    # lowercase `term`.
+                    text = re.sub(re.escape(term), '', text, flags=re.IGNORECASE).strip()
+                    text = f'{rules_engine.DEFAULT_SUMMON_PHRASE} {text}'
+                    break
         else:
             # Confirmed live this session: `text` was left at whatever
             # message_body already was on a failed transcription - for a
