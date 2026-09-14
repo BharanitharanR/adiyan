@@ -32,7 +32,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from a2a.types import AgentSkill
+from indic_transliteration import detect as script_detect
+from indic_transliteration import sanscript
 from pydantic import BaseModel, Field
+from rapidfuzz import fuzz
 
 from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
@@ -121,6 +124,68 @@ _BOOK_READING_SKILLS = [
         output_modes=['application/json'],
     ),
 ]
+
+
+# Real thresholds observed this session, transliterating every real
+# mis-transcribed spelling caught so far and scoring it against 'adiyan'
+# with rapidfuzz.fuzz.ratio(): 'अडियान'->92.3, 'அடியான்'/'அடியன்'->85.7,
+# 'அரியான்' (the hardest real case, "Ariyan", a genuine mishearing) and
+# 'आदியான' ->76.9. 65 catches every one of those.
+#
+# Score alone isn't enough though - confirmed live during testing that a
+# short, common Tamil address word ('ஐயா', "sir"/"hey") romanizes to
+# 'aiya' and scores 80.0, comfortably inside that same range, a real false
+# positive. Every genuine variant's romanized form was 6-8 characters
+# (fuzz.ratio's own edit-distance-based scoring makes short strings score
+# high on very few character differences); a battery of 13 common Tamil/
+# Hindi words plausibly appearing in a voice note ('ஐயா', 'அண்ணா', 'யார்',
+# 'सर', 'क्या', etc.) all romanized to 3-8 characters but scored 20-60
+# EXCEPT 'ஐயா' itself - the length floor is what actually separates it
+# from every true positive, not the fuzzy score.
+_SUMMON_FUZZY_THRESHOLD = 65.0
+_SUMMON_MIN_ROMANIZED_LEN = 6
+_SUMMON_STRIP_CHARS = '.,!?;:।'
+
+
+def _word_matches_spoken_summon(
+    word: str, threshold: float = _SUMMON_FUZZY_THRESHOLD, min_len: int = _SUMMON_MIN_ROMANIZED_LEN,
+) -> bool:
+    """True if `word` (one whitespace-split token from a Whisper
+    transcription) is plausibly a mangled rendering of "Adiyan" in ANY
+    script Whisper might transcribe it into - Devanagari, Tamil, Latin, or
+    anything else indic_transliteration's own detect() recognizes.
+
+    Exact-string matching against a growing list (this function's own
+    predecessor) proved structurally wrong for an out-of-vocabulary proper
+    noun: three fresh real voice notes produced three brand-new spellings
+    never seen before ('अडियान', 'அரியான்' "Ariyan", 'அடியான்'), none
+    matching the existing list. "Adiyan" isn't a real word in Tamil or
+    Hindi, so ASR has no dictionary entry to anchor its output to - it
+    approximates the sounds it hears, differently each time. Transliterate-
+    then-fuzzy-match targets the actual invariant (what the word SOUNDS
+    like) instead of chasing an unbounded set of exact spellings.
+
+    min_len (see this module's own threshold comment above) rejects short
+    words purely on length before the fuzzy score even matters - not a
+    tunable to loosen casually, it's the one thing separating a real
+    summon attempt from an ordinary short word that happens to sound
+    similar.
+
+    detect.detect() on a genuinely random unrelated word can raise or
+    return a scheme this doesn't handle well - fails open to "no match"
+    (never crashes the caller), same as every other classify-style
+    resolver in this module."""
+    word = word.strip(_SUMMON_STRIP_CHARS)
+    if not word:
+        return False
+    try:
+        scheme = script_detect.detect(word)
+        romanized = sanscript.transliterate(word, scheme, sanscript.HK).lower()
+    except Exception:
+        romanized = word.lower()
+    if len(romanized) < min_len:
+        return False
+    return fuzz.ratio('adiyan', romanized) >= threshold
 
 
 class _BookReadingRequest(BaseModel):
@@ -524,37 +589,27 @@ async def run(
             # No spoken audio can ever produce a literal "@" character, so
             # the typed gate check ('@adiyan' in text.lower()) can NEVER
             # pass for a voice note, in ANY language - confirmed live this
-            # session for THREE different languages now: spoken Tamil
-            # transcribes the name as "அடியன்", spoken Hindi as "आदियान",
-            # spoken English as plain "Adiyan"/"adiyan" - none of them
-            # ever with an "@". Each was silently failing this exact check
-            # in turn, indistinguishable from a genuine non-summoned
-            # message, despite transcribing perfectly and correctly
-            # clearing every other check. Whisper can auto-detect into any
-            # of dozens of languages, so this is a list precisely because
-            # hardcoding one language at a time here means discovering the
-            # gap live, again, for every new language a real sender
-            # happens to speak - a dashboard-editable JSON array lets a
-            # new script get added the moment it's seen, no code change or
-            # redeploy needed.
-            #
-            # Every spoken form of the name is checked here and folded
-            # into `text` as the real summon phrase (which
+            # session across Tamil, Hindi, and English voice notes, none
+            # ever transcribing an "@". An exact-string list of known
+            # spellings (this block's own predecessor) was tried first and
+            # abandoned after three fresh real voice notes each produced a
+            # brand-new spelling never seen before ('अडियान', 'அரியான்'
+            # "Ariyan", 'அடியான்') - "Adiyan" isn't a real word in Tamil or
+            # Hindi, so Whisper has no dictionary entry to anchor to and
+            # approximates the sound differently each time, making exact
+            # matching an unbounded, always-behind chase. This instead
+            # transliterates each word to Latin script (auto-detecting
+            # source script via indic_transliteration) and fuzzy-matches
+            # it against "adiyan" (rapidfuzz) - see
+            # _word_matches_spoken_summon()'s own docstring for the real
+            # scores that set its threshold. Whichever word matches is
+            # folded into `text` as the real summon phrase (which
             # strip_summon_phrase removes again further down, same as it
             # would for a typed "@adiyan"), rather than teaching
             # rules_engine.check() itself about audio-only phrasing.
-            spoken_summon_terms = await config_sdk.get_constant(
-                AGENT_ID, 'summon_phrase_spoken_variants', ['adiyan', 'அடியன்', 'आदियान'],
-                description='Every spoken-language form of "Adiyan" seen from real voice notes, checked only for transcribed audio - Whisper never produces the literal "@adiyan" from spoken audio in any language, so each script/language it might transcribe the name into needs its own entry here. Add a new one the moment a real voice note in that language fails to get a reply.',
-            )
-            for term in spoken_summon_terms:
-                if term and term.lower() in text.lower():
-                    # Case-insensitive removal (English "Adiyan"/"adiyan"
-                    # can appear either way from Whisper) - re.sub, not
-                    # str.replace, since replace is case-sensitive and
-                    # would miss a capitalized "Adiyan" while matching on
-                    # lowercase `term`.
-                    text = re.sub(re.escape(term), '', text, flags=re.IGNORECASE).strip()
+            for word in text.split():
+                if _word_matches_spoken_summon(word):
+                    text = re.sub(re.escape(word), '', text, count=1).strip()
                     text = f'{rules_engine.DEFAULT_SUMMON_PHRASE} {text}'
                     break
         else:

@@ -59,5 +59,13 @@ workspace-mcp>=1.24.0
 torch>=2.0.0
 snac>=1.2.0
 
+# mesh/orchestrator/skills/handle_message.py's spoken-summon-phrase
+# detection - transliterates a transcribed voice-note word to Latin script
+# (indic-transliteration) and fuzzy-matches it against "adiyan" (rapidfuzz),
+# since Whisper never transcribes a name it has no dictionary entry for the
+# same way twice across languages/scripts.
+rapidfuzz>=3.14.0
+indic-transliteration>=2.3.0
+
 # Dev/test only - needed to run Tests/http/, not by the running app itself.
 pytest>=8.0.0

@@ -27,28 +27,47 @@ from typing import Optional
 
 logger = logging.getLogger('AudioTranscribe')
 
-# 'small' - a deliberate middle ground, not the CLI's own default (which
-# tries every model in turn). Tamil and the other lower-resource Indic
-# languages need more capacity than 'tiny'/'base' give reliably, but
-# 'medium'/'large' cost real extra minutes per voice note on CPU-only
-# hardware with no confirmed benefit measured yet for this specific use
-# case. Revisit with real transcription-quality testing before assuming
-# this is the right trade-off long-term.
-DEFAULT_WHISPER_MODEL = 'small'
+# 'large-v3' (~1.55B params, confirmed against Whisper's own
+# available_models() list - not the ambiguous 'large' alias, whose target
+# version isn't pinned) - upgraded from 'small' (~242M, confirmed by
+# directly loading and counting that checkpoint's own state dict) on the
+# owner's own request, to test whether more capacity helps general
+# accuracy and/or the confirmed code-switching failure (a Tamil+English
+# voice note transcribed with the English portion mangled into Tamil
+# phonetics - see mesh/orchestrator/skills/handle_message.py's own
+# summon-phrase-variants comment for the related, separate fix that
+# came out of the same testing). Real cost: large-v3 is ~6x 'small''s
+# parameter count, CPU-only on this machine - expect real extra seconds
+# to minutes per voice note, not the ~15-35s 'small' measured at.
+DEFAULT_WHISPER_MODEL = 'large-v3'
 
 
-def _run_whisper(audio_bytes: bytes, language: str, model: str) -> Optional[str]:
+def _run_whisper(audio_bytes: bytes, language: Optional[str], model: str) -> Optional[str]:
     with tempfile.TemporaryDirectory() as tmpdir:
         audio_path = Path(tmpdir) / 'voice_note.ogg'
         audio_path.write_bytes(audio_bytes)
+        cmd = [
+            'whisper', str(audio_path), '--model', model,
+            '--output_format', 'txt', '--output_dir', tmpdir,
+            '--verbose', 'False',
+        ]
+        if language:
+            # Omitted entirely (not passed as e.g. 'auto') when language is
+            # None - confirmed live this session that forcing the wrong
+            # language badly mangles transcription in EITHER direction: a
+            # real English voice note forced through --language ta came
+            # back as Tamil-script gibberish approximating the English
+            # sounds ("என் அதார் நம்பர் என்று கேட்கிறேன்" for "What is my
+            # Aadhaar number?"), and a real Tamil note with English
+            # technical terms mixed in suffered the same way under the
+            # same forced flag. Whisper's own language auto-detection
+            # (this CLI's actual default when --language is never given)
+            # exists specifically to avoid this - trust it instead of
+            # assuming every voice note is Tamil.
+            cmd += ['--language', language]
         try:
             subprocess.run(
-                [
-                    'whisper', str(audio_path),
-                    '--language', language, '--model', model,
-                    '--output_format', 'txt', '--output_dir', tmpdir,
-                    '--verbose', 'False',
-                ],
+                cmd,
                 check=True, capture_output=True, timeout=300,
             )
         except subprocess.CalledProcessError as e:
@@ -66,7 +85,7 @@ def _run_whisper(audio_bytes: bytes, language: str, model: str) -> Optional[str]
 
 
 async def transcribe_audio(
-    audio_bytes: bytes, language: str = 'ta', model: str = DEFAULT_WHISPER_MODEL,
+    audio_bytes: bytes, language: Optional[str] = None, model: str = DEFAULT_WHISPER_MODEL,
 ) -> Optional[str]:
     """Bytes of a real voice note (WhatsApp's own Opus-in-OGG encoding,
     same format mesh/adiyan_reader/tts.py already produces on the way out)
@@ -77,6 +96,12 @@ async def transcribe_audio(
     whole message-handling flow over what is, structurally, the same kind
     of optional enhancement rewrite_for_speech()/add_emotion_tags() already
     fail open on elsewhere in this mesh.
+
+    language: None (the default) lets Whisper auto-detect the spoken
+    language from the audio itself - the right default for a sender who
+    might speak Tamil, English, or a mix of both in one note. Pass an
+    explicit code (e.g. 'ta') only when the caller already knows the
+    language for certain and wants to skip detection.
 
     Blocking subprocess, run off the event loop via asyncio.to_thread -
     whisper itself has no async API, and this can take real wall-clock
