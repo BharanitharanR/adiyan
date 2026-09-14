@@ -40,7 +40,7 @@ from rapidfuzz import fuzz
 from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.agent_sdk import AdiyanAgent
-from mesh.lib.audio_transcribe import transcribe_audio
+from mesh.lib.audio_transcribe import language_display_name, transcribe_audio
 from mesh.lib.config import load_runtime_config
 from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
@@ -590,10 +590,12 @@ async def run(
     # to the same silent-stranger/no-command handling an empty typed
     # message would already get - no separate error path needed.
     audio_pending = False
+    detected_language = None
     if audio is not None:
         transcribed = await transcribe_audio(base64.b64decode(audio['data']))
         if transcribed:
-            text = transcribed
+            text = transcribed.text
+            detected_language = transcribed.language
             audio_pending = True
             # No spoken audio can ever produce a literal "@" character, so
             # the typed gate check ('@adiyan' in text.lower()) can NEVER
@@ -649,12 +651,24 @@ async def run(
     # Threaded into every humanize() call below - the underlying skill's
     # raw result is grounded in whatever language its own source documents/
     # tools use (English, in practice), but a voice note's sender asked in
-    # Tamil and should get a Tamil reply back, not a language mismatch.
-    # Only set for audio - a typed message's own language is left alone,
-    # same reasoning humanize()'s own docstring documents. Kept as a plain
-    # string, not a locale code, since it's fed straight into a natural-
-    # language instruction, not compared against anything.
-    reply_language = 'Tamil' if audio_pending else None
+    # their own spoken language and should get a reply back in that same
+    # language, not a mismatch. Only set for audio - a typed message's own
+    # language is left alone, same reasoning humanize()'s own docstring
+    # documents.
+    #
+    # Previously hardcoded to 'Tamil' unconditionally for every voice note
+    # regardless of what was actually spoken - confirmed live this session
+    # that this was wrong the moment a real non-Tamil voice note came in;
+    # it would have forced a Tamil reply onto an English or Hindi speaker.
+    # detected_language is Whisper's own language detection (the same
+    # detection that already has to run correctly to produce `text` in the
+    # first place - see audio_transcribe.py's own TranscriptionResult
+    # docstring for why this was being discarded before), mapped to a
+    # display name a natural-language prompt instruction can actually use
+    # ('ta' -> 'Tamil'). None (no override at all, same as a typed message)
+    # if detection came back empty/unrecognized - degrading to "let the
+    # model pick" is safer than guessing a specific wrong language.
+    reply_language = language_display_name(detected_language) if audio_pending else None
 
     conn = db.connect(state_db_path(AGENT_ID))
     gate_reply, tier = await rules_engine.check(

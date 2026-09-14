@@ -78,8 +78,9 @@ async def main() -> None:
         audio_bytes = base64.b64decode(media['data'])
         print(f"\n=== [{i}] {m.get('type')} | {m['timestamp']} | {len(audio_bytes)} bytes ===")
 
-        text = await transcribe_audio(audio_bytes)
-        print(f'  transcribed: {text!r}')
+        transcribed = await transcribe_audio(audio_bytes)
+        text = transcribed.text if transcribed else None
+        print(f'  transcribed: {text!r} (language={transcribed.language if transcribed else None!r})')
 
         if not args.full:
             continue
