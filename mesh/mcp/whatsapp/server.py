@@ -200,11 +200,13 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
     """None if this message carries no media. Otherwise the complete blob as
     {kind, mimetype, data (base64), filename} - mechanical WhatsApp I/O only
     (fetching the full blob when OpenWA didn't inline it), never an opinion
-    on what the content means. kind is 'image', 'document', 'ptt' (a voice
-    note recorded in-app), or 'audio' (an audio file sent as an attachment),
-    straight from openwa_receiver.py's own parse of OpenWA's message type;
-    filename is only ever populated for a document (WhatsApp never gives
-    one for the other three kinds).
+    on what the content means. kind is 'image', 'document', or one of
+    'ptt'/'audio'/'voice' - three different real values confirmed live for
+    what a user experiences as the same "record and send a voice note"
+    action, straight from openwa_receiver.py's own parse of OpenWA's
+    message type (see that file's own comment on why all three are
+    recognized). filename is only ever populated for a document (WhatsApp
+    never gives one for the others).
 
     What an image means is still Orchestrator's own routing-layer decision
     (mesh/lib/vision.py's classify_image, used from
@@ -250,7 +252,7 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
         return None
     if media['kind'] == 'image':
         default_mimetype = 'image/jpeg'
-    elif media['kind'] in ('ptt', 'audio'):
+    elif media['kind'] in ('ptt', 'audio', 'voice'):
         # A real voice note's actual encoding, same one AdiyanReader's own
         # TTS output uses (mesh/adiyan_reader/tts.py) - WhatsApp voice notes
         # are Opus-in-OGG in practice, so this is the correct default, not
@@ -306,7 +308,7 @@ async def handle_webhook(request: Request) -> JSONResponse:
         resolved_media = None
     image = resolved_media if resolved_media and resolved_media['kind'] == 'image' else None
     document = resolved_media if resolved_media and resolved_media['kind'] == 'document' else None
-    audio = resolved_media if resolved_media and resolved_media['kind'] in ('ptt', 'audio') else None
+    audio = resolved_media if resolved_media and resolved_media['kind'] in ('ptt', 'audio', 'voice') else None
 
     try:
         await call_agent(ORCHESTRATOR_URL, 'handle_message', {

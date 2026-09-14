@@ -199,16 +199,25 @@ class OpenWAAdapter:
         # them back into separate `image`/`document` A2A call params).
         # `filename` is only ever populated for a document - WhatsApp never
         # gives an image one.
-        # 'ptt' (push-to-talk - a real WhatsApp voice note recorded in-app)
-        # and 'audio' (a regular audio file sent as an attachment) are
-        # captured the same way as image/document - confirmed live that
-        # without this, a voice note was silently dropped here entirely,
-        # same failure shape document uploads had before that was fixed.
-        # Neither carries a filename (WhatsApp never gives one, same as
-        # image).
+        # 'ptt' (push-to-talk) and 'audio' (a regular audio file sent as an
+        # attachment) are captured the same way as image/document - and so
+        # is 'voice', added after a real live webhook payload was caught
+        # via temporary diagnostic logging (since removed) reporting
+        # raw_type='voice' with has_media_key=True for a genuine recorded
+        # voice note in this installed OpenWA fork's actual wire format -
+        # neither 'ptt' nor 'audio' as this code previously assumed, from
+        # the two OTHER real values seen at different points this session
+        # for what a user experiences as the same "record and send a voice
+        # note" action. Whichever of the three OpenWA actually reports, the
+        # media itself was present in the payload all along (has_media_key
+        # was true) - only the type-string check was too narrow, silently
+        # dropping the whole message at the empty-message check just below
+        # (no body, and media stayed None) with no error anywhere, since
+        # that check logs at debug level. Neither carries a filename
+        # (WhatsApp never gives one, same as image).
         media = None
         raw_type = data.get('type')
-        if raw_type in ('image', 'document', 'ptt', 'audio') and data.get('media'):
+        if raw_type in ('image', 'document', 'ptt', 'audio', 'voice') and data.get('media'):
             raw_media = data['media']
             media = {
                 'kind': raw_type,
