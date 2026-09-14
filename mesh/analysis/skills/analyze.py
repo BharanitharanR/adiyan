@@ -31,6 +31,7 @@ design discussion, including what's deliberately deferred (internet
 search, Gmail) and why.
 """
 import base64
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -500,6 +501,39 @@ def _merge_search_result(scratchpad: Scratchpad, observation: str) -> Scratchpad
     return scratchpad
 
 
+def _extract_answer_from_raw_content(content: str) -> str:
+    """content, or - if content is actually an unparsed 'finish' tool-call
+    that the model wrote out as plain text instead of a real tool call
+    (response.tool_calls empty) - just the answer text buried inside it.
+
+    Confirmed live: qwen3:4b, mid-negotiation-reasoning test, emitted
+    '{"name": "finish", "arguments": {"answer": "..."}}' as its own content
+    instead of a real tool call. The caller (run()'s own `if not
+    response.tool_calls: if response.content: ...` branch) then treated
+    that whole raw JSON string as the final answer, verbatim - it reached
+    _package_result() and would have gone out to the customer as-is had
+    the downstream humanize() step not happened to clean it up on its own,
+    which is not something to rely on. Only unwraps this one specific
+    shape (name == 'finish', an 'answer' string under either 'arguments' or
+    'args' - LangChain's own tool_calls use 'args', but a model writing
+    this out by hand as text more often mimics the standard 'arguments'
+    key) - any other JSON-looking or plain-text content is returned
+    unchanged, since a real answer that merely happens to contain braces
+    must never be mistaken for this."""
+    stripped = content.strip()
+    if not (stripped.startswith('{') and stripped.endswith('}')):
+        return content
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return content
+    if not isinstance(parsed, dict) or parsed.get('name') != 'finish':
+        return content
+    args = parsed.get('arguments') or parsed.get('args') or {}
+    answer = args.get('answer') if isinstance(args, dict) else None
+    return answer if isinstance(answer, str) and answer else content
+
+
 def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]:
     if len(text) <= FILE_DELIVERY_THRESHOLD_CHARS:
         return {'found': True, 'result': text}
@@ -545,7 +579,11 @@ async def run(
             if response.content:
                 # Answered directly without calling finish - treat its own
                 # text as the answer, a graceful outcome, not an error.
-                return _package_result(response.content, source_filename)
+                # _extract_answer_from_raw_content() strips this down to
+                # just the answer if the model actually meant to call
+                # finish() but wrote the tool-call JSON out as plain text
+                # instead - see that function's own docstring.
+                return _package_result(_extract_answer_from_raw_content(response.content), source_filename)
             # Confirmed live: an empty response here (no tool call AND no
             # content - a real, observed model hiccup on decide_next_step,
             # not a hypothetical) used to fall straight to the generic
