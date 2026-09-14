@@ -57,7 +57,19 @@ def _seeded(key: str) -> Dict[str, Any]:
 
 async def humanize(
     original_message: str, result: Dict[str, Any], cfg: Dict[str, Any], community: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> str:
+    """language: when given, the reply is composed directly in that
+    language instead of whatever language `original_message` happens to
+    be in - built for a transcribed voice note (mesh/orchestrator/skills/
+    handle_message.py's own audio handling), where the underlying skill's
+    raw result is grounded in English documents/tools but the sender
+    actually asked in Tamil. qwen3:8b-16k (this stage's own model) already
+    has real multilingual ability and is properly chat-tuned - simpler and
+    more reliable than routing an Indic-specific raw-completion model
+    (sarvam-1) into this step, which was tried and confirmed live this
+    session to need awkward few-shot/stop-sequence handling this ordinary
+    chat call doesn't."""
     seeded = _seeded('humanize_prompt_template')
     template = await config_sdk.get_constant(
         AGENT_ID, 'humanize_prompt_template', seeded['value'], description=seeded['description'],
@@ -79,4 +91,6 @@ async def humanize(
         "\n\nRespond with ONLY the reply text itself - no preamble, no "
         "explanation of what you're doing, no quotes around it."
     )
+    if language:
+        prompt += f"\n\nWrite the reply in {language}, regardless of what language the result above is in."
     return await _agent.ask(prompt, stage='humanize', model=cfg['model'], temperature=cfg['temperature'], community=community)

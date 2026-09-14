@@ -38,7 +38,7 @@ from mesh.lib import chat_cache, config_sdk, permissions, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.audio_transcribe import transcribe_audio
-from mesh.lib.config import load_runtime_config, load_seed_config
+from mesh.lib.config import load_runtime_config
 from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
@@ -51,11 +51,6 @@ from mesh.orchestrator.router import route_to_agent
 AGENT_CODE_DIR = Path(__file__).parent.parent
 logger = logging.getLogger('HandleMessage')
 _agent = AdiyanAgent(AGENT_ID)
-_SEED = load_seed_config(AGENT_CODE_DIR)
-
-
-def _seeded(key: str) -> Dict[str, Any]:
-    return _SEED.get(key, {'value': '', 'description': ''})
 
 # The logo sent alongside a fresh registration's welcome reply - read once
 # at import time (a static asset baked into the repo, not something that
@@ -543,6 +538,16 @@ async def run(
         else:
             logger.warning(f'Voice note transcription failed or produced nothing for {chat_id}')
 
+    # Threaded into every humanize() call below - the underlying skill's
+    # raw result is grounded in whatever language its own source documents/
+    # tools use (English, in practice), but a voice note's sender asked in
+    # Tamil and should get a Tamil reply back, not a language mismatch.
+    # Only set for audio - a typed message's own language is left alone,
+    # same reasoning humanize()'s own docstring documents. Kept as a plain
+    # string, not a locale code, since it's fed straight into a natural-
+    # language instruction, not compared against anything.
+    reply_language = 'Tamil' if audio_pending else None
+
     conn = db.connect(state_db_path(AGENT_ID))
     gate_reply, tier = await rules_engine.check(
         conn, chat_id, contact_name, text, from_number, cfg['add_named_contact'],
@@ -637,55 +642,9 @@ async def run(
                 elif analysis.get('content_b64'):
                     pending_document = analysis
                     caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'], community=community)
+                    reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
                 else:
                     reply = analysis.get('result') or ingest_reply
-    elif audio_pending:
-        # A voice note answered directly via sarvam-1 (mashriram/sarvam-1),
-        # not routed through the normal classify_skill/route_to_agent
-        # machinery below - a deliberate, self-contained first version
-        # (see adiyan-primer-deck/tamil-voice-pipeline.html for the full
-        # design and the real test evidence behind it), not yet integrated
-        # with book-reading/scheduling/etc. sarvam-1 is a raw completion
-        # model, not chat-tuned (confirmed against its own Ollama model
-        # card) - it has to be few-shot wrapped into a Question/Answer
-        # shape, with a stop sequence at the next "கேள்வி:" marker, or it
-        # either just echoes the question back or rambles into a
-        # fabricated follow-up exchange - both confirmed live this session.
-        sarvam_cfg = await config_sdk.get_stage_config(
-            AGENT_ID, 'sarvam_qa', {'model': 'mashriram/sarvam-1', 'temperature': 0.3},
-            description='Raw-completion Indic-language model that answers a transcribed voice note, few-shot-wrapped into Question/Answer shape.',
-        )
-        seeded = _seeded('sarvam_qa_prompt_template')
-        template = await config_sdk.get_constant(
-            AGENT_ID, 'sarvam_qa_prompt_template', seeded['value'], description=seeded['description'],
-        )
-        try:
-            prompt = template.format(question=text)
-        except Exception:
-            prompt = seeded['value'].format(question=text)
-        try:
-            tokens = await _agent.ask(
-                prompt, stage='sarvam_qa', model=sarvam_cfg['model'], temperature=sarvam_cfg['temperature'],
-                # '</s>' is sarvam-1's own real end-of-sequence token
-                # (confirmed against its Ollama model metadata:
-                # tokenizer.ggml.eos_token_id=2, a standard LLaMA-family
-                # special token) - normally caught by Ollama's own
-                # Modelfile-configured stop list, but raw=True bypasses
-                # the Modelfile entirely (the whole reason raw mode is
-                # used here, to skip the [INST]...[/INST] chat template
-                # that would otherwise mangle this completion-style
-                # prompt) - which also means losing that free stop-on-EOS
-                # behavior. Confirmed live this session: without listing
-                # it explicitly here, it came through as literal trailing
-                # text in the reply instead of being cut.
-                raw=True, stop=['கேள்வி:', '</s>'],
-            )
-            reply = ''.join(tokens).strip() or None
-        except Exception as e:
-            logger.error(f'Sarvam-1 answer failed for {chat_id}: {describe_exception(e)}')
-            reply = None
-        should_remember = reply is not None
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
         # Only reached once the gate has already let this sender through and
         # there's no image/document attached - a stranger or an upload
@@ -813,7 +772,7 @@ async def run(
                     nonlocal pending_document
                     pending_document = result
                     caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                    return await humanize(text, caption_source, cfg['humanize'], community=community)
+                    return await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
                 if result.get('result'):
                     # Confirmed live: skipping humanize() here (unlike
                     # every other branch in this function) let Analysis
@@ -823,7 +782,7 @@ async def run(
                     # a vegetarian...") rather than a natural reply, the
                     # one branch in this whole function that skipped
                     # the humanize step everything else already gets.
-                    return await humanize(text, result, cfg['humanize'], community=community)
+                    return await humanize(text, result, cfg['humanize'], community=community, language=reply_language)
                 return "Sorry, I'm not sure how to help with that yet."
 
             target_url = await route_to_agent(text, cfg['route_to_agent'])
@@ -865,9 +824,9 @@ async def run(
                         # to restate.
                         pending_document = result
                         caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                        reply = await humanize(text, caption_source, cfg['humanize'], community=community)
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
                     else:
-                        reply = await humanize(text, result, cfg['humanize'], community=community)
+                        reply = await humanize(text, result, cfg['humanize'], community=community, language=reply_language)
         except Exception as e:
             # Confirmed live: this used to reply with the raw exception text
             # ("Did you mean one of: recall_contact_memory,
