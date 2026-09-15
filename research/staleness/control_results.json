@@ -1,0 +1,279 @@
+{
+  "n": 30,
+  "terse_forward_stale_win_rate": 0.6666666666666666,
+  "terse_reversed_stale_win_rate": 0.3333333333333333,
+  "verbose_loses_to_original_rate": 0.9666666666666667,
+  "verbose_loses_to_terse_rate": 0.9,
+  "rows": [
+    {
+      "domain": "preference",
+      "query": "what is my favourite colour",
+      "cos_original": 0.8351138427913708,
+      "cos_terse": 0.8341116376363021,
+      "cos_verbose": 0.7979845567880627,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "preference",
+      "query": "what kind of music do I like",
+      "cos_original": 0.7687687883664492,
+      "cos_terse": 0.7679857852582493,
+      "cos_verbose": 0.6521508751203089,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "preference",
+      "query": "what is my favourite cuisine",
+      "cos_original": 0.8181629741009522,
+      "cos_terse": 0.7747842006944031,
+      "cos_verbose": 0.7019914376816654,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "preference",
+      "query": "which sport do I follow",
+      "cos_original": 0.7163955432193346,
+      "cos_terse": 0.7580886949569118,
+      "cos_verbose": 0.6632704586420549,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "preference",
+      "query": "what is my preferred programming language",
+      "cos_original": 0.8790570963707953,
+      "cos_terse": 0.8397475496138981,
+      "cos_verbose": 0.7819667404689593,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "role",
+      "query": "where do I work",
+      "cos_original": 0.6133683850013493,
+      "cos_terse": 0.5944846341611362,
+      "cos_verbose": 0.5237025537116525,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "role",
+      "query": "what is my job title",
+      "cos_original": 0.48660420934687754,
+      "cos_terse": 0.5353568301840023,
+      "cos_verbose": 0.5038381505646582,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "role",
+      "query": "what team am I on",
+      "cos_original": 0.6228939880631786,
+      "cos_terse": 0.7295012652479185,
+      "cos_verbose": 0.5418490431522416,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "location",
+      "query": "which city do I live in",
+      "cos_original": 0.6785759087070952,
+      "cos_terse": 0.6434795610243482,
+      "cos_verbose": 0.6180268409028825,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "location",
+      "query": "where do I usually work from",
+      "cos_original": 0.8201458546613438,
+      "cos_terse": 0.7993455869239406,
+      "cos_verbose": 0.7591677668503598,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "location",
+      "query": "which country am I travelling to",
+      "cos_original": 0.7184913039183252,
+      "cos_terse": 0.7435888589440226,
+      "cos_verbose": 0.6424781600979036,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "numeric",
+      "query": "how many people are on my team",
+      "cos_original": 0.8708509774351749,
+      "cos_terse": 0.8692210444198628,
+      "cos_verbose": 0.7675666292108512,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "numeric",
+      "query": "what is my monthly savings target",
+      "cos_original": 0.84180100939663,
+      "cos_terse": 0.8479391752924835,
+      "cos_verbose": 0.7278458456969554,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "numeric",
+      "query": "how many hours do I sleep",
+      "cos_original": 0.7924643363629807,
+      "cos_terse": 0.7737772003331145,
+      "cos_verbose": 0.736620748430782,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "date",
+      "query": "when is my weekly review",
+      "cos_original": 0.8959337871533009,
+      "cos_terse": 0.8836397906203155,
+      "cos_verbose": 0.8039261233479182,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "date",
+      "query": "what time do I go to the gym",
+      "cos_original": 0.7935436208738043,
+      "cos_terse": 0.8037142076149991,
+      "cos_verbose": 0.7497202663205843,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "status",
+      "query": "am I currently reading anything",
+      "cos_original": 0.5473853454125243,
+      "cos_terse": 0.6221439314546893,
+      "cos_verbose": 0.5455474050571787,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "status",
+      "query": "what is my dietary preference",
+      "cos_original": 0.5706793734364474,
+      "cos_terse": 0.5759929554112941,
+      "cos_verbose": 0.559101039422939,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "status",
+      "query": "do I own a car",
+      "cos_original": 0.9139446688370648,
+      "cos_terse": 0.8009939894382949,
+      "cos_verbose": 0.8043921293441112,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "status",
+      "query": "what is my relationship to coffee",
+      "cos_original": 0.7217957991239334,
+      "cos_terse": 0.5471223286043891,
+      "cos_verbose": 0.7009786356276507,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "tools",
+      "query": "which editor do I use",
+      "cos_original": 0.7108932713817733,
+      "cos_terse": 0.685064924509505,
+      "cos_verbose": 0.6632591897881915,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "tools",
+      "query": "what database do I use",
+      "cos_original": 0.6855148339977316,
+      "cos_terse": 0.6382010345093334,
+      "cos_verbose": 0.6116004599082607,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "tools",
+      "query": "which cloud provider do I use",
+      "cos_original": 0.5801922862427896,
+      "cos_terse": 0.5366356811882825,
+      "cos_verbose": 0.5486679850091097,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "goal",
+      "query": "what am I trying to learn",
+      "cos_original": 0.7236384569484756,
+      "cos_terse": 0.6792483022297534,
+      "cos_verbose": 0.5868500544510179,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "goal",
+      "query": "what is my fitness goal",
+      "cos_original": 0.7801108420438827,
+      "cos_terse": 0.8645023458687316,
+      "cos_verbose": 0.6725491384510178,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    },
+    {
+      "domain": "goal",
+      "query": "what is my main project",
+      "cos_original": 0.7489020570010975,
+      "cos_terse": 0.6201013181219999,
+      "cos_verbose": 0.5674819055359752,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "admin",
+      "query": "what is my preferred contact method",
+      "cos_original": 0.7037973020991862,
+      "cos_terse": 0.6883175735962694,
+      "cos_verbose": 0.650649293420374,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "admin",
+      "query": "which bank do I use",
+      "cos_original": 0.6409201813456907,
+      "cos_terse": 0.6380555015688031,
+      "cos_verbose": 0.5864985276463915,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "admin",
+      "query": "what is my notice period",
+      "cos_original": 0.8182454041425562,
+      "cos_terse": 0.7896753589599896,
+      "cos_verbose": 0.7727331422254999,
+      "fwd_terse_stale_wins": true,
+      "rev_terse_stale_wins": false
+    },
+    {
+      "domain": "admin",
+      "query": "who is my emergency contact",
+      "cos_original": 0.7715754781279099,
+      "cos_terse": 0.7759483487437789,
+      "cos_verbose": 0.7069554458518775,
+      "fwd_terse_stale_wins": false,
+      "rev_terse_stale_wins": true
+    }
+  ]
+}

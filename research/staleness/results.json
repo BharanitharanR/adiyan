@@ -1,0 +1,878 @@
+{
+  "summary": {
+    "terse": {
+      "stale_wins": 20,
+      "n": 30,
+      "rate": 0.6666666666666666,
+      "mean_margin": -0.013633243625966773,
+      "median_margin": -0.01388686251795107,
+      "mean_len_ratio": 1.0403927368127432
+    },
+    "matched": {
+      "stale_wins": 21,
+      "n": 30,
+      "rate": 0.7,
+      "mean_margin": -0.06035613818169999,
+      "median_margin": -0.050324418379090574,
+      "mean_len_ratio": 1.4754173308346763
+    },
+    "verbose": {
+      "stale_wins": 29,
+      "n": 30,
+      "rate": 0.9666666666666667,
+      "mean_margin": -0.07067987923941967,
+      "median_margin": -0.06279906004350821,
+      "mean_len_ratio": 2.2258848384439864
+    }
+  },
+  "by_domain": {
+    "admin": {
+      "stale_wins": 4,
+      "n": 4
+    },
+    "date": {
+      "stale_wins": 2,
+      "n": 2
+    },
+    "goal": {
+      "stale_wins": 3,
+      "n": 3
+    },
+    "location": {
+      "stale_wins": 3,
+      "n": 3
+    },
+    "numeric": {
+      "stale_wins": 3,
+      "n": 3
+    },
+    "preference": {
+      "stale_wins": 5,
+      "n": 5
+    },
+    "role": {
+      "stale_wins": 2,
+      "n": 3
+    },
+    "status": {
+      "stale_wins": 4,
+      "n": 4
+    },
+    "tools": {
+      "stale_wins": 3,
+      "n": 3
+    }
+  },
+  "rows": [
+    {
+      "domain": "preference",
+      "query": "what is my favourite colour",
+      "original": "My favourite colour is teal.",
+      "cos_original": 0.8351138427913708,
+      "terse": {
+        "text": "My favourite colour is crimson.",
+        "cos": 0.8341116376363021,
+        "margin": -0.0010022051550686584,
+        "stale_wins": true,
+        "len_ratio": 1.1071428571428572
+      },
+      "matched": {
+        "text": "I prefer the colour crimson these days.",
+        "cos": 0.7251968821908579,
+        "margin": -0.10991696060051293,
+        "stale_wins": true,
+        "len_ratio": 1.3928571428571428
+      },
+      "verbose": {
+        "text": "Actually my favourite colour is crimson, not teal.",
+        "cos": 0.7979845567880627,
+        "margin": -0.037129286003308115,
+        "stale_wins": true,
+        "len_ratio": 1.7857142857142858
+      }
+    },
+    {
+      "domain": "preference",
+      "query": "what kind of music do I like",
+      "original": "I like jazz music.",
+      "cos_original": 0.7687687883664492,
+      "terse": {
+        "text": "I like techno music.",
+        "cos": 0.7679857852582493,
+        "margin": -0.0007830031081998978,
+        "stale_wins": true,
+        "len_ratio": 1.1111111111111112
+      },
+      "matched": {
+        "text": "These days I mostly listen to techno.",
+        "cos": 0.670726669088101,
+        "margin": -0.09804211927834827,
+        "stale_wins": true,
+        "len_ratio": 2.0555555555555554
+      },
+      "verbose": {
+        "text": "I used to say jazz but really I like techno now, not jazz.",
+        "cos": 0.6521508751203089,
+        "margin": -0.11661791324614035,
+        "stale_wins": true,
+        "len_ratio": 3.2222222222222223
+      }
+    },
+    {
+      "domain": "preference",
+      "query": "what is my favourite cuisine",
+      "original": "My favourite cuisine is Italian.",
+      "cos_original": 0.8181629741009522,
+      "terse": {
+        "text": "My favourite cuisine is Korean.",
+        "cos": 0.7747842006944031,
+        "margin": -0.043378773406549054,
+        "stale_wins": true,
+        "len_ratio": 0.96875
+      },
+      "matched": {
+        "text": "Korean food is what I enjoy most now.",
+        "cos": 0.7026019501449544,
+        "margin": -0.11556102395599777,
+        "stale_wins": true,
+        "len_ratio": 1.15625
+      },
+      "verbose": {
+        "text": "Correction: my favourite cuisine is Korean, not Italian.",
+        "cos": 0.7019914376816654,
+        "margin": -0.11617153641928679,
+        "stale_wins": true,
+        "len_ratio": 1.75
+      }
+    },
+    {
+      "domain": "preference",
+      "query": "which sport do I follow",
+      "original": "I follow cricket.",
+      "cos_original": 0.7163955432193346,
+      "terse": {
+        "text": "I follow tennis.",
+        "cos": 0.7580886949569118,
+        "margin": 0.04169315173757715,
+        "stale_wins": false,
+        "len_ratio": 0.9411764705882353
+      },
+      "matched": {
+        "text": "Tennis is the sport I keep up with.",
+        "cos": 0.7284151520441547,
+        "margin": 0.012019608824820116,
+        "stale_wins": false,
+        "len_ratio": 2.0588235294117645
+      },
+      "verbose": {
+        "text": "I do not really follow cricket anymore, I follow tennis.",
+        "cos": 0.6632704586420549,
+        "margin": -0.05312508457727971,
+        "stale_wins": true,
+        "len_ratio": 3.2941176470588234
+      }
+    },
+    {
+      "domain": "preference",
+      "query": "what is my preferred programming language",
+      "original": "My preferred programming language is Java.",
+      "cos_original": 0.8790570963707953,
+      "terse": {
+        "text": "My preferred programming language is Rust.",
+        "cos": 0.8397475496138981,
+        "margin": -0.03930954675689724,
+        "stale_wins": true,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "I mostly write Rust now by choice.",
+        "cos": 0.5959753055477156,
+        "margin": -0.2830817908230797,
+        "stale_wins": true,
+        "len_ratio": 0.8095238095238095
+      },
+      "verbose": {
+        "text": "Update: my preferred programming language is Rust, no longer Java.",
+        "cos": 0.7819667404689593,
+        "margin": -0.09709035590183601,
+        "stale_wins": true,
+        "len_ratio": 1.5714285714285714
+      }
+    },
+    {
+      "domain": "role",
+      "query": "where do I work",
+      "original": "I work at Infosys.",
+      "cos_original": 0.6133683850013493,
+      "terse": {
+        "text": "I work at Oracle.",
+        "cos": 0.5944846341611362,
+        "margin": -0.018883750840213098,
+        "stale_wins": true,
+        "len_ratio": 0.9444444444444444
+      },
+      "matched": {
+        "text": "Oracle is my current employer.",
+        "cos": 0.6042154933030639,
+        "margin": -0.00915289169828537,
+        "stale_wins": true,
+        "len_ratio": 1.6666666666666667
+      },
+      "verbose": {
+        "text": "I moved on from Infosys, I work at Oracle now.",
+        "cos": 0.5237025537116525,
+        "margin": -0.08966583128969674,
+        "stale_wins": true,
+        "len_ratio": 2.5555555555555554
+      }
+    },
+    {
+      "domain": "role",
+      "query": "what is my job title",
+      "original": "I am a backend engineer.",
+      "cos_original": 0.48660420934687754,
+      "terse": {
+        "text": "I am a principal engineer.",
+        "cos": 0.5353568301840023,
+        "margin": 0.04875262083712473,
+        "stale_wins": false,
+        "len_ratio": 1.0833333333333333
+      },
+      "matched": {
+        "text": "My current title is principal engineer.",
+        "cos": 0.6663570950321004,
+        "margin": 0.17975288568522285,
+        "stale_wins": false,
+        "len_ratio": 1.625
+      },
+      "verbose": {
+        "text": "I was a backend engineer but I am a principal engineer now.",
+        "cos": 0.5038381505646582,
+        "margin": 0.017233941217780657,
+        "stale_wins": false,
+        "len_ratio": 2.4583333333333335
+      }
+    },
+    {
+      "domain": "role",
+      "query": "what team am I on",
+      "original": "I am on the payments team.",
+      "cos_original": 0.6228939880631786,
+      "terse": {
+        "text": "I am on the platform team.",
+        "cos": 0.7295012652479185,
+        "margin": 0.10660727718473983,
+        "stale_wins": false,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "The platform team is where I sit now.",
+        "cos": 0.6973631597980356,
+        "margin": 0.07446917173485701,
+        "stale_wins": false,
+        "len_ratio": 1.4230769230769231
+      },
+      "verbose": {
+        "text": "I switched off payments, I am on the platform team these days.",
+        "cos": 0.5418490431522416,
+        "margin": -0.08104494491093706,
+        "stale_wins": true,
+        "len_ratio": 2.3846153846153846
+      }
+    },
+    {
+      "domain": "location",
+      "query": "which city do I live in",
+      "original": "I live in Chennai.",
+      "cos_original": 0.6785759087070952,
+      "terse": {
+        "text": "I live in Hyderabad.",
+        "cos": 0.6434795610243482,
+        "margin": -0.03509634768274694,
+        "stale_wins": true,
+        "len_ratio": 1.1111111111111112
+      },
+      "matched": {
+        "text": "Hyderabad is where I am based now.",
+        "cos": 0.6178232190124869,
+        "margin": -0.06075268969460823,
+        "stale_wins": true,
+        "len_ratio": 1.8888888888888888
+      },
+      "verbose": {
+        "text": "I relocated from Chennai, I live in Hyderabad now.",
+        "cos": 0.6180268409028825,
+        "margin": -0.06054906780421265,
+        "stale_wins": true,
+        "len_ratio": 2.7777777777777777
+      }
+    },
+    {
+      "domain": "location",
+      "query": "where do I usually work from",
+      "original": "I usually work from the office.",
+      "cos_original": 0.8201458546613438,
+      "terse": {
+        "text": "I usually work from home.",
+        "cos": 0.7993455869239406,
+        "margin": -0.020800267737403177,
+        "stale_wins": true,
+        "len_ratio": 0.8064516129032258
+      },
+      "matched": {
+        "text": "Working from home is my normal setup now.",
+        "cos": 0.7007256675429977,
+        "margin": -0.11942018711834612,
+        "stale_wins": true,
+        "len_ratio": 1.3225806451612903
+      },
+      "verbose": {
+        "text": "I no longer work from the office, I usually work from home.",
+        "cos": 0.7591677668503598,
+        "margin": -0.060978087810984016,
+        "stale_wins": true,
+        "len_ratio": 1.903225806451613
+      }
+    },
+    {
+      "domain": "location",
+      "query": "which country am I travelling to",
+      "original": "I am travelling to Japan.",
+      "cos_original": 0.7184913039183252,
+      "terse": {
+        "text": "I am travelling to Portugal.",
+        "cos": 0.7435888589440226,
+        "margin": 0.025097555025697438,
+        "stale_wins": false,
+        "len_ratio": 1.12
+      },
+      "matched": {
+        "text": "Portugal is my upcoming destination.",
+        "cos": 0.7090179580401172,
+        "margin": -0.009473345878207917,
+        "stale_wins": true,
+        "len_ratio": 1.44
+      },
+      "verbose": {
+        "text": "The Japan trip fell through, I am travelling to Portugal instead.",
+        "cos": 0.6424781600979036,
+        "margin": -0.07601314382042157,
+        "stale_wins": true,
+        "len_ratio": 2.6
+      }
+    },
+    {
+      "domain": "numeric",
+      "query": "how many people are on my team",
+      "original": "There are 6 people on my team.",
+      "cos_original": 0.8708509774351749,
+      "terse": {
+        "text": "There are 11 people on my team.",
+        "cos": 0.8692210444198628,
+        "margin": -0.0016299330153121128,
+        "stale_wins": true,
+        "len_ratio": 1.0333333333333334
+      },
+      "matched": {
+        "text": "My team has grown to 11 people.",
+        "cos": 0.803496682688825,
+        "margin": -0.06735429474634991,
+        "stale_wins": true,
+        "len_ratio": 1.0333333333333334
+      },
+      "verbose": {
+        "text": "It is not 6 anymore, there are 11 people on my team.",
+        "cos": 0.7675666292108512,
+        "margin": -0.10328434822432375,
+        "stale_wins": true,
+        "len_ratio": 1.7333333333333334
+      }
+    },
+    {
+      "domain": "numeric",
+      "query": "what is my monthly savings target",
+      "original": "My monthly savings target is 20000.",
+      "cos_original": 0.84180100939663,
+      "terse": {
+        "text": "My monthly savings target is 35000.",
+        "cos": 0.8479391752924835,
+        "margin": 0.006138165895853476,
+        "stale_wins": false,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "I now aim to save 35000 each month.",
+        "cos": 0.7084099308496346,
+        "margin": -0.1333910785469955,
+        "stale_wins": true,
+        "len_ratio": 1.0
+      },
+      "verbose": {
+        "text": "I raised it from 20000, my monthly savings target is 35000.",
+        "cos": 0.7278458456969554,
+        "margin": -0.11395516369967462,
+        "stale_wins": true,
+        "len_ratio": 1.6857142857142857
+      }
+    },
+    {
+      "domain": "numeric",
+      "query": "how many hours do I sleep",
+      "original": "I sleep about 5 hours a night.",
+      "cos_original": 0.7924643363629807,
+      "terse": {
+        "text": "I sleep about 8 hours a night.",
+        "cos": 0.7737772003331145,
+        "margin": -0.01868713602986627,
+        "stale_wins": true,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "I get around 8 hours of sleep now.",
+        "cos": 0.7525681892994078,
+        "margin": -0.03989614706357292,
+        "stale_wins": true,
+        "len_ratio": 1.1333333333333333
+      },
+      "verbose": {
+        "text": "I used to sleep 5 hours, now I sleep about 8 hours a night.",
+        "cos": 0.736620748430782,
+        "margin": -0.05584358793219879,
+        "stale_wins": true,
+        "len_ratio": 1.9666666666666666
+      }
+    },
+    {
+      "domain": "date",
+      "query": "when is my weekly review",
+      "original": "My weekly review is on Monday.",
+      "cos_original": 0.8959337871533009,
+      "terse": {
+        "text": "My weekly review is on Thursday.",
+        "cos": 0.8836397906203155,
+        "margin": -0.012293996532985352,
+        "stale_wins": true,
+        "len_ratio": 1.0666666666666667
+      },
+      "matched": {
+        "text": "Thursday is when the weekly review happens.",
+        "cos": 0.8631168123516636,
+        "margin": -0.032816974801637255,
+        "stale_wins": true,
+        "len_ratio": 1.4333333333333333
+      },
+      "verbose": {
+        "text": "The weekly review moved off Monday, it is on Thursday now.",
+        "cos": 0.8039261233479182,
+        "margin": -0.09200766380538261,
+        "stale_wins": true,
+        "len_ratio": 1.9333333333333333
+      }
+    },
+    {
+      "domain": "date",
+      "query": "what time do I go to the gym",
+      "original": "I go to the gym in the evening.",
+      "cos_original": 0.7935436208738043,
+      "terse": {
+        "text": "I go to the gym in the morning.",
+        "cos": 0.8037142076149991,
+        "margin": 0.010170586741194865,
+        "stale_wins": false,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "Morning gym sessions are my routine now.",
+        "cos": 0.7166588619767184,
+        "margin": -0.0768847588970859,
+        "stale_wins": true,
+        "len_ratio": 1.2903225806451613
+      },
+      "verbose": {
+        "text": "I stopped going in the evening, I go to the gym in the morning.",
+        "cos": 0.7497202663205843,
+        "margin": -0.04382335455321995,
+        "stale_wins": true,
+        "len_ratio": 2.032258064516129
+      }
+    },
+    {
+      "domain": "status",
+      "query": "am I currently reading anything",
+      "original": "I am reading a book about habits.",
+      "cos_original": 0.5473853454125243,
+      "terse": {
+        "text": "I am reading a book about physics.",
+        "cos": 0.6221439314546893,
+        "margin": 0.07475858604216501,
+        "stale_wins": false,
+        "len_ratio": 1.0303030303030303
+      },
+      "matched": {
+        "text": "My current book is about physics.",
+        "cos": 0.5853128668130076,
+        "margin": 0.03792752140048339,
+        "stale_wins": false,
+        "len_ratio": 1.0
+      },
+      "verbose": {
+        "text": "I finished the habits book, I am reading one about physics now.",
+        "cos": 0.5455474050571787,
+        "margin": -0.0018379403553455687,
+        "stale_wins": true,
+        "len_ratio": 1.9090909090909092
+      }
+    },
+    {
+      "domain": "status",
+      "query": "what is my dietary preference",
+      "original": "I eat everything, no restrictions.",
+      "cos_original": 0.5706793734364474,
+      "terse": {
+        "text": "I am vegetarian.",
+        "cos": 0.5759929554112941,
+        "margin": 0.0053135819748467705,
+        "stale_wins": false,
+        "len_ratio": 0.47058823529411764
+      },
+      "matched": {
+        "text": "I follow a vegetarian diet now.",
+        "cos": 0.618959444391207,
+        "margin": 0.04828007095475961,
+        "stale_wins": false,
+        "len_ratio": 0.9117647058823529
+      },
+      "verbose": {
+        "text": "I used to eat everything but I am vegetarian now.",
+        "cos": 0.559101039422939,
+        "margin": -0.011578334013508385,
+        "stale_wins": true,
+        "len_ratio": 1.4411764705882353
+      }
+    },
+    {
+      "domain": "status",
+      "query": "do I own a car",
+      "original": "I own a car.",
+      "cos_original": 0.9139446688370648,
+      "terse": {
+        "text": "I do not own a car.",
+        "cos": 0.8009939894382949,
+        "margin": -0.1129506793987699,
+        "stale_wins": true,
+        "len_ratio": 1.5833333333333333
+      },
+      "matched": {
+        "text": "I sold my car and use public transport.",
+        "cos": 0.5771139085497838,
+        "margin": -0.336830760287281,
+        "stale_wins": true,
+        "len_ratio": 3.25
+      },
+      "verbose": {
+        "text": "I used to own a car but I do not own a car anymore.",
+        "cos": 0.8043921293441112,
+        "margin": -0.10955253949295363,
+        "stale_wins": true,
+        "len_ratio": 4.25
+      }
+    },
+    {
+      "domain": "status",
+      "query": "what is my relationship to coffee",
+      "original": "I drink coffee every morning.",
+      "cos_original": 0.7217957991239334,
+      "terse": {
+        "text": "I drink tea every morning.",
+        "cos": 0.5471223286043891,
+        "margin": -0.1746734705195443,
+        "stale_wins": true,
+        "len_ratio": 0.896551724137931
+      },
+      "matched": {
+        "text": "Tea has replaced coffee in my mornings.",
+        "cos": 0.644340425240663,
+        "margin": -0.0774553738832704,
+        "stale_wins": true,
+        "len_ratio": 1.3448275862068966
+      },
+      "verbose": {
+        "text": "I quit coffee, I drink tea every morning instead of coffee.",
+        "cos": 0.7009786356276507,
+        "margin": -0.02081716349628271,
+        "stale_wins": true,
+        "len_ratio": 2.0344827586206895
+      }
+    },
+    {
+      "domain": "tools",
+      "query": "which editor do I use",
+      "original": "I use VS Code as my editor.",
+      "cos_original": 0.7108932713817733,
+      "terse": {
+        "text": "I use Neovim as my editor.",
+        "cos": 0.685064924509505,
+        "margin": -0.025828346872268315,
+        "stale_wins": true,
+        "len_ratio": 0.9629629629629629
+      },
+      "matched": {
+        "text": "Neovim is my editor of choice now.",
+        "cos": 0.6776612855342752,
+        "margin": -0.03323198584749809,
+        "stale_wins": true,
+        "len_ratio": 1.2592592592592593
+      },
+      "verbose": {
+        "text": "I switched away from VS Code, I use Neovim as my editor.",
+        "cos": 0.6632591897881915,
+        "margin": -0.047634081593581734,
+        "stale_wins": true,
+        "len_ratio": 2.074074074074074
+      }
+    },
+    {
+      "domain": "tools",
+      "query": "what database do I use",
+      "original": "I use MySQL for my projects.",
+      "cos_original": 0.6855148339977316,
+      "terse": {
+        "text": "I use Postgres for my projects.",
+        "cos": 0.6382010345093334,
+        "margin": -0.0473137994883982,
+        "stale_wins": true,
+        "len_ratio": 1.1071428571428572
+      },
+      "matched": {
+        "text": "Postgres is the database I build on now.",
+        "cos": 0.7049417840830537,
+        "margin": 0.019426950085322137,
+        "stale_wins": false,
+        "len_ratio": 1.4285714285714286
+      },
+      "verbose": {
+        "text": "I migrated off MySQL, I use Postgres for my projects now.",
+        "cos": 0.6116004599082607,
+        "margin": -0.07391437408947088,
+        "stale_wins": true,
+        "len_ratio": 2.0357142857142856
+      }
+    },
+    {
+      "domain": "tools",
+      "query": "which cloud provider do I use",
+      "original": "I deploy on AWS.",
+      "cos_original": 0.5801922862427896,
+      "terse": {
+        "text": "I deploy on my own hardware.",
+        "cos": 0.5366356811882825,
+        "margin": -0.04355660505450709,
+        "stale_wins": true,
+        "len_ratio": 1.75
+      },
+      "matched": {
+        "text": "Self-hosting on my own hardware is how I deploy now.",
+        "cos": 0.5439465205641655,
+        "margin": -0.03624576567862414,
+        "stale_wins": true,
+        "len_ratio": 3.25
+      },
+      "verbose": {
+        "text": "I left AWS behind, I deploy on my own hardware these days.",
+        "cos": 0.5486679850091097,
+        "margin": -0.031524301233679886,
+        "stale_wins": true,
+        "len_ratio": 3.625
+      }
+    },
+    {
+      "domain": "goal",
+      "query": "what am I trying to learn",
+      "original": "I am trying to learn Spanish.",
+      "cos_original": 0.7236384569484756,
+      "terse": {
+        "text": "I am trying to learn Tamil.",
+        "cos": 0.6792483022297534,
+        "margin": -0.04439015471872221,
+        "stale_wins": true,
+        "len_ratio": 0.9310344827586207
+      },
+      "matched": {
+        "text": "Tamil is the language I am studying now.",
+        "cos": 0.5782459412713332,
+        "margin": -0.1453925156771424,
+        "stale_wins": true,
+        "len_ratio": 1.3793103448275863
+      },
+      "verbose": {
+        "text": "I paused Spanish, I am trying to learn Tamil at the moment.",
+        "cos": 0.5868500544510179,
+        "margin": -0.13678840249745772,
+        "stale_wins": true,
+        "len_ratio": 2.0344827586206895
+      }
+    },
+    {
+      "domain": "goal",
+      "query": "what is my fitness goal",
+      "original": "My fitness goal is to run a marathon.",
+      "cos_original": 0.7801108420438827,
+      "terse": {
+        "text": "My fitness goal is to build strength.",
+        "cos": 0.8645023458687316,
+        "margin": 0.08439150382484895,
+        "stale_wins": false,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "Building strength is what I am working towards.",
+        "cos": 0.6232117155540906,
+        "margin": -0.1568991264897921,
+        "stale_wins": true,
+        "len_ratio": 1.2702702702702702
+      },
+      "verbose": {
+        "text": "I gave up on the marathon, my fitness goal is to build strength.",
+        "cos": 0.6725491384510178,
+        "margin": -0.10756170359286488,
+        "stale_wins": true,
+        "len_ratio": 1.7297297297297298
+      }
+    },
+    {
+      "domain": "goal",
+      "query": "what is my main project",
+      "original": "My main project is a mobile app.",
+      "cos_original": 0.7489020570010975,
+      "terse": {
+        "text": "My main project is an agent harness.",
+        "cos": 0.6201013181219999,
+        "margin": -0.1288007388790976,
+        "stale_wins": true,
+        "len_ratio": 1.125
+      },
+      "matched": {
+        "text": "I am mostly building an agent harness now.",
+        "cos": 0.4900891205945162,
+        "margin": -0.25881293640658126,
+        "stale_wins": true,
+        "len_ratio": 1.3125
+      },
+      "verbose": {
+        "text": "The mobile app is shelved, my main project is an agent harness.",
+        "cos": 0.5674819055359752,
+        "margin": -0.18142015146512225,
+        "stale_wins": true,
+        "len_ratio": 1.96875
+      }
+    },
+    {
+      "domain": "admin",
+      "query": "what is my preferred contact method",
+      "original": "The best way to reach me is email.",
+      "cos_original": 0.7037973020991862,
+      "terse": {
+        "text": "The best way to reach me is WhatsApp.",
+        "cos": 0.6883175735962694,
+        "margin": -0.01547972850291679,
+        "stale_wins": true,
+        "len_ratio": 1.088235294117647
+      },
+      "matched": {
+        "text": "WhatsApp is how I prefer to be contacted.",
+        "cos": 0.771360348922303,
+        "margin": 0.06756304682311676,
+        "stale_wins": false,
+        "len_ratio": 1.2058823529411764
+      },
+      "verbose": {
+        "text": "Do not use email, the best way to reach me is WhatsApp.",
+        "cos": 0.650649293420374,
+        "margin": -0.0531480086788122,
+        "stale_wins": true,
+        "len_ratio": 1.6176470588235294
+      }
+    },
+    {
+      "domain": "admin",
+      "query": "which bank do I use",
+      "original": "I bank with HDFC.",
+      "cos_original": 0.6409201813456907,
+      "terse": {
+        "text": "I bank with ICICI.",
+        "cos": 0.6380555015688031,
+        "margin": -0.0028646797768876464,
+        "stale_wins": true,
+        "len_ratio": 1.0588235294117647
+      },
+      "matched": {
+        "text": "ICICI is my current bank.",
+        "cos": 0.6536330301577231,
+        "margin": 0.012712848812032385,
+        "stale_wins": false,
+        "len_ratio": 1.4705882352941178
+      },
+      "verbose": {
+        "text": "I closed my HDFC account, I bank with ICICI now.",
+        "cos": 0.5864985276463915,
+        "margin": -0.05442165369929919,
+        "stale_wins": true,
+        "len_ratio": 2.823529411764706
+      }
+    },
+    {
+      "domain": "admin",
+      "query": "what is my notice period",
+      "original": "My notice period is 30 days.",
+      "cos_original": 0.8182454041425562,
+      "terse": {
+        "text": "My notice period is 90 days.",
+        "cos": 0.7896753589599896,
+        "margin": -0.02857004518256656,
+        "stale_wins": true,
+        "len_ratio": 1.0
+      },
+      "matched": {
+        "text": "I am now on a 90 day notice period.",
+        "cos": 0.7194668631089368,
+        "margin": -0.09877854103361938,
+        "stale_wins": true,
+        "len_ratio": 1.25
+      },
+      "verbose": {
+        "text": "It changed from 30 days, my notice period is 90 days.",
+        "cos": 0.7727331422254999,
+        "margin": -0.04551226191705626,
+        "stale_wins": true,
+        "len_ratio": 1.8928571428571428
+      }
+    },
+    {
+      "domain": "admin",
+      "query": "who is my emergency contact",
+      "original": "My emergency contact is my brother.",
+      "cos_original": 0.7715754781279099,
+      "terse": {
+        "text": "My emergency contact is my wife.",
+        "cos": 0.7759483487437789,
+        "margin": 0.004372870615868996,
+        "stale_wins": false,
+        "len_ratio": 0.9142857142857143
+      },
+      "matched": {
+        "text": "My wife is listed as my emergency contact.",
+        "cos": 0.8081304967631325,
+        "margin": 0.03655501863522259,
+        "stale_wins": false,
+        "len_ratio": 1.2
+      },
+      "verbose": {
+        "text": "Change it from my brother, my emergency contact is my wife.",
+        "cos": 0.7069554458518775,
+        "margin": -0.06462003227603241,
+        "stale_wins": true,
+        "len_ratio": 1.6857142857142857
+      }
+    }
+  ]
+}

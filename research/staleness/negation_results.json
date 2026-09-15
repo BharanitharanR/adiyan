@@ -1,0 +1,38 @@
+[
+  {
+    "model": "nomic-embed-text",
+    "n_pairs": 15,
+    "mean_cos_term_vs_notterm": 0.8576327178764344,
+    "mean_cos_term_vs_unrelated": 0.39025437024875803,
+    "negation_nearer_than_unrelated": 15,
+    "negation_nearer_rate": 1.0,
+    "n_contam": 8,
+    "mean_contamination_delta": -0.02939313020437366,
+    "clean_beats_correction": 7,
+    "clean_beats_correction_rate": 0.875
+  },
+  {
+    "model": "all-minilm",
+    "n_pairs": 15,
+    "mean_cos_term_vs_notterm": 0.8550273884387367,
+    "mean_cos_term_vs_unrelated": 0.1783029442012619,
+    "negation_nearer_than_unrelated": 15,
+    "negation_nearer_rate": 1.0,
+    "n_contam": 8,
+    "mean_contamination_delta": -0.05049463500926536,
+    "clean_beats_correction": 5,
+    "clean_beats_correction_rate": 0.625
+  },
+  {
+    "model": "mxbai-embed-large",
+    "n_pairs": 15,
+    "mean_cos_term_vs_notterm": 0.7494283874815636,
+    "mean_cos_term_vs_unrelated": 0.46787915770439725,
+    "negation_nearer_than_unrelated": 15,
+    "negation_nearer_rate": 1.0,
+    "n_contam": 8,
+    "mean_contamination_delta": -0.049345878868320425,
+    "clean_beats_correction": 7,
+    "clean_beats_correction_rate": 0.875
+  }
+]

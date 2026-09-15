@@ -1,0 +1,35 @@
+[
+  {
+    "model": "nomic-embed-text",
+    "dims": 768,
+    "n": 30,
+    "verbose_loses_to_original": 29,
+    "verbose_loses_to_original_rate": 0.9666666666666667,
+    "verbose_loses_to_terse": 27,
+    "verbose_loses_to_terse_rate": 0.9,
+    "mean_margin_vs_original": -0.07067987923941967,
+    "mean_margin_vs_terse": -0.057046635613452884
+  },
+  {
+    "model": "all-minilm",
+    "dims": 384,
+    "n": 30,
+    "verbose_loses_to_original": 24,
+    "verbose_loses_to_original_rate": 0.8,
+    "verbose_loses_to_terse": 21,
+    "verbose_loses_to_terse_rate": 0.7,
+    "mean_margin_vs_original": -0.09890620642090453,
+    "mean_margin_vs_terse": -0.08256684410995029
+  },
+  {
+    "model": "mxbai-embed-large",
+    "dims": 1024,
+    "n": 30,
+    "verbose_loses_to_original": 28,
+    "verbose_loses_to_original_rate": 0.9333333333333333,
+    "verbose_loses_to_terse": 26,
+    "verbose_loses_to_terse_rate": 0.8666666666666667,
+    "mean_margin_vs_original": -0.07718055520490484,
+    "mean_margin_vs_terse": -0.058347220979690244
+  }
+]
