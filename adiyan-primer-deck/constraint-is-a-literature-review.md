@@ -2,23 +2,21 @@
 
 ## Constraint Is a Literature Review
 
-*Five design decisions a laptop forced on me. Five papers that say they were right — and I read them after, not before.*
+*Five design decisions a laptop forced on me. Five papers that say they were right, and I read them after, not before.*
 
 ---
 
-This series has argued that scarcity is a design method — that the constraint does design work that discipline alone would not have done. This issue is the receipt.
+Earlier when I started this series, I argued that scarcity is a design method.
 
-Adiyan is an AI agent harness that runs entirely on my own machine. No embedding API. No hosted vector database. No document that ever leaves the laptop. You talk to it over WhatsApp.
+Adiyan is an AI agent harness that, in keeping with its philosophy, runs locally and uses an open-weighted local LLM. It doesn't need users to bring any paid subscriptions for embedding. No paid vector DB. No BYO LLM key.
 
-The generation model has a **16,000-token context window.** Not two hundred thousand. Sixteen.
+Out of the box, it provides a generation model. It doesn't assume a bottomless context window. It's constrained to a max of 16,000 tokens of context.
 
-That number, plus a handful of production bugs from real people using it, dictated almost every interesting decision in the system. I made those decisions because I had no choice, not because I had read anything.
+That constraint is what forced Adiyan to be engineered around every option available, to get the best out of what it had.
 
-Last week I finally went and read the literature properly. Every one of those five decisions has a paper behind it, and in several cases the paper quantifies exactly how bad the alternative is.
+So I went scouting for published papers addressing this exact problem: context window constraints coupled with a constrained RAG system. I found five prominent papers.
 
-This post is that table.
-
----
+Every one of those five decisions has a paper behind it, and in several cases the paper quantifies exactly how bad the alternative is.
 
 | # | What Adiyan does | What forced it | What the field calls it |
 |---|---|---|---|
@@ -28,15 +26,17 @@ This post is that table.
 | 4 | Heading-aware splitting before the size cap | A fact in the index scored 0.496 and was discarded | **Heading-aware chunking** [4][5] |
 | 5 | Visibility pre-filter inside the vector query, across six read paths | A private document surfaced in someone else's results | **The relevance-authorization gap** [6] |
 
-Five for five. Here is each one.
-
 ---
 
-## 1. The loop is not allowed to remember
+## 1. Context-window-efficient loops
 
-ReAct-style agents accumulate history: every observation from every previous step gets fed back into the next decision. On a 200k window you never notice. On 16k you die around step four.
+Adiyan's primary architecture, the Analysis Agent, is a ReAct-style agent.
 
-So the loop never sees its own raw history. It carries one small typed structure instead:
+Initially I was accumulating history. Every observation from every previous step gets fed back into the next decision. On a 200k window you never notice a problem.
+
+But on 16k context, it clogs the window and forces the LLM into hallucination, to the point where it defeated the purpose of building the system at all.
+
+So I came up with a scratchpad solution: the loop never sees its own raw history. It carries one small typed structure instead:
 
 ```python
 class Scratchpad(BaseModel):
@@ -46,70 +46,88 @@ class Scratchpad(BaseModel):
     open_questions: List[str]
 ```
 
-After every tool call a separate compaction step folds the new observation into an updated scratchpad, merged rather than appended, and the raw text is thrown away. The input to each decision stays roughly constant no matter how many steps run.
+After every tool call, a separate compaction step folds the new observation into an updated scratchpad. It's merged, not appended, and the raw text is thrown away. The input to each decision stays roughly constant no matter how many steps run.
 
-**MEM1** [1] describes the same architecture:
+Later, when I was going through the literature, I found MEM1 [1] describing the same architecture:
 
 > "enables agents to operate with **constant memory** across long multi-turn tasks. At each turn, MEM1 updates a **compact shared internal state**... strategically discarding irrelevant or redundant information."
 
-They report 3.5× the performance at 3.7× less memory. They also train the consolidation behaviour with reinforcement learning, which I do not, because I am running Ollama on a laptop. Same shape, different budget.
+They report 3.5× the performance at 3.7× less memory. They also train the consolidation behaviour with reinforcement learning, which I do not, because I am running Ollama on a laptop.
+
+For me the constraint was different, but the direction I ended up taking was very similar.
 
 ---
 
 ## 2. Never ask a model what arithmetic can answer
 
-The compaction step in (1) is an LLM call. One of my tools returns nothing but a list of filenames.
+The compaction step from Section 1 is an LLM call. One of my tools returns nothing but a list of filenames.
 
-Hand that to a model and ask it to "extract findings" and you get exactly what it sounds like: confident, detailed summaries of documents that were never opened, written into the scratchpad as evidence, then carried forward into every subsequent step as though they were real.
+Initially I was handing that to a model and asking it to "extract findings." And I started seeing something I didn't like. The model would generate confident, detailed summaries of documents that were never opened. Those findings then went into the scratchpad as evidence, and from that point on, every subsequent step treated them as if they were real.
 
-I tried to fix it with prompt instructions. **It did not hold.** The fix was to stop asking: that tool's output is now merged by plain Python, because a list of filenames contains nothing an LLM could legitimately call a finding.
+I tried to fix it with prompt instructions. It did not hold.
 
-**"Compaction as Epistemic Failure"** [2] names this exactly:
+So I changed the implementation. That tool's output is now merged by plain Python, because a list of filenames contains nothing an LLM could legitimately call a finding. There is no reasoning needed there. It is just a list.
+
+While looking into this, I found "Compaction as Epistemic Failure" [2], which describes how compressing session history can turn mere observations into things that look like confirmed results:
 
 > "compression of session history can transform ephemeral observations into **fabricated confirmations**... durable disinformation that later sessions treat as ground truth."
 
-A model call that a deterministic function could have made is not just slower. It is another surface for fabrication.
+This was exactly the kind of thing I was seeing.
+
+For me, this was another example of using the LLM where it wasn't needed. If a plain deterministic function can do the job, why ask the model to do it? It's not only about latency or cost. Every additional LLM call is another place where the system can start making up something that was never there.
 
 ---
 
 ## 3. Memory has to know what time it is
 
-I corrected a fact about myself over WhatsApp. Adiyan kept answering with the old value. Both statements were stored correctly, and retrieval ranked the superseded one higher:
+I corrected a fact about myself over WhatsApp. Adiyan kept answering with the old value. Both statements were stored correctly, but when retrieval happened, the old one was ranked higher.
 
-```
+```text
 query:       "what is my favourite colour"
-stale fact:  "My favourite colour is teal."                    0.781  ← returned
+stale fact:  "My favourite colour is teal."              0.781  ← returned
 correction:  "Actually my favourite colour is crimson,
-              not teal."                                        0.725
+              not teal."                                  0.725
 ```
 
-Vector search ranks by what text is *about*. A fact and its correction are about the same thing. So the ranking is close to a coin flip, and the fix is to give memory a sense of time: multiply similarity by `0.5 ** (age_days / 14)`.
+Vector search ranks by what text is about. A fact and its correction are about the same thing, so the ranking is close. The vector search does not know that one statement came later and replaced the other.
 
-On third-party benchmark data with real timestamps, that one line recovers **74 to 93%** of the failures, and never once promoted an irrelevant-but-recent memory in my tests.
+So I added time into the scoring. I multiply similarity by:
 
-**MemStrata** [3] measures the underlying problem properly:
+`0.5 ** (age_days / 14)`
+
+Basically a 14-day half-life. The older the memory gets, the less weight it gets.
+
+On third-party benchmark data with real timestamps, that one line recovers 74 to 93% of the failures. And in my tests it never once promoted an irrelevant-but-recent memory just because it was recent.
+
+Then I found MemStrata [3], which was studying this problem in a much more formal way. They report:
 
 > "cosine similarity distinguishes a contradicted fact from a duplicated one with **AUROC 0.59 (near chance)**... RAG serves superseded values **15 to 40% of the time**."
 
-Their solution is stronger than mine, a deterministic supersession ledger rather than a decay term. Worth knowing they also report LLM-reranking baselines at 16 to 18 seconds per retrieval, against roughly 2 seconds for a deterministic rule.
+Their solution is stronger than mine. They use a deterministic supersession ledger rather than a decay term, and they report LLM-reranking baselines at 16 to 18 seconds per retrieval, against roughly 2 seconds for a deterministic rule.
+
+So the approach I took is not the strongest possible approach, but it was a very cheap thing to add, and it addressed the problem I was seeing.
 
 ---
 
 ## 4. A similarity threshold is where you hide a chunking bug
 
-A query in my evaluation set: *"what port does Qdrant run on."* The answer was in the indexed document, verbatim, one line.
+A query in my evaluation set: "what port does Qdrant run on." The answer was in the indexed document. Verbatim. One line.
 
-Similarity: **0.496.** Below my relevance floor. Discarded as no match.
+Similarity: 0.496. It was below my relevance floor. So I discarded it as no match.
 
-Nothing was broken. My splitter had packed five unrelated `##` sections into one ~3,000-character block, so that chunk's embedding was an average of five topics and therefore a good representation of none of them. Isolating the relevant section and re-embedding it alone:
+I initially thought maybe the similarity threshold was too high. But then I looked at the chunk. My splitter had packed five unrelated `##` sections into one roughly 3,000-character block, so that chunk embedding was basically an average of five different topics. It was not really representing any of them properly.
 
-**0.665.** Same model, same query, same threshold. A 34% jump from cutting the text somewhere else.
+I isolated the relevant section and re-embedded it. The score became: 0.665.
 
-The cheap fix was lowering the threshold to 0.45, which would have quietly admitted junk on every other query forever. The real fix was splitting authored markdown on its real heading boundaries first, then applying the size cap on top.
+Same model. Same query. Same threshold. Only the chunking changed. That is a 34% jump just by cutting the document differently.
 
-This is now a studied result. A 2025 study on heading-aware chunking and hierarchical document structure [4] targets precisely this, and a domain evaluation of chunking strategies [5] found structure-aware chunking to be:
+The cheap fix would have been to lower the threshold to 0.45, but then I would have started accepting more junk as relevant. So instead I went back to the chunking: I split authored markdown on its actual heading boundaries first, then applied the size cap on top of that.
+
+Later I found a 2025 study on heading-aware chunking and hierarchical document structure [4] which was looking at exactly this kind of problem. Another domain evaluation of chunking strategies [5] found structure-aware chunking to be:
 
 > "the most critical discovery, consistently achieving the highest performance in top-K metrics across the overall corpus."
+
+This one was interesting because initially it looked like a vector similarity problem. It wasn't. It was a chunking problem.
 
 ---
 
@@ -117,9 +135,11 @@ This is now a studied result. A 2025 study on heading-aware chunking and hierarc
 
 The one that actually mattered. A live query surfaced one person's private identity document into a different requester's results.
 
-Retrieval was working perfectly. It had simply never been told that a boundary existed. The system had been built for one user and quietly acquired several.
+Retrieval was working perfectly. It found a document which was relevant to the query, but it had no idea that the requester was not supposed to see it.
 
-The fix was a visibility pre-filter inside the vector query itself, not a filter on the results afterwards:
+The system was initially built for one user. Then it started becoming something which could have several users, and I had not carried that boundary into retrieval.
+
+So the fix was a visibility pre-filter inside the vector query itself, not retrieve everything and then filter the results. The permission needs to be part of the retrieval query.
 
 ```python
 MetadataFilters(condition=FilterCondition.OR, filters=[
@@ -128,13 +148,15 @@ MetadataFilters(condition=FilterCondition.OR, filters=[
 ])
 ```
 
-Applied across **six separate read paths**, because that is how many there turned out to be, and every pre-existing document was defaulted to owner-only rather than trusted.
+I applied this across six separate read paths, because that is how many paths I eventually found. And every pre-existing document was defaulted to owner-only rather than trusting what was already there.
 
-Research on multitenant retrieval [6] formalises this as the *relevance-authorization gap*: ranking by relevance cannot enforce isolation without explicit authorization predicates. Their empirical number is the alarming part:
+Later I found research on multitenant retrieval [6] which formalises this as the relevance-authorization gap. The problem is pretty straightforward: relevance tells you which document is useful, authorization tells you whether the requester is allowed to see it. Vector search can do the first one. It cannot magically do the second one. Their empirical number was the alarming part:
 
 > "ungated retrieval leaks cross-tenant data in **98 to 100% of probes**."
 
-And the same literature is explicit that pre-filtering beats post-filtering, because filtering after the fact risks side-channel leakage and empty results. Which is the fix I arrived at by staring at a bug report, not by reading a paper.
+The same research also makes the case for pre-filtering instead of post-filtering, because filtering after retrieval can have side-channel problems and can also produce empty results after the relevant document has already been retrieved.
+
+This was something I arrived at by staring at a real bug report. I wasn't implementing a paper. I was trying to fix what happened in Adiyan.
 
 ---
 
@@ -142,19 +164,19 @@ And the same literature is explicit that pre-filtering beats post-filtering, bec
 
 Not that I should have published first. Three of these five were published before I built them, and I have written elsewhere about how that felt.
 
-The useful conclusion is narrower and more encouraging:
+What I find interesting is that the constraints themselves pushed me towards these decisions. I did not have a 200k context window, so I had to think about how to keep the working state small. I did not want to make an LLM call for things which plain code could do, so I started separating what actually needed reasoning from what didn't. I had real users coming through WhatsApp, so I found the access-control problem through an actual request.
 
-**Real constraints point in the same direction as good research.** I did not have a 200k context window, so I was forced to invent bounded state. I did not have a budget for LLM calls I could not justify, so I was forced to notice which calls were fabrication surfaces. I had real users on WhatsApp, so I found the access-control bug the way you actually find them, in production, from a person.
+And when I later went looking through the literature, I found that these were not random problems I had invented. There were papers looking at the same problems, and in some cases measuring exactly what I had started seeing. That gives me some confidence in the direction I took. Not because the implementation is the same. It isn't. But the pressure created by the constraints seems to have pushed the architecture in a similar direction.
 
-Every one of those pressures pushed me toward what the field independently concluded. That is a reasonable argument that the pressures were the right ones, and a much better reason to trust a piece of architecture than "it seemed elegant."
+The other thing I keep learning from this is probably more important: read the literature at the start, when it is cheap, not at the end, when it is expensive. Twenty minutes of searching in week one can save a lot of time in week ten. Somebody else has already done the experiment. Somebody else has already measured the failure. And sometimes you can use that work to decide what not to build.
 
-The second conclusion is practical and I keep relearning it: **read the literature at the start, when it is cheap, not at the end, when it is expensive.** Twenty minutes of searching in week one converts rediscovery into extension. The literature is a free experiment somebody else already paid for.
+The literature is a free experiment somebody else already paid for.
 
 ---
 
 ## See the whole thing
 
-Every incident above is written up with the measurements that diagnosed it, inside a zero-to-hero reference that starts from what a *dimension* actually is and ends at the full architecture. It has a draggable cosine-versus-Euclidean plot and a chunking playground preloaded with the exact document that produced the 0.496, so you can reproduce the dilution and then fix it.
+Every incident above is written up with the measurements that helped me understand what was actually happening, inside a zero-to-hero reference that starts from what a dimension actually is and ends at the full architecture. It has a draggable cosine-versus-Euclidean plot and a chunking playground preloaded with the exact document that produced the 0.496, so you can reproduce the dilution and then fix it.
 
 **→ https://bharanitharanr.github.io/adiyan/how-adiyan-works.html**
 
@@ -170,15 +192,7 @@ python3 -m research.staleness.run_longmemeval
 
 ---
 
-## Coming Next
-
-More production incidents, more papers I found after the fact instead of before. Same method each time: build under real constraint, then go check whether the constraint led somewhere the field already mapped.
-
-See you next week.
-
----
-
-*Bharanitharan Ragunathan is a Principal Backend Engineer at Oracle. Creator of Banyan (a governance DSL compiler) and ForgeX (a metadata-driven microservice generator). Weekly paper validation series on Medium and LinkedIn.*
+*Bharanitharan Ragunathan is a Principal Backend Engineer at Oracle. Creator of Adiyan, a frugal AI agent harness, Banyan (a governance DSL compiler), and ForgeX (a metadata-driven microservice generator).*
 
 ---
 
@@ -198,7 +212,7 @@ See you next week.
 
 # LinkedIn cut
 
-*(Plain text. The first two lines have to earn the "see more".)*
+*(Plain text. The first two lines have to earn the "see more". Note: written before the Substack rewrite above, so the voice is slightly more polished/less first-person-narrative than the final piece. Say the word if you want it re-matched to the new voice.)*
 
 ---
 
