@@ -39,3 +39,6 @@ mesh/qdrant/qdrant-bin
 # (mesh/adiyan_reader/voice_training/README.md) - ~14GB, pulled fresh from
 # Hugging Face by whoever runs the training, never committed.
 mesh/adiyan_reader/voice_training/models/
+
+# LongMemEval benchmark data (15MB, fetched by run_longmemeval.py)
+research/staleness/data/
