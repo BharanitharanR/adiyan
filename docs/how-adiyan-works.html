@@ -1,0 +1,1448 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A zero-to-hero reference on vector databases and retrieval-augmented generation, built from first principles and grounded in Adiyan's real stack, parameters and production incidents.">
+<title>How Adiyan Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:ital,wght@0,300..900;1,300..700&display=swap">
+
+<style>
+:root{
+  --paper:#ECE2CA;
+  --paper-2:#E0D2AC;
+  --paper-3:#E7DBBE;
+  --ink:#241F14;
+  --ink-soft:rgba(36,31,20,.66);
+  --ink-faint:rgba(36,31,20,.4);
+  --accent:#8A6B32;
+  --accent-deep:#6E5427;
+  --line:rgba(36,31,20,.16);
+  --line-strong:rgba(36,31,20,.3);
+  --code-bg:#241F14;
+  --code-ink:#E4DAC2;
+  --code-key:#C9A75C;
+  --code-str:#B5C4A1;
+  --code-com:rgba(228,218,194,.45);
+  --warn-bg:#E5D3A8;
+  --shadow-soft:0 1px 2px rgba(36,31,20,.07), 0 10px 28px -14px rgba(36,31,20,.28);
+  color-scheme: light;
+}
+
+/* Dark is opt-in only, never guessed from prefers-color-scheme - same rule
+   the main site follows, and this page reads the same 'adiyan-deck-theme'
+   localStorage key so a choice made there carries over to here. */
+:root[data-theme="dark"]{
+  --paper:#1B160D;
+  --paper-2:#272013;
+  --paper-3:#221C11;
+  --ink:#ECE2CA;
+  --ink-soft:rgba(236,226,202,.68);
+  --ink-faint:rgba(236,226,202,.42);
+  --accent:#D6AD5F;
+  --accent-deep:#E3C182;
+  --line:rgba(236,226,202,.16);
+  --line-strong:rgba(236,226,202,.3);
+  --code-bg:#120E07;
+  --code-ink:#E4DAC2;
+  --code-key:#D6AD5F;
+  --code-str:#A9BE95;
+  --code-com:rgba(228,218,194,.42);
+  --warn-bg:#2E2413;
+  --shadow-soft:0 1px 2px rgba(0,0,0,.32), 0 14px 34px -16px rgba(0,0,0,.55);
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .seg button[aria-pressed="true"]{ color:#1B160D; }
+
+*{ box-sizing:border-box; }
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Mulish', system-ui, -apple-system, sans-serif;
+  font-size:17px;
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,.serif{ font-family:'Playfair Display', Georgia, serif; }
+code,pre,.mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+
+/* ---------- shell ---------- */
+.shell{ display:grid; grid-template-columns:278px minmax(0,1fr); }
+@media (max-width:960px){ .shell{ grid-template-columns:minmax(0,1fr); } }
+
+.sidebar{
+  position:sticky; top:0; height:100vh; overflow-y:auto;
+  background:var(--paper-2); border-right:1px solid var(--line);
+  padding:2rem 1.2rem 3rem 1.6rem;
+}
+@media (max-width:960px){
+  .sidebar{ position:static; height:auto; border-right:none; border-bottom:1px solid var(--line); padding:1.4rem 1.4rem 1.6rem; }
+}
+.brand{ font-family:'Playfair Display',serif; font-weight:700; font-size:1.18rem; line-height:1.2; margin:0 0 .15rem; }
+.brand em{ font-style:italic; color:var(--accent); }
+.brand-sub{ font-size:.66rem; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); font-weight:700; margin-bottom:1.5rem; }
+.navgroup{ font-size:.62rem; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); font-weight:800; margin:1.3rem 0 .4rem .5rem; }
+nav ol{ list-style:none; margin:0; padding:0; }
+nav a{
+  display:grid; grid-template-columns:1.6rem 1fr; gap:.5rem; align-items:baseline;
+  font-size:.84rem; line-height:1.35; color:var(--ink-soft); text-decoration:none;
+  padding:.35rem .5rem; border-radius:5px; border-left:2px solid transparent; transition:.14s;
+}
+nav a .n{ font-family:ui-monospace,monospace; font-size:.68rem; color:var(--ink-faint); }
+nav a:hover{ background:var(--paper-3); color:var(--ink); }
+nav a.active{ background:var(--paper); color:var(--accent-deep); border-left-color:var(--accent); font-weight:700; }
+nav a.active .n{ color:var(--accent); }
+nav a:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+.backlink{ display:inline-block; margin-top:1.8rem; font-size:.78rem; color:var(--accent-deep); text-decoration:none; border-bottom:1px solid var(--line-strong); padding-bottom:1px; }
+.backlink:hover{ border-bottom-color:var(--accent); }
+
+main{ padding:0 0 9rem; min-width:0; }
+.wrap{ max-width:50rem; margin:0 auto; padding:0 2rem; }
+@media (max-width:560px){ .wrap{ padding:0 1.15rem; } }
+
+/* ---------- masthead ---------- */
+.masthead{ padding:4.5rem 0 2.6rem; border-bottom:1px solid var(--line); }
+.eyebrow{ font-size:.68rem; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:800; margin:0 0 .9rem; }
+.masthead h1{ font-size:clamp(2.1rem,5.4vw,3.3rem); line-height:1.05; letter-spacing:-.015em; margin:0 0 1rem; font-weight:700; text-wrap:balance; }
+.masthead h1 em{ font-style:italic; color:var(--accent-deep); }
+.lede{ font-size:1.12rem; color:var(--ink-soft); margin:0 0 1.5rem; max-width:40rem; }
+.kvrow{ display:flex; flex-wrap:wrap; gap:.45rem; }
+
+/* ---------- sections ---------- */
+section{ padding-top:3.6rem; scroll-margin-top:1rem; }
+h2.chnum{ font-family:'Mulish',sans-serif; font-size:.68rem; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:800; margin:0 0 .5rem; }
+h3.title{ font-size:clamp(1.5rem,3.6vw,2.1rem); line-height:1.15; letter-spacing:-.012em; margin:0 0 1.1rem; font-weight:700; text-wrap:balance; }
+h3.title em{ font-style:italic; color:var(--accent-deep); }
+h4{ font-family:'Playfair Display',serif; font-size:1.2rem; font-weight:700; margin:2.1rem 0 .55rem; }
+p{ margin:0 0 1rem; }
+ul,ol.body{ margin:0 0 1.1rem; padding-left:1.35rem; }
+li{ margin-bottom:.45rem; }
+strong{ font-weight:800; }
+em{ font-style:italic; }
+a.link{ color:var(--accent-deep); text-decoration:underline; text-underline-offset:2px; }
+hr.soft{ border:none; border-top:1px solid var(--line); margin:2.2rem 0; }
+
+code:not(pre code){
+  font-size:.84em; background:var(--paper-2); color:var(--ink);
+  padding:.1em .35em; border-radius:3px; border:1px solid var(--line);
+}
+pre{
+  background:var(--code-bg); color:var(--code-ink); border-radius:8px;
+  padding:1rem 1.1rem; overflow-x:auto; font-size:.79rem; line-height:1.62;
+  margin:0 0 1.2rem;
+}
+pre code{ background:none; border:none; padding:0; white-space:pre; color:inherit; font-size:inherit; }
+.c-k{ color:var(--code-key); } .c-s{ color:var(--code-str); } .c-c{ color:var(--code-com); font-style:italic; }
+
+.chip{
+  display:inline-flex; align-items:center; gap:.3rem;
+  font-family:ui-monospace,monospace; font-size:.66rem; letter-spacing:.02em;
+  background:var(--paper-3); border:1px solid var(--line-strong); color:var(--ink-soft);
+  padding:.2rem .55rem; border-radius:999px; white-space:nowrap;
+}
+.chip b{ color:var(--accent-deep); font-weight:700; }
+
+.stackbar{
+  display:flex; flex-wrap:wrap; gap:.4rem; padding:.7rem .9rem; margin:0 0 1.3rem;
+  background:var(--paper-3); border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:0 6px 6px 0;
+}
+.stackbar .lbl{ width:100%; font-size:.6rem; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); font-weight:800; margin-bottom:.1rem; }
+
+.callout{ border-radius:0 7px 7px 0; padding:.95rem 1.1rem; margin:0 0 1.3rem; font-size:.97rem; border:1px solid var(--line); border-left-width:3px; background:var(--paper-3); }
+.callout .ctitle{ font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; font-weight:800; margin-bottom:.4rem; }
+.callout p:last-child{ margin-bottom:0; }
+.callout.field{ border-left-color:var(--accent-deep); background:var(--warn-bg); }
+.callout.field .ctitle{ color:var(--accent-deep); }
+.callout.key{ border-left-color:var(--accent); }
+.callout.key .ctitle{ color:var(--accent); }
+
+.tablewrap{ overflow-x:auto; margin:0 0 1.3rem; border:1px solid var(--line); border-radius:7px; background:var(--paper-3); }
+table{ border-collapse:collapse; width:100%; font-size:.86rem; }
+th,td{ text-align:left; padding:.55rem .8rem; border-bottom:1px solid var(--line); vertical-align:top; }
+th{ font-weight:800; font-size:.63rem; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); background:var(--paper-2); white-space:nowrap; }
+tr:last-child td{ border-bottom:none; }
+td.mono,th.mono{ font-family:ui-monospace,monospace; font-size:.79rem; }
+.num{ font-variant-numeric:tabular-nums; }
+
+figure{ margin:0 0 1.5rem; }
+figure svg{ display:block; width:100%; height:auto; }
+figcaption{ font-size:.79rem; color:var(--ink-faint); margin-top:.6rem; line-height:1.5; }
+
+/* ---------- labs ---------- */
+.lab{ border:1px solid var(--line-strong); border-radius:9px; background:var(--paper-3); padding:1.1rem; margin:0 0 1.4rem; box-shadow:var(--shadow-soft); }
+.lab-head{ display:flex; align-items:baseline; justify-content:space-between; gap:.8rem; flex-wrap:wrap; margin-bottom:.25rem; }
+.lab-title{ font-family:'Playfair Display',serif; font-weight:700; font-size:1.02rem; }
+.lab-kind{ font-family:ui-monospace,monospace; font-size:.58rem; letter-spacing:.14em; text-transform:uppercase; color:var(--accent-deep); border:1px solid var(--accent); padding:.12rem .4rem; border-radius:3px; }
+.lab-sub{ font-size:.83rem; color:var(--ink-soft); margin:0 0 .9rem; line-height:1.55; }
+
+.ctrl{ display:flex; align-items:center; gap:.6rem; margin-bottom:.55rem; font-size:.8rem; flex-wrap:wrap; }
+.ctrl label{ color:var(--ink-soft); min-width:6.5rem; font-weight:600; }
+.ctrl input[type=range]{ flex:1; min-width:8rem; accent-color:var(--accent); }
+.ctrl .val{ font-family:ui-monospace,monospace; font-size:.76rem; color:var(--accent-deep); min-width:2.9rem; text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
+
+.readout{ display:grid; grid-template-columns:repeat(auto-fit,minmax(6.4rem,1fr)); gap:.55rem; margin-top:.85rem; }
+.stat{ background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:.5rem .65rem; }
+.stat .sl{ display:block; font-size:.58rem; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); font-weight:800; margin-bottom:.15rem; }
+.stat .sv{ font-family:ui-monospace,monospace; font-size:1.02rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.stat .sv.hi{ color:var(--accent-deep); }
+
+.vecstage{ touch-action:none; cursor:grab; user-select:none; background:var(--paper); border-radius:7px; border:1px solid var(--line); }
+.vecstage:active{ cursor:grabbing; }
+
+.chunkout{ display:flex; flex-direction:column; gap:.45rem; max-height:21rem; overflow-y:auto; margin-top:.85rem; padding-right:.2rem; }
+.chunk{ border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:0 5px 5px 0; background:var(--paper); padding:.5rem .7rem; font-family:ui-monospace,monospace; font-size:.71rem; line-height:1.55; color:var(--ink-soft); white-space:pre-wrap; word-break:break-word; }
+.chunk .chead{ display:flex; justify-content:space-between; gap:.6rem; font-size:.58rem; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:.3rem; font-weight:700; }
+
+.seg{ display:flex; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; margin-bottom:.8rem; }
+.seg button{ flex:1; font-family:'Mulish',sans-serif; font-size:.79rem; font-weight:600; padding:.45rem .55rem; background:var(--paper); color:var(--ink-soft); border:none; cursor:pointer; border-right:1px solid var(--line); }
+.seg button:last-child{ border-right:none; }
+.seg button[aria-pressed="true"]{ background:var(--accent); color:var(--paper); }
+
+.qa{ border:1px solid var(--line); border-radius:7px; background:var(--paper-3); margin-bottom:.5rem; overflow:hidden; }
+.qa summary{ cursor:pointer; padding:.75rem .95rem; font-family:'Playfair Display',serif; font-weight:700; font-size:1rem; list-style:none; display:flex; gap:.6rem; align-items:baseline; }
+.qa summary::-webkit-details-marker{ display:none; }
+.qa summary::before{ content:"▸"; color:var(--accent); font-size:.75rem; transition:transform .15s; }
+.qa[open] summary::before{ transform:rotate(90deg); }
+.qa summary:hover{ background:var(--paper-2); }
+.qa .ans{ padding:.75rem .95rem .9rem 2.15rem; font-size:.95rem; color:var(--ink-soft); border-top:1px solid var(--line); }
+.qa .ans p:last-child{ margin-bottom:0; }
+
+.refs{ font-size:.86rem; }
+.refs li{ margin-bottom:.5rem; color:var(--ink-soft); }
+.refs a{ color:var(--accent-deep); }
+</style>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">How <em>Adiyan</em> Works</div>
+    <div class="brand-sub">Vector search &amp; RAG</div>
+    <nav id="nav" aria-label="Chapters">
+      <div class="navgroup">Foundations</div>
+      <ol>
+        <li><a href="#ch1"><span class="n">01</span><span>Why RAG exists</span></a></li>
+        <li><a href="#ch2"><span class="n">02</span><span>What a dimension is</span></a></li>
+        <li><a href="#ch3"><span class="n">03</span><span>Measuring closeness</span></a></li>
+        <li><a href="#ch4"><span class="n">04</span><span>What a vector database is</span></a></li>
+        <li><a href="#ch5"><span class="n">05</span><span>How it searches fast</span></a></li>
+      </ol>
+      <div class="navgroup">The pipeline</div>
+      <ol>
+        <li><a href="#ch6"><span class="n">06</span><span>Chunking</span></a></li>
+        <li><a href="#ch7"><span class="n">07</span><span>Ingestion</span></a></li>
+        <li><a href="#ch8"><span class="n">08</span><span>Retrieval</span></a></li>
+        <li><a href="#ch9"><span class="n">09</span><span>Generation</span></a></li>
+      </ol>
+      <div class="navgroup">Going further</div>
+      <ol>
+        <li><a href="#ch10"><span class="n">10</span><span>Beyond naive RAG</span></a></li>
+        <li><a href="#ch11"><span class="n">11</span><span>Evaluation</span></a></li>
+      </ol>
+      <div class="navgroup">Capstone</div>
+      <ol>
+        <li><a href="#ch12"><span class="n">12</span><span>Adiyan, end to end</span></a></li>
+        <li><a href="#ch13"><span class="n">13</span><span>Incidents &amp; fixes</span></a></li>
+        <li><a href="#ch14"><span class="n">14</span><span>Interview drill</span></a></li>
+        <li><a href="#refs"><span class="n">—</span><span>References</span></a></li>
+      </ol>
+    </nav>
+    <a class="backlink" href="index.html">← Back to Adiyan</a>
+    <button class="backlink" id="themebtn" type="button"
+            style="display:block;background:none;border:none;padding:0;margin-top:.5rem;cursor:pointer;font-family:inherit;border-bottom:1px solid var(--line-strong);">
+      Toggle light / dark
+    </button>
+  </aside>
+
+  <main>
+    <div class="wrap">
+
+      <header class="masthead">
+        <p class="eyebrow">A ready reckoner</p>
+        <h1>How Adiyan <em>remembers</em>, and how retrieval actually works</h1>
+        <p class="lede">A zero-to-hero reference on vector databases and retrieval-augmented generation. It starts from what a number in a list means and builds, chapter by chapter, to the full architecture of a working system — grounded throughout in Adiyan's real stack, real parameters, and the real failures that shaped them.</p>
+        <div class="kvrow">
+          <span class="chip">Qdrant <b>1.19.0</b></span>
+          <span class="chip">LlamaIndex <b>0.14.23</b></span>
+          <span class="chip">nomic-embed-text <b>768d</b></span>
+          <span class="chip">Docling <b>2.123.1</b></span>
+          <span class="chip">mem0ai <b>2.0.19</b></span>
+        </div>
+      </header>
+
+      <!-- ================= CH 1 ================= -->
+      <section id="ch1">
+        <h2 class="chnum">Chapter 01</h2>
+        <h3 class="title">Why RAG exists</h3>
+
+        <p>A language model is a fixed function. Its weights encode what it saw during training and nothing else. Three consequences follow, and retrieval-augmented generation exists because of all three at once.</p>
+
+        <ul>
+          <li><strong>It cannot know your data.</strong> Someone uploads a price list, a contract, a 300-page book. None of it was in any model's training set.</li>
+          <li><strong>It cannot know recent data.</strong> Weights freeze at a cutoff date. Retraining a model to add one document is absurd economics.</li>
+          <li><strong>It cannot cite.</strong> A model answering from its weights cannot tell you <em>which document</em> the answer came from. For anything auditable, that alone disqualifies it.</li>
+        </ul>
+
+        <h4>The two obvious alternatives, and why they lose</h4>
+
+        <p><strong>Fine-tuning</strong> bakes knowledge into weights. It is the wrong tool for facts: expensive, slow, requires retraining per update, offers no provenance, and is notoriously unreliable at making a model reproduce one exact string such as a reference number. Fine-tuning changes <em>behaviour and style</em> well. It teaches <em>facts</em> badly.</p>
+
+        <p><strong>Putting everything in the prompt</strong> works until it doesn't. Adiyan's knowledge base holds 1,601 chunks. At a modest 200 tokens each that is roughly 320,000 tokens per request, against a local model running a 16,000-token context window. Cost and latency scale with whatever you stuff in, and answer quality degrades well before the hard limit is reached.</p>
+
+        <div class="callout key">
+          <div class="ctitle">The bargain RAG strikes</div>
+          <p>Don't put the knowledge in the model, and don't put all of it in the prompt. Instead: <strong>index everything once, retrieve only the few relevant pieces at question time, and put just those in the prompt.</strong> Retrieval is a search problem. Generation is a language problem. RAG is the seam between them.</p>
+        </div>
+
+        <p>Every RAG system is the same seven steps. The rest of this document is each step, in order.</p>
+
+        <figure>
+          <svg viewBox="0 0 720 132" role="img" aria-label="Seven-stage RAG pipeline. Parse, chunk, embed and store form the offline indexing path. Embed query, search and generate form the per-question online path.">
+            <defs>
+              <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink)"/>
+              </marker>
+            </defs>
+            <g fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".45">
+              <line x1="128" y1="40" x2="158" y2="40" marker-end="url(#ar)"/>
+              <line x1="246" y1="40" x2="276" y2="40" marker-end="url(#ar)"/>
+              <line x1="364" y1="40" x2="394" y2="40" marker-end="url(#ar)"/>
+              <line x1="128" y1="104" x2="158" y2="104" marker-end="url(#ar)"/>
+              <line x1="246" y1="104" x2="276" y2="104" marker-end="url(#ar)"/>
+            </g>
+            <line x1="470" y1="55" x2="470" y2="92" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3" opacity=".35" marker-end="url(#ar)"/>
+            <g font-family="ui-monospace, monospace" font-size="10.5" text-anchor="middle">
+              <rect x="14" y="24" width="114" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="71" y="44" fill="var(--ink)">1 · parse</text>
+              <rect x="158" y="24" width="88" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="202" y="44" fill="var(--ink)">2 · chunk</text>
+              <rect x="276" y="24" width="88" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="320" y="44" fill="var(--ink)">3 · embed</text>
+              <rect x="394" y="24" width="152" height="32" rx="5" fill="var(--accent)" stroke="var(--accent-deep)"/>
+              <text x="470" y="44" fill="var(--paper)">4 · store (vector DB)</text>
+
+              <rect x="14" y="88" width="114" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="71" y="108" fill="var(--ink)">5 · embed query</text>
+              <rect x="158" y="88" width="88" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="202" y="108" fill="var(--ink)">6 · search</text>
+              <rect x="276" y="88" width="180" height="32" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="366" y="108" fill="var(--ink)">7 · generate w/ context</text>
+
+              <text x="14" y="16" fill="var(--ink-faint)" text-anchor="start" font-size="9" letter-spacing="1.2">OFFLINE — ONCE PER DOCUMENT</text>
+              <text x="14" y="80" fill="var(--ink-faint)" text-anchor="start" font-size="9" letter-spacing="1.2">ONLINE — ONCE PER QUESTION</text>
+            </g>
+          </svg>
+          <figcaption>In Adiyan the top row fires when a file is uploaded over WhatsApp; the bottom row runs on every incoming question.</figcaption>
+        </figure>
+      </section>
+
+      <!-- ================= CH 2 ================= -->
+      <section id="ch2">
+        <h2 class="chnum">Chapter 02</h2>
+        <h3 class="title">What a <em>dimension</em> is</h3>
+
+        <p>Everything in this document rests on one idea, so it is worth building it from nothing.</p>
+
+        <h4>Start with one number</h4>
+        <p>Suppose you want to describe a cup of coffee to a computer. You pick a property you can measure — temperature — and write down one number: <code>85</code>. That single number is <strong>one dimension</strong>. A dimension is just <em>one measured property</em>; one slot in a list.</p>
+
+        <p>One number is thin. Add a second property, volume in millilitres, and now you have two numbers: <code>[85, 250]</code>. Add sweetness on a scale of 0 to 10 and you have three: <code>[85, 250, 3]</code>.</p>
+
+        <p>That list of three numbers is a <strong>three-dimensional vector</strong>. Nothing more mysterious than that. <em>Dimension</em> is the word for "how many numbers are in the list", and each position in the list always means the same property.</p>
+
+        <div class="callout key">
+          <div class="ctitle">The one sentence to remember</div>
+          <p>A dimension is one property being measured. A vector is the list of those measurements. "768 dimensions" just means <strong>a list of 768 numbers, where each position means a consistent property</strong>.</p>
+        </div>
+
+        <h4>Why a list of numbers is useful: it becomes a position</h4>
+        <p>Two numbers can be drawn as a point on a page — the first is how far across, the second how far up. Three numbers place a point in a room: across, up, and how far back.</p>
+
+        <p>Once things are points, <strong>"similar" becomes "close together"</strong>. Two coffees measuring <code>[85, 250, 3]</code> and <code>[83, 255, 3]</code> sit almost on top of each other. A cold, huge, very sweet one at <code>[4, 900, 9]</code> sits far away. You have turned a judgement about similarity into arithmetic about distance — and arithmetic is something a computer can do a million times a second.</p>
+
+        <p>Beyond three numbers you can no longer picture it. That is a limitation of human visual imagination, not of the maths. The formula for distance between two points works identically for 3 numbers or 768; it just has more terms. Nobody visualises 768 dimensions. Everybody computes with them.</p>
+
+        <h4>A worked example, small enough to check by hand</h4>
+        <p>Imagine a tiny model that describes any word using exactly three properties, each scored 0 to 1:</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Word</th><th class="mono">d1 · animal-ness</th><th class="mono">d2 · food-ness</th><th class="mono">d3 · speed-ness</th></tr></thead>
+            <tbody>
+              <tr><td><strong>cheetah</strong></td><td class="mono num">0.90</td><td class="mono num">0.10</td><td class="mono num">0.95</td></tr>
+              <tr><td><strong>leopard</strong></td><td class="mono num">0.90</td><td class="mono num">0.10</td><td class="mono num">0.80</td></tr>
+              <tr><td><strong>pizza</strong></td><td class="mono num">0.00</td><td class="mono num">0.95</td><td class="mono num">0.05</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Now measure how aligned two of these lists are. Multiply them position by position, add the results, then divide by both lengths so that only <em>direction</em> counts (Chapter 3 explains why that division matters):</p>
+
+        <pre><code>cheetah · leopard = (0.90×0.90) + (0.10×0.10) + (0.95×0.80)
+                  = 0.81 + 0.01 + 0.76  =  1.58
+ ‖cheetah‖ = √(0.90² + 0.10² + 0.95²) = 1.312
+ ‖leopard‖ = √(0.90² + 0.10² + 0.80²) = 1.208
+
+ similarity = 1.58 / (1.312 × 1.208) = <span class="c-k">0.996</span>   ← nearly identical
+
+cheetah · pizza   = (0.90×0.00) + (0.10×0.95) + (0.95×0.05)
+                  = 0.00 + 0.095 + 0.0475 =  0.14
+ similarity = 0.14 / (1.312 × 0.951) = <span class="c-k">0.114</span>   ← barely related</code></pre>
+
+        <p>0.996 versus 0.114. The computer did not read anything or know what a cheetah is. It multiplied and divided nine numbers, and the answer matched human intuition — because the numbers were <em>assigned well</em>.</p>
+
+        <h4>The leap: the model invents the properties itself</h4>
+        <p>In the toy above, a human chose "animal-ness", "food-ness", "speed-ness". A real <strong>embedding model</strong> does that part itself. During training it learns which properties are worth measuring so that texts used in similar ways end up with similar numbers.</p>
+
+        <p>Two consequences of that, both important:</p>
+        <ul>
+          <li><strong>Nobody can say what dimension 412 means.</strong> The properties are learned, not designed. They do not correspond to words a human would use. Individually they are uninterpretable; collectively they position meaning very precisely.</li>
+          <li><strong>Similarity of meaning, not spelling.</strong> "What does the trip cost?" and "How much for the tour?" share almost no letters and land close together. "bank of the river" and "bank account" share a whole word and land far apart.</li>
+        </ul>
+
+        <hr class="soft">
+
+        <div class="stackbar">
+          <span class="lbl">The real model in Adiyan</span>
+          <span class="chip">nomic-embed-text</span>
+          <span class="chip">768 dimensions</span>
+          <span class="chip">8,192 token input limit</span>
+          <span class="chip">runs locally via Ollama</span>
+          <span class="chip">llama-index-embeddings-ollama <b>0.9.0</b></span>
+        </div>
+
+        <p>Adiyan uses <code>nomic-embed-text</code>. It takes any text up to 8,192 tokens and returns exactly 768 numbers — the same idea as the toy, with 768 learned properties instead of 3 hand-picked ones.</p>
+
+        <pre><code><span class="c-c"># mesh/memory/memory_index.py — the actual construction</span>
+<span class="c-k">from</span> llama_index.embeddings.ollama <span class="c-k">import</span> OllamaEmbedding
+
+self.embed_model = OllamaEmbedding(
+    model_name=<span class="c-s">'nomic-embed-text'</span>,
+    base_url=ollama_url,          <span class="c-c"># http://localhost:11434</span>
+)</code></pre>
+
+        <p>One object serves both halves of the system, and that is a hard requirement: <strong>the question and the documents must be embedded by the same model.</strong> Two different models produce two unrelated coordinate systems, and distances measured between them are meaningless.</p>
+
+        <h4>Two numbers worth being able to recite</h4>
+        <ul>
+          <li><strong>Storage per vector.</strong> 768 numbers × 4 bytes each (a float32) = <strong>3,072 bytes, about 3 KB</strong>. Adiyan's 1,601 chunks are therefore roughly 4.9 MB of raw vectors. A million chunks would be about 3 GB — the scale at which compression stops being optional.</li>
+          <li><strong>Why 768 and not more.</strong> More dimensions means more capacity to distinguish concepts, paid for in storage, memory and compute. 768 is a common middle. <code>nomic-embed-text</code> is additionally trained so its vectors can be truncated to 512, 256 or even 64 numbers with gradual rather than catastrophic quality loss. Adiyan uses all 768.</li>
+        </ul>
+
+        <div class="callout field">
+          <div class="ctitle">A trap worth anticipating</div>
+          <p>"Does the embedding model <em>understand</em> the text?" No. It is a learned compression of statistical patterns into geometry. It has no concept of truth, and will happily place a false statement directly beside the true one it contradicts. Chapter 13 has a measured case where exactly that happened.</p>
+        </div>
+      </section>
+
+      <!-- ================= CH 3 ================= -->
+      <section id="ch3">
+        <h2 class="chnum">Chapter 03</h2>
+        <h3 class="title">Measuring closeness</h3>
+
+        <p>Chapter 2 turned text into points. "Find relevant text" is now "find nearby points" — but near by which measure? Three candidates matter.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Measure</th><th>What it compares</th><th>Range</th><th>Affected by length?</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Cosine similarity</td><td>The angle between two vectors</td><td class="mono">−1 … 1</td><td><strong>No</strong></td></tr>
+              <tr><td class="mono">Dot product</td><td>Angle <em>and</em> magnitude together</td><td class="mono">unbounded</td><td>Yes</td></tr>
+              <tr><td class="mono">Euclidean (L2)</td><td>Straight-line distance</td><td class="mono">0 … ∞</td><td>Yes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Cosine similarity is the standard for text, and it is what every Adiyan collection uses. The reason is <strong>length-independence</strong>: a one-sentence answer and a three-paragraph answer on the same topic point in nearly the same direction but have very different magnitudes. Cosine throws the magnitude away and compares direction only — which is to say, meaning only.</p>
+
+        <pre><code><span class="c-c"># Read live from the running Qdrant instance</span>
+adiyan_knowledge_base       size=768  distance=Cosine  points=1601
+adiyan_book_pages           size=768  distance=Cosine  points=1306
+adiyan_conversation_memory  size=768  distance=Cosine  points=177
+adiyan_coaching_memory      size=768  distance=Cosine  points=68</code></pre>
+
+        <p>The formula, which you already used by hand in Chapter 2:</p>
+        <pre><code>cos(θ) = (a · b) / (‖a‖ ‖b‖)</code></pre>
+        <p>The numerator is the dot product; the denominator divides out both lengths. A corollary that catches people out: <strong>if vectors are already normalised to length 1, cosine similarity and dot product are the same number</strong> — and dot product is cheaper to compute. Some systems normalise at write time for exactly that reason.</p>
+
+        <div class="lab">
+          <div class="lab-head">
+            <span class="lab-title">Cosine versus Euclidean, by hand</span>
+            <span class="lab-kind">Drag me</span>
+          </div>
+          <p class="lab-sub">Drag either arrowhead. Pay attention to what happens when you change a vector's <em>length</em> without changing the <em>direction</em> it points: cosine similarity does not move, Euclidean distance does. That single behaviour is the whole reason text retrieval uses cosine.</p>
+          <svg id="vecsvg" class="vecstage" viewBox="0 0 400 260" role="img" aria-label="Interactive plot of two draggable vectors from a shared origin, showing the angle between them alongside cosine similarity, dot product and Euclidean distance.">
+            <g id="grid" stroke="var(--line)" stroke-width="1"></g>
+            <line x1="30" y1="230" x2="380" y2="230" stroke="var(--line-strong)" stroke-width="1.2"/>
+            <line x1="30" y1="230" x2="30" y2="18" stroke="var(--line-strong)" stroke-width="1.2"/>
+            <path id="arcpath" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+            <text id="arclabel" font-family="ui-monospace, monospace" font-size="11" fill="var(--accent-deep)"></text>
+            <line id="vA" x1="30" y1="230" x2="250" y2="90" stroke="var(--accent)" stroke-width="2.6"/>
+            <line id="vB" x1="30" y1="230" x2="300" y2="170" stroke="var(--ink)" stroke-width="2.6"/>
+            <circle id="hA" cx="250" cy="90" r="9" fill="var(--accent)" stroke="var(--paper)" stroke-width="2.5"/>
+            <circle id="hB" cx="300" cy="170" r="9" fill="var(--ink)" stroke="var(--paper)" stroke-width="2.5"/>
+            <text x="258" y="84" id="lA" font-family="ui-monospace, monospace" font-size="11" fill="var(--accent-deep)">A</text>
+            <text x="308" y="164" id="lB" font-family="ui-monospace, monospace" font-size="11" fill="var(--ink)">B</text>
+          </svg>
+          <div class="readout">
+            <div class="stat"><span class="sl">Cosine sim</span><span class="sv hi" id="o-cos">—</span></div>
+            <div class="stat"><span class="sl">Angle</span><span class="sv" id="o-ang">—</span></div>
+            <div class="stat"><span class="sl">Dot product</span><span class="sv" id="o-dot">—</span></div>
+            <div class="stat"><span class="sl">Euclidean</span><span class="sv" id="o-euc">—</span></div>
+          </div>
+        </div>
+
+        <div class="callout key">
+          <div class="ctitle">A score floor is a real design lever</div>
+          <p>A top-k search <em>always</em> returns k results when the collection isn't empty — including when nothing is actually relevant. Adiyan guards this with <code>SOURCE_MATCH_MIN_SCORE = 0.55</code>: if the best match scores below it, that counts as no match at all. This exists because of a real failure where a trip-planning question "matched" an unrelated book on habits, and the agent then reasoned confidently from it.</p>
+        </div>
+      </section>
+
+      <!-- ================= CH 4 ================= -->
+      <section id="ch4">
+        <h2 class="chnum">Chapter 04</h2>
+        <h3 class="title">What a <em>vector database</em> is</h3>
+
+        <p>You now have points and a way to measure closeness. A vector database is simply <strong>a database whose primary job is storing those points and answering the question "what is nearest to this?"</strong></p>
+
+        <p>The clearest way to understand it is against the database you already know.</p>
+
+        <h4>The fundamental difference: you query by example, not by value</h4>
+
+        <p>A relational database answers questions where <em>you already know what you are looking for</em>:</p>
+        <pre><code><span class="c-k">SELECT</span> * <span class="c-k">FROM</span> documents <span class="c-k">WHERE</span> title = <span class="c-s">'Refund Policy'</span>;
+<span class="c-k">SELECT</span> * <span class="c-k">FROM</span> orders   <span class="c-k">WHERE</span> total &gt; 500 <span class="c-k">AND</span> created_at &gt; <span class="c-s">'2026-01-01'</span>;</code></pre>
+
+        <p>Every one of those is an <strong>exact test</strong>: equal to, greater than, contains this substring. A row either passes or it doesn't. There is no notion of a row being <em>a bit</em> like your query — and critically, if the document is called "Cancellation Terms" rather than "Refund Policy", the first query returns nothing at all, even though it is exactly the document you wanted.</p>
+
+        <p>A vector database answers a different shape of question entirely:</p>
+        <pre><code><span class="c-c"># "Here is a point. Give me the 4 stored points closest to it."</span>
+client.query_points(
+    collection_name=<span class="c-s">'adiyan_knowledge_base'</span>,
+    query=[0.021, -0.118, 0.334, ...],   <span class="c-c"># 768 numbers: the question, embedded</span>
+    limit=4,
+)</code></pre>
+
+        <p>You do not tell it what to match. You hand it <em>an example</em> — the question itself, turned into a point — and it returns whatever is nearest, ranked, each with a score. "Cancellation Terms" comes back for a query about refunds because the two sit near each other in meaning-space, even with no shared words.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th></th><th>Relational (SQL)</th><th>Vector</th></tr></thead>
+            <tbody>
+              <tr><th>You supply</th><td>A condition</td><td>An example point</td></tr>
+              <tr><th>"Match" means</th><td>Passes the test, exactly</td><td>Is nearby, by degree</td></tr>
+              <tr><th>Result</th><td>Unordered set of rows</td><td>Ranked list + similarity score</td></tr>
+              <tr><th>Missing a synonym</th><td>Returns nothing</td><td>Still finds it</td></tr>
+              <tr><th>Typical index</th><td class="mono">B-tree</td><td class="mono">HNSW graph</td></tr>
+              <tr><th>Answer is</th><td>Exact</td><td>Approximate (tunable)</td></tr>
+              <tr><th>Asking for k results</th><td>Might return 0</td><td>Returns k, relevant or not</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>That last row is the one that bites newcomers, and it is why Chapter 3's score floor exists. SQL returning zero rows is informative — nothing matched. A vector search returning four results tells you nothing by itself, because it would have returned four results regardless. <strong>The scores, not the count, carry the information.</strong></p>
+
+        <h4>Qdrant's data model: three nouns</h4>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Term</th><th>Rough SQL analogue</th><th>What it actually is</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Collection</td><td>Table</td><td>A named set of vectors sharing one dimensionality and one distance metric. Adiyan has four.</td></tr>
+              <tr><td class="mono">Point</td><td>Row</td><td>One record: an id, a vector, and a payload.</td></tr>
+              <tr><td class="mono">Payload</td><td>The other columns</td><td>Arbitrary JSON attached to the point — and the most underrated of the three.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The payload is where Adiyan keeps <code>source_filename</code>, <code>chunk_index</code>, <code>visibility</code> and <code>owner_identity</code>. It is what makes <em>filtered</em> vector search possible, and therefore what makes access control possible at all.</p>
+
+        <h4>Actually querying it</h4>
+        <p>Two levels. Directly against the Qdrant client, with a filter:</p>
+
+        <pre><code><span class="c-k">from</span> qdrant_client <span class="c-k">import</span> QdrantClient
+<span class="c-k">from</span> qdrant_client.models <span class="c-k">import</span> Filter, FieldCondition, MatchValue
+
+client = QdrantClient(url=<span class="c-s">'http://localhost:6339'</span>)
+
+hits = client.query_points(
+    collection_name=<span class="c-s">'adiyan_knowledge_base'</span>,
+    query=question_vector,                 <span class="c-c"># 768 floats</span>
+    limit=4,
+    query_filter=Filter(must=[             <span class="c-c"># the SQL-like part</span>
+        FieldCondition(key=<span class="c-s">'visibility'</span>, match=MatchValue(value=<span class="c-s">'global'</span>))
+    ]),
+).points
+
+<span class="c-k">for</span> h <span class="c-k">in</span> hits:
+    print(h.score, h.payload[<span class="c-s">'source_filename'</span>])</code></pre>
+
+        <p>Or through LlamaIndex, which handles embedding the query string for you — this is what Adiyan actually calls:</p>
+
+        <pre><code><span class="c-c"># mesh/memory/memory_index.py</span>
+retriever = self.kb_index.as_retriever(similarity_top_k=4, filters=filters)
+nodes = retriever.retrieve(<span class="c-s">'what does the refund policy say'</span>)
+<span class="c-c"># the string is embedded, searched, and matching chunks returned — one call</span></code></pre>
+
+        <div class="callout key">
+          <div class="ctitle">Filtering happens <em>during</em> the search, not after</div>
+          <p>Naively you might retrieve the top 4 and then discard those the user isn't allowed to see — which can leave you with 2 results, or 0, while permitted matches sat just outside the cut. <strong>Qdrant pre-filters:</strong> the condition is applied while walking the index, so the 4 returned are 4 that already satisfy it. This is precisely what lets Adiyan use a payload filter as a genuine security boundary rather than a cosmetic one.</p>
+        </div>
+
+        <h4>Do you always need one?</h4>
+        <p>Honestly, no. With 1,601 vectors you could hold a NumPy array in memory and compare against all of them on every query. That is <strong>exact brute-force search</strong>: perfectly accurate, trivially simple, and fast enough at this scale.</p>
+
+        <p>You reach for a real vector database when you need some combination of: persistence across restarts, more vectors than fit comfortably in memory, concurrent writes while serving reads, payload filtering, and search that stays fast as the collection grows. That last one is Chapter 5.</p>
+
+        <p>Worth stating plainly for interviews: <strong>vector and relational databases are complementary, not rivals.</strong> Adiyan runs three stores at once — Qdrant for vectors, MongoDB for agent config and registered clients, SQLite for the raw-file index that maps a filename to bytes on disk. Postgres with the <code>pgvector</code> extension can also do both in one engine, which is a reasonable choice when you'd rather not run a second database.</p>
+      </section>
+
+      <!-- ================= CH 5 ================= -->
+      <section id="ch5">
+        <h2 class="chnum">Chapter 05</h2>
+        <h3 class="title">How it searches fast</h3>
+
+        <div class="stackbar">
+          <span class="lbl">In Adiyan</span>
+          <span class="chip">Qdrant server</span>
+          <span class="chip">qdrant-client <b>1.19.0</b></span>
+          <span class="chip">localhost:6339</span>
+          <span class="chip">HNSW defaults</span>
+        </div>
+
+        <p>Brute force is O(n): ten million vectors means ten million comparisons per question. Making that sublinear requires giving something up.</p>
+
+        <h4>The trade: approximate nearest neighbour</h4>
+        <p>Stop guaranteeing the <em>exact</em> nearest neighbours; accept the <em>almost certainly</em> nearest ones. The quality measure is <strong>recall</strong> — of the true top-k, what fraction did the index actually find. Production systems typically tune for 0.95–0.99 recall and take an orders-of-magnitude speedup in exchange.</p>
+
+        <h4>HNSW, the structure Qdrant uses</h4>
+        <p><strong>Hierarchical Navigable Small World</strong> graphs are the dominant approach. Think of an express train network layered over a local one:</p>
+
+        <figure>
+          <svg viewBox="0 0 660 260" role="img" aria-label="A three-layer HNSW graph. A sparse top layer routes the query across long distances, a middle layer refines, and the dense bottom layer containing every vector performs the final local search.">
+            <g font-family="ui-monospace, monospace" font-size="10" fill="var(--ink-faint)">
+              <text x="8" y="36">L2</text><text x="8" y="130">L1</text><text x="8" y="226">L0</text>
+              <text x="556" y="36">sparse · long hops</text>
+              <text x="536" y="248">every vector lives here</text>
+            </g>
+            <g stroke="var(--line-strong)" stroke-width="1">
+              <line x1="90" y1="32" x2="300" y2="32"/><line x1="300" y1="32" x2="500" y2="32"/>
+              <line x1="90" y1="126" x2="190" y2="126"/><line x1="190" y1="126" x2="300" y2="126"/>
+              <line x1="300" y1="126" x2="400" y2="126"/><line x1="400" y1="126" x2="500" y2="126"/>
+              <line x1="60" y1="222" x2="140" y2="222"/><line x1="140" y1="222" x2="215" y2="222"/>
+              <line x1="215" y1="222" x2="290" y2="222"/><line x1="290" y1="222" x2="365" y2="222"/>
+              <line x1="365" y1="222" x2="440" y2="222"/><line x1="440" y1="222" x2="515" y2="222"/>
+            </g>
+            <g stroke="var(--accent)" stroke-width="1.8" stroke-dasharray="4 3">
+              <line x1="90" y1="42" x2="300" y2="116"/>
+              <line x1="300" y1="136" x2="400" y2="212"/>
+            </g>
+            <g fill="var(--line-strong)">
+              <circle cx="60" cy="222" r="5"/><circle cx="140" cy="222" r="5"/><circle cx="215" cy="222" r="5"/>
+              <circle cx="290" cy="222" r="5"/><circle cx="365" cy="222" r="5"/><circle cx="440" cy="222" r="5"/>
+              <circle cx="515" cy="222" r="5"/><circle cx="190" cy="126" r="5"/><circle cx="500" cy="126" r="5"/>
+            </g>
+            <g fill="var(--accent)">
+              <circle cx="90" cy="32" r="6.5"/><circle cx="300" cy="32" r="6.5"/><circle cx="500" cy="32" r="6.5"/>
+              <circle cx="90" cy="126" r="6.5"/><circle cx="300" cy="126" r="6.5"/><circle cx="400" cy="126" r="6.5"/>
+              <circle cx="400" cy="222" r="7.5"/>
+            </g>
+            <g font-family="ui-monospace, monospace" font-size="10" fill="var(--accent-deep)">
+              <text x="96" y="21">enter here</text><text x="412" y="244">nearest</text>
+            </g>
+          </svg>
+          <figcaption>Search enters at the sparse top layer and hops greedily toward the query, dropping a layer each time it can get no closer. Long edges cover distance cheaply; the dense bottom layer holds every vector and does the precise final work. Cost grows roughly with the logarithm of collection size rather than linearly.</figcaption>
+        </figure>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Parameter</th><th>Qdrant default</th><th>Controls</th><th>Raising it</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">m</td><td class="mono">16</td><td>Max connections per node per layer — graph density</td><td>Better recall, more memory, slower build</td></tr>
+              <tr><td class="mono">ef_construct</td><td class="mono">100</td><td>Candidates considered while <em>building</em></td><td>Higher-quality graph, slower indexing</td></tr>
+              <tr><td class="mono">ef</td><td class="mono">—</td><td>Candidates considered while <em>searching</em></td><td>Better recall, slower queries — tunable per query, no rebuild</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Adiyan does not override these; its collections were created by LlamaIndex's <code>QdrantVectorStore</code> with Qdrant's defaults, which at 1,601 points is entirely sensible. Past roughly <code>m=64, ef_construct=512</code> the returns diminish sharply. If you need more recall in production, <code>ef</code> is the knob to reach for first — it costs latency per query but requires no reindexing.</p>
+      </section>
+
+      <!-- ================= CH 6 ================= -->
+      <section id="ch6">
+        <h2 class="chnum">Chapter 06</h2>
+        <h3 class="title">Chunking</h3>
+
+        <div class="stackbar">
+          <span class="lbl">In Adiyan</span>
+          <span class="chip">SentenceSplitter</span>
+          <span class="chip">chunk_size <b>800</b></span>
+          <span class="chip">chunk_overlap <b>100</b></span>
+          <span class="chip">MarkdownNodeParser for .md</span>
+        </div>
+
+        <p>You cannot embed a 300-page book as one vector. 768 numbers cannot represent 300 pages of distinct meaning; averaging it all together yields a point that is near nothing in particular. So documents get split into <strong>chunks</strong>, each embedded separately.</p>
+
+        <p>The chunk is both <em>the unit of retrieval</em> and <em>the unit of context</em>, and that dual role creates the central tension:</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Chunks too small</th><th>Chunks too large</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Sharp embeddings, but severed context — a pronoun loses its referent, a number loses its label. The model receives fragments it cannot use.</td>
+                <td>Each embedding becomes a blurry average of several topics. Relevant passages turn unfindable, because the vector represents everything and therefore nothing.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>The strategies</h4>
+        <ul>
+          <li><strong>Fixed-size</strong> — split every N characters. Trivial and fast; cuts mid-sentence.</li>
+          <li><strong>Sentence / recursive</strong> — respect sentence and paragraph boundaries, packing up to a size cap. The benchmark-validated default, and what Adiyan uses.</li>
+          <li><strong>Structural</strong> — split on the document's own markup: markdown headings, HTML sections. Excellent <em>when that structure is genuine</em>.</li>
+          <li><strong>Semantic</strong> — embed sentences, cut where consecutive similarity drops. Better recall in several benchmarks, but roughly 14× slower to index and prone to producing tiny fragments unless a minimum size is enforced.</li>
+        </ul>
+
+        <p><strong>Overlap</strong> repeats the tail of one chunk at the head of the next, so a fact straddling a boundary survives intact somewhere. Adiyan carries 100 characters on an 800-character chunk — 12.5%. An honest caveat from 2026 benchmark work: overlap is not universally beneficial, and at least one systematic analysis found no measurable gain in its setup while indexing cost rose.</p>
+
+        <div class="lab">
+          <div class="lab-head">
+            <span class="lab-title">Chunking playground</span>
+            <span class="lab-kind">Live</span>
+          </div>
+          <p class="lab-sub">This reproduces the failure that drove Adiyan's markdown fix. The sample below has five unrelated <code>##</code> sections. With heading-blind splitting at a large chunk size, several merge into one chunk — and that chunk's embedding gets diluted across all of them. Toggle the strategy and watch the "topics in largest chunk" figure. <em>(A JavaScript approximation of SentenceSplitter, for illustration.)</em></p>
+
+          <div class="seg" role="group" aria-label="Chunking strategy">
+            <button id="s-sent" type="button" aria-pressed="true">Sentence (heading-blind)</button>
+            <button id="s-md" type="button" aria-pressed="false">Markdown-aware</button>
+          </div>
+
+          <div class="ctrl">
+            <label for="r-size">chunk_size</label>
+            <input type="range" id="r-size" min="200" max="3000" step="50" value="800">
+            <span class="val" id="v-size">800</span>
+          </div>
+          <div class="ctrl">
+            <label for="r-ov">chunk_overlap</label>
+            <input type="range" id="r-ov" min="0" max="400" step="10" value="100">
+            <span class="val" id="v-ov">100</span>
+          </div>
+
+          <div class="readout">
+            <div class="stat"><span class="sl">Chunks</span><span class="sv hi" id="o-n">—</span></div>
+            <div class="stat"><span class="sl">Avg chars</span><span class="sv" id="o-avg">—</span></div>
+            <div class="stat"><span class="sl">Topics in largest</span><span class="sv" id="o-mix">—</span></div>
+          </div>
+
+          <div class="chunkout" id="chunks" aria-live="polite"></div>
+        </div>
+
+        <div class="callout field">
+          <div class="ctitle">Measured in production</div>
+          <p>Query: <em>"what port does Qdrant run on"</em>. The answer sat verbatim in the indexed text, yet the chunk scored <strong>0.496</strong> — below the 0.55 floor, so it was thrown away as "no match". The cause: heading-blind splitting had merged five unrelated <code>##</code> sections into one roughly 3,000-character chunk, averaging the embedding across all of them. Isolating just the relevant section and re-embedding it alone measured <strong>0.665</strong> for the identical query.</p>
+          <p>The fix was structural rather than a threshold tweak: route genuine <code>.md</code> files through <code>MarkdownNodeParser</code> so each section becomes its own node — then still pass every node through <code>SentenceSplitter</code>, because <code>MarkdownNodeParser</code> enforces no size cap of its own and one long section would reintroduce the same dilution.</p>
+        </div>
+
+        <pre><code><span class="c-c"># mesh/memory/memory_index.py — the two-stage split</span>
+<span class="c-k">def</span> _split_text(self, markdown: str, safe_name: str) -> List[str]:
+    <span class="c-k">if not</span> safe_name.lower().endswith((<span class="c-s">'.md'</span>, <span class="c-s">'.markdown'</span>)):
+        <span class="c-k">return</span> self._splitter.split_text(markdown)
+
+    nodes = self._markdown_splitter.get_nodes_from_documents([Document(text=markdown)])
+    chunks = []
+    <span class="c-k">for</span> node <span class="c-k">in</span> nodes:
+        chunks.extend(self._splitter.split_text(node.get_content()))  <span class="c-c"># size cap still applies</span>
+    <span class="c-k">return</span> chunks</code></pre>
+
+        <p>The file-extension check is a deliberate judgement: Docling-converted PDFs also emit markdown headings, but those come from extraction heuristics rather than an author's real structure, so they are <em>not</em> trusted as split points. Only genuinely authored markdown takes the structural path.</p>
+      </section>
+
+      <!-- ================= CH 7 ================= -->
+      <section id="ch7">
+        <h2 class="chnum">Chapter 07</h2>
+        <h3 class="title">Ingestion</h3>
+
+        <div class="stackbar">
+          <span class="lbl">In Adiyan</span>
+          <span class="chip">Docling <b>2.123.1</b></span>
+          <span class="chip">python-pptx</span>
+          <span class="chip">Docling OCR fallback</span>
+          <span class="chip">SQLite raw-file index</span>
+        </div>
+
+        <p>Before anything can be chunked it must become text. That is <strong>parsing</strong>, and it is where most real systems quietly lose data.</p>
+
+        <p>Adiyan uses <strong>Docling</strong> as its general parser — PDFs, images and office formats in, markdown out. One format gets special handling, for a measured reason.</p>
+
+        <h4>The slide-deck path</h4>
+        <p>Docling's PowerPoint backend does not OCR pictures embedded in slides. For decks exported from design tools — where essentially every slide <em>is</em> one big picture — that means extracting nothing at all. So Adiyan runs a two-tier strategy per slide:</p>
+        <ol class="body">
+          <li>Walk the shape tree with <code>python-pptx</code>, recursing into groups, collecting text frames and table cells.</li>
+          <li>If a slide yielded no text, pull out its pictures and run each through Docling as a standalone image to OCR it.</li>
+          <li>If that still yields nothing, log a warning naming the slide — deliberately not silent, so anyone investigating a poor analysis can discover which slide was dropped.</li>
+        </ol>
+
+        <div class="callout field">
+          <div class="ctitle">The general lesson</div>
+          <p>Parse failures are the most dangerous class of RAG bug because they are <em>silent</em>. An empty extraction raises no error — it just produces a smaller index, and later, a confident answer built on whatever else happened to be nearby. Instrument extraction, and treat "zero text from a non-empty file" as an event worth logging loudly.</p>
+        </div>
+
+        <h4>The write path</h4>
+        <p>Once text exists, ingestion is mechanical. Note the delete-before-insert: LlamaIndex's <code>insert()</code> only adds, so re-uploading a document without deleting first leaves stale chunks alongside the new ones with colliding <code>chunk_index</code> values.</p>
+
+        <pre><code><span class="c-c"># mesh/memory/memory_index.py — ingest_document(), condensed</span>
+<span class="c-c"># 1. clear any existing chunks for this exact key (re-upload safety)</span>
+self._qdrant_client.delete(
+    collection_name=KB_COLLECTION_NAME,
+    points_selector=Filter(must=[FieldCondition(
+        key=<span class="c-s">'source_filename'</span>, match=MatchValue(value=source_key))]),
+)
+
+<span class="c-c"># 2. chunk, then insert one LlamaIndex Document per chunk</span>
+chunks = self._split_text(markdown, safe_name)
+<span class="c-k">for</span> i, chunk <span class="c-k">in</span> enumerate(chunks):
+    self.kb_index.insert(Document(
+        text=chunk,
+        metadata={
+            <span class="c-s">'source_filename'</span>: source_key,     <span class="c-c"># "&lt;username&gt;/&lt;filename&gt;"</span>
+            <span class="c-s">'chunk_index'</span>: i,                  <span class="c-c"># ordering, for reconstruction</span>
+            <span class="c-s">'ingested_at'</span>: timestamp,
+            <span class="c-s">'owner_identity'</span>: owner_identity,  <span class="c-c"># access control</span>
+            <span class="c-s">'visibility'</span>: visibility,          <span class="c-c"># 'private' | 'global'</span>
+        },
+    ))</code></pre>
+
+        <p>That single <code>insert()</code> is doing three things: embedding the chunk via the configured model, generating a point id, and upserting vector plus payload into Qdrant.</p>
+
+        <h4>Metadata is a design decision, not bookkeeping</h4>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Field</th><th>What it makes possible later</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">source_filename</td><td>Citation; scoping a search to one document; delete-before-reinsert</td></tr>
+              <tr><td class="mono">chunk_index</td><td>Reassembling a document's full text in the right order</td></tr>
+              <tr><td class="mono">owner_identity</td><td>Per-requester access filtering</td></tr>
+              <tr><td class="mono">visibility</td><td>Public and private documents coexisting in one collection</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Adiyan additionally keeps the <strong>original bytes on disk</strong> plus a SQLite index row. Vectors can answer "what does it say"; they cannot answer "send me that file back". Different jobs, different storage.</p>
+      </section>
+
+      <!-- ================= CH 8 ================= -->
+      <section id="ch8">
+        <h2 class="chnum">Chapter 08</h2>
+        <h3 class="title">Retrieval</h3>
+
+        <div class="stackbar">
+          <span class="lbl">In Adiyan</span>
+          <span class="chip">KB top_k <b>4</b></span>
+          <span class="chip">in-document top_k <b>5</b></span>
+          <span class="chip">score floor <b>0.55</b></span>
+          <span class="chip">MetadataFilters (pre-filter)</span>
+        </div>
+
+        <p>Retrieval is: embed the question with the same model, ask the index for the k nearest points, return their text. All the engineering lives in the qualifiers.</p>
+
+        <h4>Choosing k</h4>
+        <p>Adiyan uses <code>KB_DEFAULT_TOP_K = 4</code> across the whole knowledge base and <code>DOC_SEARCH_DEFAULT_TOP_K = 5</code> once the search is already narrowed to a single document. The asymmetry is deliberate: with the space already constrained to one document, extra candidates cost little and raise the odds the right passage is included. Too low and the answer may never reach the prompt; too high and you pay tokens while diluting it with noise.</p>
+
+        <h4>Filtering as an access boundary</h4>
+        <p>This is the most interesting retrieval code in Adiyan. One shared collection holds documents belonging to different people; the filter is what keeps them apart.</p>
+
+        <pre><code><span class="c-c"># mesh/memory/memory_index.py</span>
+<span class="c-k">def</span> _scope_filters(requester_id: Optional[str]) -> MetadataFilters:
+    <span class="c-k">return</span> MetadataFilters(
+        condition=FilterCondition.OR,
+        filters=[
+            MetadataFilter(key=<span class="c-s">'visibility'</span>, value=<span class="c-s">'global'</span>,
+                           operator=FilterOperator.EQ),
+            MetadataFilter(key=<span class="c-s">'owner_identity'</span>, value=requester_id <span class="c-k">or</span> <span class="c-s">''</span>,
+                           operator=FilterOperator.EQ),
+        ],
+    )
+
+<span class="c-k">def</span> retrieve_knowledge_base(self, query, top_k=KB_DEFAULT_TOP_K,
+                            requester_id=<span class="c-k">None</span>, is_owner=<span class="c-k">False</span>):
+    filters = <span class="c-k">None if</span> is_owner <span class="c-k">else</span> _scope_filters(requester_id)
+    retriever = self.kb_index.as_retriever(similarity_top_k=top_k, filters=filters)
+    <span class="c-k">return</span> [n.node.get_content() <span class="c-k">for</span> n <span class="c-k">in</span> retriever.retrieve(query)]</code></pre>
+
+        <p>Read as policy: <em>a chunk is visible if it is marked global, or if you own it — unless you are the owner, who bypasses filtering entirely.</em> Because Qdrant pre-filters during traversal, the k results returned are k <em>permitted</em> results rather than k results subsequently censored.</p>
+
+        <div class="callout field">
+          <div class="ctitle">Why this exists</div>
+          <p>The original docstring for this function read <em>"Global, not scoped to any one contact."</em> That was accurate, and it was the bug. A live query retrieved a private identity document belonging to one person into a completely different requester's results. Retrieval was working perfectly — it had simply never been told a boundary existed. <strong>Retrieval quality and retrieval authorisation are separate problems, and vector search solves only the first.</strong></p>
+        </div>
+
+        <h4>Every read path needs the same rule</h4>
+        <p>A subtle point worth raising unprompted: filtering <em>search</em> is not enough. Adiyan also exposes "read this document by exact filename" and "send me the original file". If those paths skip the rule, knowing or guessing a filename defeats the entire boundary. So all six read paths — <code>retrieve_knowledge_base</code>, <code>search_within_document</code>, <code>find_source_document</code>, <code>get_document_text</code>, <code>get_document</code> and <code>list_documents</code> — take the same <code>requester_id</code> and <code>is_owner</code> pair.</p>
+      </section>
+
+      <!-- ================= CH 9 ================= -->
+      <section id="ch9">
+        <h2 class="chnum">Chapter 09</h2>
+        <h3 class="title">Generation</h3>
+
+        <p>Retrieval returns strings. Generation places them in a prompt alongside the question, with instructions constraining the model to use them. The entire game is <strong>grounding</strong>: the answer must derive from retrieved context, not from the model's own parametric memory.</p>
+
+        <p>Adiyan assembles context in a fixed three-part order, so the model always sees consistent structure regardless of which parts exist:</p>
+
+        <pre><code><span class="c-c"># mesh/orchestrator/skills/handle_message.py</span>
+context_blocks = [b <span class="c-k">for</span> b <span class="c-k">in</span> (memory_context, history) <span class="c-k">if</span> b]
+<span class="c-k">if</span> context_blocks:
+    augmented_text = <span class="c-s">'\n\n'</span>.join(context_blocks) + f<span class="c-s">'\n\nNew message: {text}'</span>
+<span class="c-k">else</span>:
+    augmented_text = text</code></pre>
+
+        <p>Three sources with three different lifetimes: <strong>long-term facts</strong> (semantic, from mem0), <strong>recent turns</strong> (an in-process rolling window, relevance-filtered), and <strong>the message itself</strong>.</p>
+
+        <h4>The instruction doing the work</h4>
+        <pre><code>Write a short, natural WhatsApp reply based only on what is in this
+result - do not invent anything not present in it.</code></pre>
+
+        <p>And the reasoning agent carries a <strong>strict grounding</strong> flag which, when enabled, appends:</p>
+        <pre><code>...only tool-verified evidence counts as a basis for an answer.
+Never state a specific real-world detail (an event, date, price,
+availability) unless a tool actually returned it.</code></pre>
+
+        <div class="callout field">
+          <div class="ctitle">The signature RAG failure: confidently wrong</div>
+          <p>The dangerous outcome is never "I don't know" — it is a fluent, plausible answer built on retrieved context that was <em>irrelevant</em>. Adiyan hit this twice: a trip question answered from an unrelated book, and a slide deck "analysed" from an empty extraction. Both produced confident prose. What actually helped: a similarity floor to reject weak matches, an explicit instruction that a real-but-irrelevant finding is not an answer, and code-enforced rules that certain tool outputs (a bare list of filenames) can never be treated as evidence.</p>
+        </div>
+
+        <h4>Context rot</h4>
+        <p>More context is not monotonically better. Research through 2026 identifies a quality cliff — one analysis places it near 2,500 tokens — beyond which extra retrieved material degrades answers rather than improving them. That is the counter-argument to "just raise k".</p>
+      </section>
+
+      <!-- ================= CH 10 ================= -->
+      <section id="ch10">
+        <h2 class="chnum">Chapter 10</h2>
+        <h3 class="title">Beyond naive RAG</h3>
+
+        <p>Everything so far is "naive RAG": embed, search once, generate. Four upgrades matter. Adiyan implements two.</p>
+
+        <h4>1 · Hybrid search <span class="chip">not in Adiyan</span></h4>
+        <p>Dense vectors are weak on exact tokens — product codes, part numbers, surnames. Sparse lexical retrieval (BM25) is excellent at precisely that and weak at paraphrase. Hybrid runs both and fuses the rankings, usually with Reciprocal Rank Fusion. Qdrant supports sparse vectors natively. This is the most defensible "what would you add next" answer for Adiyan.</p>
+
+        <h4>2 · Re-ranking <span class="chip">a variant, in Adiyan</span></h4>
+        <p>Retrieve a wide net, then re-score each candidate with a slower but more accurate model — typically a cross-encoder, which reads query and document <em>together</em> instead of comparing pre-computed vectors — and keep the best few.</p>
+        <p>Adiyan has no cross-encoder, but it does re-rank, on a different axis: <strong>recency</strong>. Conversation memory over-fetches and reweights by age before truncating.</p>
+
+        <pre><code><span class="c-c"># mesh/memory/mem0_backend.py</span>
+RECENCY_HALF_LIFE_DAYS = 14.0
+
+<span class="c-k">def</span> _recency_weight(timestamp_str: str) -> float:
+    age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+    <span class="c-k">return</span> 0.5 ** (max(age_days, 0) / RECENCY_HALF_LIFE_DAYS)
+
+<span class="c-c"># over-fetch 3x, then: final score = similarity × recency_weight</span>
+result = memory.search(query, filters={<span class="c-s">'user_id'</span>: contact_name},
+                       top_k=max(top_k * 3, 10))</code></pre>
+
+        <div class="callout field">
+          <div class="ctitle">Why recency re-ranking was necessary — measured</div>
+          <p>A user corrected a stated preference: <em>"actually my favourite colour is crimson, not teal."</em> The memory store recorded the correction as a <em>new</em> memory without deleting the old one. Against the query "what is my favourite colour", pure cosine ranked the <strong>stale</strong> fact above the correction — <strong>0.781 versus 0.725</strong> — because the shorter original sentence embeds closer to a short query than the longer correcting sentence does. Naive top-1 retrieval returns the wrong answer with total confidence. Multiplying by a 14-day half-life fixes the ordering without requiring the store to delete anything.</p>
+        </div>
+
+        <h4>3 · Query transformation <span class="chip">not in Adiyan</span></h4>
+        <p>Rewrite the question before embedding it: resolve pronouns, split multi-part questions, or generate a hypothetical answer and embed <em>that</em> instead (HyDE), on the theory that answers embed closer to answers than questions do.</p>
+
+        <h4>4 · Agentic RAG <span class="chip">core of Adiyan</span></h4>
+        <p>Naive RAG retrieves exactly once, before generating. Agentic RAG lets a reasoning loop decide <em>whether</em> to retrieve, <em>what</em> to retrieve, and whether to retrieve <em>again</em> after seeing results. Adiyan's Analysis Agent is a ReAct loop capped at 10 steps, with these tools:</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Tool</th><th>Backed by</th><th>Returns</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">search_documents</td><td class="mono">find_source_document</td><td>One filename (top-1, score-gated)</td></tr>
+              <tr><td class="mono">read_document</td><td class="mono">get_document_text</td><td>Full reassembled text</td></tr>
+              <tr><td class="mono">search_within_document</td><td class="mono">search_within_document</td><td>Ranked passages + chunk_index + score</td></tr>
+              <tr><td class="mono">list_documents</td><td class="mono">SQLite index</td><td>Filenames only</td></tr>
+              <tr><td class="mono">recall_memory</td><td class="mono">mem0</td><td>Conversation facts</td></tr>
+              <tr><td class="mono">finish</td><td>—</td><td>Terminates with the answer</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The cost is real. One pricing question in testing consumed eight sequential local-model calls across roughly two minutes, and wandered through an irrelevant memory lookup before finding the right document on its second search. Agentic RAG buys multi-hop capability and pays in latency and variance.</p>
+
+        <h4>The scratchpad pattern</h4>
+        <p>A naive agent loop appends every tool result to a growing conversation and eventually overflows its context window. Adiyan instead maintains a typed <strong>scratchpad</strong> — <code>findings</code>, <code>documents_checked</code>, <code>open_questions</code> — and after each tool call runs a separate compaction step that folds the new observation into an <em>updated</em> scratchpad, discarding the raw text. The decide-step never sees raw history. That is what lets a 10-step investigation fit inside a 16k context window.</p>
+      </section>
+
+      <!-- ================= CH 11 ================= -->
+      <section id="ch11">
+        <h2 class="chnum">Chapter 11</h2>
+        <h3 class="title">Evaluation</h3>
+
+        <p>"It seems to work" is not an evaluation. RAG has two failure surfaces requiring separate measurement, because a perfect generator cannot rescue bad retrieval, and good retrieval does not guarantee a faithful answer.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Metric</th><th>Stage</th><th>Question it answers</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Context precision</td><td>Retrieval</td><td>Of what was retrieved, how much was actually relevant?</td></tr>
+              <tr><td class="mono">Context recall</td><td>Retrieval</td><td>Did retrieval find everything needed to answer?</td></tr>
+              <tr><td class="mono">Faithfulness</td><td>Generation</td><td>Is every claim in the answer supported by the context?</td></tr>
+              <tr><td class="mono">Answer relevancy</td><td>Generation</td><td>Does the answer actually address the question?</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>These four are the RAGAS core; the framework also aggregates them into a single mean and adds extensions such as noise sensitivity and response groundedness. <strong>Faithfulness is the hallucination metric</strong> — computed by decomposing the answer into atomic claims and checking each against the retrieved context.</p>
+
+        <p>Adiyan's own measurement has been case-based rather than framework-based: a fixed eval case with a recorded similarity score, re-measured after the chunking change — 0.496 to 0.665. That is a legitimate regression test for retrieval, and notably it caught a problem no amount of prompt tuning would have fixed.</p>
+
+        <div class="callout key">
+          <div class="ctitle">Diagnostic discipline</div>
+          <p>When a RAG answer is wrong, establish <em>which half</em> failed before changing anything. Inspect the retrieved chunks. If the right passage was never retrieved, the bug is in chunking, embedding, k or filters — changing the prompt cannot help. If the right passage <em>was</em> retrieved and the answer still went wrong, the bug is in generation. Adiyan keeps a central plain-text log of every prompt and response precisely so that distinction is answerable afterwards rather than by re-running and hoping.</p>
+        </div>
+      </section>
+
+      <!-- ================= CH 12 ================= -->
+      <section id="ch12">
+        <h2 class="chnum">Chapter 12 · Capstone</h2>
+        <h3 class="title">Adiyan, <em>end to end</em></h3>
+
+        <p>Adiyan is a mesh of agents behind a WhatsApp interface. Its retrieval subsystem is not one pipeline but <strong>two distinct memory engines</strong> with different content, write paths and retrieval semantics — sharing one Qdrant instance and one embedding model.</p>
+
+        <figure>
+          <svg viewBox="0 0 700 430" role="img" aria-label="Adiyan's RAG architecture. WhatsApp messages arrive through an MCP server to the Orchestrator, which routes either to Memory Agent for a single-shot knowledge-base search or to Analysis Agent's ReAct loop. Both read from Qdrant collections embedded by a local Ollama model.">
+            <defs>
+              <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink)"/>
+              </marker>
+            </defs>
+            <g font-family="ui-monospace, monospace" font-size="10" text-anchor="middle">
+              <rect x="255" y="10" width="190" height="30" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="350" y="29" fill="var(--ink)">WhatsApp (OpenWA)</text>
+
+              <rect x="255" y="62" width="190" height="30" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="350" y="81" fill="var(--ink)">whatsapp MCP server</text>
+
+              <rect x="245" y="114" width="210" height="34" rx="5" fill="var(--accent)" stroke="var(--accent-deep)"/>
+              <text x="350" y="130" fill="var(--paper)">Orchestrator</text>
+              <text x="350" y="142" fill="var(--paper)" font-size="8.5">gate · route · humanize</text>
+
+              <rect x="40" y="184" width="200" height="46" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="140" y="202" fill="var(--ink)">Memory Agent</text>
+              <text x="140" y="215" fill="var(--ink-soft)" font-size="8.5">search_knowledge_base</text>
+              <text x="140" y="225" fill="var(--ink-soft)" font-size="8.5">naive RAG · one shot</text>
+
+              <rect x="300" y="184" width="200" height="46" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="400" y="202" fill="var(--ink)">Analysis Agent</text>
+              <text x="400" y="215" fill="var(--ink-soft)" font-size="8.5">ReAct loop · MAX_STEPS 10</text>
+              <text x="400" y="225" fill="var(--ink-soft)" font-size="8.5">agentic RAG · multi-hop</text>
+
+              <rect x="545" y="184" width="140" height="46" rx="5" fill="var(--paper-3)" stroke="var(--line-strong)"/>
+              <text x="615" y="202" fill="var(--ink)">Docling</text>
+              <text x="615" y="215" fill="var(--ink-soft)" font-size="8.5">parse → markdown</text>
+              <text x="615" y="225" fill="var(--ink-soft)" font-size="8.5">upload path</text>
+
+              <rect x="205" y="266" width="290" height="32" rx="5" fill="var(--paper-2)" stroke="var(--line-strong)"/>
+              <text x="350" y="286" fill="var(--ink)">OllamaEmbedding · nomic-embed-text · 768d</text>
+
+              <rect x="105" y="326" width="490" height="88" rx="6" fill="var(--accent)" stroke="var(--accent-deep)"/>
+              <text x="350" y="345" fill="var(--paper)">Qdrant · localhost:6339 · cosine</text>
+              <g font-size="9">
+                <rect x="120" y="356" width="150" height="46" rx="4" fill="var(--paper)" stroke="var(--line-strong)"/>
+                <text x="195" y="372" fill="var(--ink)">adiyan_knowledge_base</text>
+                <text x="195" y="384" fill="var(--ink-soft)">1,601 pts · LlamaIndex</text>
+                <text x="195" y="395" fill="var(--ink-soft)">chunked documents</text>
+
+                <rect x="280" y="356" width="140" height="46" rx="4" fill="var(--paper)" stroke="var(--line-strong)"/>
+                <text x="350" y="372" fill="var(--ink)">adiyan_book_pages</text>
+                <text x="350" y="384" fill="var(--ink-soft)">1,306 pts · by page_no</text>
+                <text x="350" y="395" fill="var(--ink-soft)">never searched</text>
+
+                <rect x="430" y="356" width="150" height="46" rx="4" fill="var(--paper)" stroke="var(--line-strong)"/>
+                <text x="505" y="372" fill="var(--ink)">…conversation_memory</text>
+                <text x="505" y="384" fill="var(--ink-soft)">177 pts · mem0ai</text>
+                <text x="505" y="395" fill="var(--ink-soft)">facts + recency rank</text>
+              </g>
+            </g>
+            <g fill="none" stroke="var(--ink)" stroke-width="1.1" opacity=".45">
+              <line x1="350" y1="40" x2="350" y2="60" marker-end="url(#ar2)"/>
+              <line x1="350" y1="92" x2="350" y2="112" marker-end="url(#ar2)"/>
+              <line x1="300" y1="148" x2="160" y2="182" marker-end="url(#ar2)"/>
+              <line x1="390" y1="148" x2="400" y2="182" marker-end="url(#ar2)"/>
+              <line x1="140" y1="230" x2="280" y2="264" marker-end="url(#ar2)"/>
+              <line x1="400" y1="230" x2="360" y2="264" marker-end="url(#ar2)"/>
+              <line x1="615" y1="230" x2="450" y2="266" marker-end="url(#ar2)"/>
+              <line x1="350" y1="298" x2="350" y2="324" marker-end="url(#ar2)"/>
+            </g>
+          </svg>
+          <figcaption>Two retrieval paths share one embedding model and one vector store. A classifier decides which path a message takes: a specific factual lookup goes to the single-shot search; anything it cannot classify falls back to the ReAct loop.</figcaption>
+        </figure>
+
+        <h4>The two engines, contrasted</h4>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th></th><th>Knowledge base</th><th>Conversation memory</th></tr></thead>
+            <tbody>
+              <tr><th>Library</th><td class="mono">llama-index 0.14.23</td><td class="mono">mem0ai 2.0.19</td></tr>
+              <tr><th>Collection</th><td class="mono">adiyan_knowledge_base</td><td class="mono">adiyan_conversation_memory</td></tr>
+              <tr><th>Content</th><td>Chunks of uploaded documents</td><td>Extracted atomic facts about a person</td></tr>
+              <tr><th>Write trigger</th><td>A file upload over WhatsApp</td><td>Every routed conversation turn</td></tr>
+              <tr><th>Write process</th><td>Parse → chunk → embed → upsert</td><td>LLM extracts facts → add/merge against existing</td></tr>
+              <tr><th>Ranking</th><td>Cosine, 0.55 floor on top-1</td><td>Cosine × 14-day recency half-life</td></tr>
+              <tr><th>Scoped by</th><td class="mono">owner_identity / visibility</td><td class="mono">user_id</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The distinction is the architecturally interesting part: a knowledge base is <em>append-and-retrieve</em>, whereas a memory needs <em>consolidation</em> — deciding whether a new statement adds a fact, updates one, or contradicts one. Adiyan deliberately did not hand-roll the second; it delegated to mem0 and then compensated for that library's known non-deletion behaviour with recency re-ranking.</p>
+
+        <h4>Full stack inventory</h4>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Layer</th><th>Component</th><th>Version / configuration</th></tr></thead>
+            <tbody>
+              <tr><td>Vector store</td><td class="mono">Qdrant</td><td class="mono">client 1.19.0 · :6339 · cosine · 768d</td></tr>
+              <tr><td>Index / orchestration</td><td class="mono">llama-index-core</td><td class="mono">0.14.23</td></tr>
+              <tr><td>Store adapter</td><td class="mono">llama-index-vector-stores-qdrant</td><td class="mono">0.10.3</td></tr>
+              <tr><td>Embeddings</td><td class="mono">llama-index-embeddings-ollama</td><td class="mono">0.9.0 · nomic-embed-text</td></tr>
+              <tr><td>Chunking</td><td class="mono">SentenceSplitter / MarkdownNodeParser</td><td class="mono">800 / 100</td></tr>
+              <tr><td>Parsing</td><td class="mono">docling</td><td class="mono">2.123.1 (+ docling-core 2.92.0)</td></tr>
+              <tr><td>Slide extraction</td><td class="mono">python-pptx + Docling OCR</td><td class="mono">two-tier fallback</td></tr>
+              <tr><td>Conversation memory</td><td class="mono">mem0ai</td><td class="mono">2.0.19 · local · telemetry off</td></tr>
+              <tr><td>Inference</td><td class="mono">Ollama</td><td class="mono">0.6.2 · qwen3:8b-16k</td></tr>
+              <tr><td>Raw file index</td><td class="mono">SQLite</td><td class="mono">kb_documents table</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout key">
+          <div class="ctitle">Worth stating plainly</div>
+          <p>Every component runs locally. Embeddings, generation, vector store and memory extraction all execute on the machine — no embedding API, no hosted vector database, no data leaving the host. That is a deliberate constraint of the project, and it shapes the parameter choices throughout: a 768-dimension model rather than 3,072, an 8B generation model, HNSW defaults rather than a tuned high-recall configuration.</p>
+        </div>
+      </section>
+
+      <!-- ================= CH 13 ================= -->
+      <section id="ch13">
+        <h2 class="chnum">Chapter 13</h2>
+        <h3 class="title">Incidents &amp; fixes</h3>
+
+        <p>These are the parts worth telling as stories, because each names a general principle and carries a measured number.</p>
+
+        <h4>1 · Chunk dilution suppressed a fact that was present</h4>
+        <p><strong>Symptom:</strong> a fact sitting verbatim in the index scored 0.496 and was rejected by the 0.55 floor. <strong>Cause:</strong> heading-blind splitting merged five unrelated sections into one ~3,000-character chunk, averaging the embedding across all of them. <strong>Fix:</strong> markdown-structural splitting for authored files, re-measured at 0.665. <strong>Principle:</strong> when a present fact isn't retrieved, suspect chunk composition before touching thresholds.</p>
+
+        <h4>2 · Unscoped search leaked private data</h4>
+        <p><strong>Symptom:</strong> one person's private identity document surfaced in a different requester's results. <strong>Cause:</strong> retrieval had no notion of ownership; the collection was shared and unfiltered. <strong>Fix:</strong> <code>visibility</code> and <code>owner_identity</code> payload fields, an OR pre-filter on every read path, an owner bypass, and a migration tagging all 1,601 pre-existing chunks as owner-private. <strong>Principle:</strong> multi-tenant vector search needs a filter as a security boundary, applied to <em>every</em> read path rather than just the search one.</p>
+
+        <h4>3 · A stale fact outranked its own correction</h4>
+        <p><strong>Symptom:</strong> a corrected preference lost to the statement it superseded, 0.725 against 0.781. <strong>Cause:</strong> the memory store keeps corrections as new entries without deleting originals, and short original sentences embed closer to short queries. <strong>Fix:</strong> over-fetch threefold and multiply similarity by an exponential recency weight. <strong>Principle:</strong> pure similarity has no concept of time or truth. Anything mutable needs a temporal signal in the ranking.</p>
+
+        <h4>4 · Silent extraction produced fabricated analysis</h4>
+        <p><strong>Symptom:</strong> a slide deck was confidently "analysed" from nothing. <strong>Cause:</strong> the PowerPoint parser does not OCR embedded images, so image-only slides extracted zero text with no error raised. <strong>Fix:</strong> per-slide two-tier extraction with explicit warning logs on total failure. <strong>Principle:</strong> a parse returning empty is not a no-op — it is a corrupted index that fails later, elsewhere, as confident prose.</p>
+
+        <h4>5 · A permission gap silently disabled retrieval for every client</h4>
+        <p><strong>Symptom:</strong> a registered user's question produced no reply whatsoever. <strong>Cause:</strong> the default permission tier granted knowledge-base search but never the general-reasoning fallback, so every message routed there failed authorisation and was dropped silently. <strong>Fix:</strong> grant the missing capability. <strong>Principle:</strong> a retrieval subsystem is only as available as the authorisation layer in front of it, and silence is the worst possible error surface.</p>
+      </section>
+
+      <!-- ================= CH 14 ================= -->
+      <section id="ch14">
+        <h2 class="chnum">Chapter 14</h2>
+        <h3 class="title">Interview drill</h3>
+        <p class="lab-sub" style="margin-bottom:1.1rem">Answers compressed to what you would actually say out loud, each anchored to something real.</p>
+
+        <details class="qa"><summary>Walk me through what happens when a user asks a question.</summary>
+          <div class="ans"><p>The question is embedded with the same model used at index time — 768 dimensions, locally. That vector goes to Qdrant, which walks its HNSW graph for the nearest points by cosine similarity, applying a payload pre-filter so only chunks the requester may see are traversed. The top four come back as text, get assembled into a prompt alongside long-term memory and recent turns in a fixed order, and a local 8B model generates from that under an explicit instruction not to invent anything outside the provided context.</p></div>
+        </details>
+
+        <details class="qa"><summary>What actually is a dimension, in an embedding?</summary>
+          <div class="ans"><p>One measured property — one slot in a list of numbers. If I describe coffee as temperature, volume and sweetness, that's a three-dimensional vector. An embedding model does the same thing with 768 slots, except it <em>learns</em> which properties are worth measuring rather than having them chosen by a human. No single dimension is interpretable; collectively they position meaning, so texts used similarly end up close together.</p></div>
+        </details>
+
+        <details class="qa"><summary>How is a vector database different from a relational one?</summary>
+          <div class="ans"><p>You query by example rather than by condition. SQL asks "which rows satisfy this exact test" and a row either passes or doesn't — so a document called "Cancellation Terms" is invisible to a query for "Refund Policy". A vector database takes a point and returns the nearest stored points, ranked with scores, so semantically related things match without sharing words. The catch is that it always returns k results whether or not anything is relevant, which is why score thresholds matter. They're complementary — Adiyan runs Qdrant for vectors, Mongo for config and SQLite for the raw-file index.</p></div>
+        </details>
+
+        <details class="qa"><summary>Why cosine similarity rather than Euclidean distance?</summary>
+          <div class="ans"><p>Because magnitude carries no semantic signal for text. A one-line answer and a three-paragraph answer on the same topic point in nearly the same direction but have very different lengths — Euclidean calls them distant, cosine correctly calls them similar. Cosine compares direction only. And if vectors are unit-normalised, cosine and dot product are the same number, so some systems normalise at write time and use the cheaper one.</p></div>
+        </details>
+
+        <details class="qa"><summary>How did you choose chunk size?</summary>
+          <div class="ans"><p>800 characters with 100 of overlap, which sits in the band benchmarks support. The more useful answer is that size turned out not to be the real variable — <em>boundaries</em> were. A real query scored 0.496 against a chunk that contained the answer, because the splitter had merged five unrelated sections into one chunk and diluted the embedding. Splitting on headings first, then applying the size cap, took the same query to 0.665. I'd tune boundaries before size.</p></div>
+        </details>
+
+        <details class="qa"><summary>What is HNSW and what would you tune?</summary>
+          <div class="ans"><p>A multi-layer proximity graph. Upper layers are sparse with long edges for cheap coarse routing; the bottom layer holds every vector for the precise final search. Search descends layer by layer, greedily moving closer. Roughly logarithmic instead of linear. The knobs are <code>m</code> (edges per node, default 16), <code>ef_construct</code> (build-time breadth, default 100), and <code>ef</code> at query time — the one I'd reach for first, since it trades recall against latency per query without rebuilding the index.</p></div>
+        </details>
+
+        <details class="qa"><summary>How do you prevent one user retrieving another's documents?</summary>
+          <div class="ans"><p>Payload metadata plus a pre-filter. Each chunk carries an owner identity and a visibility flag. Every read applies an OR filter — visible if global, or if you own it — with an owner bypass. Qdrant pre-filters during traversal, so you get k permitted results rather than k results you then censor. The important detail is applying it to <em>every</em> read path, not just search: exact-filename reads and raw-file fetches too, otherwise knowing a filename defeats the boundary. We found this because an unscoped search surfaced a private identity document to the wrong requester.</p></div>
+        </details>
+
+        <details class="qa"><summary>Naive versus agentic RAG — which did you build?</summary>
+          <div class="ans"><p>Both, routed by a classifier. A specific factual lookup goes to a single-shot search — embed, retrieve four, generate. Anything that doesn't classify into a named skill falls through to a ReAct loop capped at 10 steps that can search, read a document, search within one, or recall conversation memory, deciding after each observation whether it has enough. The loop keeps a compacted typed scratchpad rather than a growing transcript, which is what lets a 10-step investigation fit in a 16k window. The cost is real — one question took eight sequential model calls and about two minutes.</p></div>
+        </details>
+
+        <details class="qa"><summary>Your RAG system gave a wrong answer. Debug it.</summary>
+          <div class="ans"><p>First establish which half failed, by inspecting the retrieved chunks. If the correct passage was never retrieved it's a retrieval bug — chunking, embedding, k, or filters — and no prompt change will fix it. If the correct passage <em>was</em> retrieved and the answer still went wrong, it's generation, and I'd look at the grounding instruction and context ordering. We log every prompt and response in plain text specifically so that distinction is answerable afterwards rather than by re-running and hoping.</p></div>
+        </details>
+
+        <details class="qa"><summary>What would you add next?</summary>
+          <div class="ans"><p>Hybrid search first. Dense vectors are weak on exact tokens like product codes, and BM25 is exactly strong there; Qdrant supports sparse vectors natively so the fusion is straightforward. Second, a cross-encoder re-ranker over a wider candidate set — we already over-fetch and re-rank on the memory side, so the pattern generalises. Third, RAGAS-style evaluation; right now retrieval quality is tracked with individual measured cases, which caught a real regression but doesn't generalise.</p></div>
+        </details>
+
+        <details class="qa"><summary>Why not just fine-tune?</summary>
+          <div class="ans"><p>Different tool for a different job. Fine-tuning shifts behaviour and style well; it's poor at making a model reliably reproduce a specific string, it needs retraining for every document change, and it gives no provenance. RAG gives all three — fresh data, exact recall, and citation — because the fact is retrieved at query time rather than compressed into weights.</p></div>
+        </details>
+      </section>
+
+      <!-- ================= REFS ================= -->
+      <section id="refs">
+        <h2 class="chnum">Appendix</h2>
+        <h3 class="title">References</h3>
+        <p>Fundamentals in Chapters 2–6 and 11 were checked against these sources. Everything in Chapters 7–10 and 12–13 comes from Adiyan's own source, verified against its live Qdrant instance and installed package versions.</p>
+        <ul class="refs">
+          <li><a class="link" href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5" target="_blank" rel="noopener">nomic-ai/nomic-embed-text-v1.5 — model card</a> · dimensions, Matryoshka truncation, 8192-token context</li>
+          <li><a class="link" href="https://www.nomic.ai/news/nomic-embed-matryoshka" target="_blank" rel="noopener">Nomic Embed Matryoshka</a> · variable-dimension embeddings</li>
+          <li><a class="link" href="https://qdrant.tech/course/essentials/day-2/what-is-hnsw/" target="_blank" rel="noopener">Qdrant — HNSW indexing fundamentals</a> · graph structure and traversal</li>
+          <li><a class="link" href="https://qdrant.tech/documentation/manage-data/indexing/" target="_blank" rel="noopener">Qdrant — indexing documentation</a> · <code>m</code> and <code>ef_construct</code> defaults</li>
+          <li><a class="link" href="https://oneuptime.com/blog/post/2026-08-28-tune-qdrant-hnsw-ef-m-exact-recall-latency/view" target="_blank" rel="noopener">Tuning Qdrant HNSW: ef, m, exact search</a> · recall and latency trade-offs</li>
+          <li><a class="link" href="https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/" target="_blank" rel="noopener">Ragas — available metrics</a> · the four core metrics and extensions</li>
+          <li><a class="link" href="https://www.confident-ai.com/blog/rag-evaluation-metrics-answer-relevancy-faithfulness-and-more" target="_blank" rel="noopener">RAG evaluation metrics — Confident AI</a> · faithfulness as claim decomposition</li>
+          <li><a class="link" href="https://www.premai.io/blog/rag-chunking-strategies-the-2026-benchmark-guide/" target="_blank" rel="noopener">RAG chunking strategies: the 2026 benchmark guide</a> · recursive baseline, semantic chunking cost</li>
+          <li><a class="link" href="https://www.firecrawl.dev/blog/best-chunking-strategies-rag" target="_blank" rel="noopener">Best chunking strategies for RAG (2026)</a> · strategy comparison</li>
+          <li><a class="link" href="https://docs.llamaindex.ai/en/stable/examples/embeddings/nomic/" target="_blank" rel="noopener">LlamaIndex — Nomic embedding integration</a></li>
+        </ul>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---------- theme: inherit the main site's choice ----------
+   Reads the same 'adiyan-deck-theme' key index.html writes, so a reader who
+   switched to dark there lands here in dark. Beige is the default on a first
+   visit regardless of OS setting - deliberately not prefers-color-scheme,
+   matching the main site's own rule. localStorage can throw in a private
+   window, so this never assumes the read succeeds. */
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem('adiyan-deck-theme'); } catch (e) {}
+  if (saved === 'dark' || saved === 'light') {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+  var btn = document.getElementById('themebtn');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('adiyan-deck-theme', next); } catch (e) {}
+  });
+})();
+
+/* ---------- scroll spy ---------- */
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var map = {};
+  links.forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) map[id] = a;
+  });
+  if (!('IntersectionObserver' in window)) return;
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (l) { l.classList.remove('active'); });
+      var a = map[e.target.id];
+      if (a) a.classList.add('active');
+    });
+  }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+  Object.keys(map).forEach(function (id) { obs.observe(document.getElementById(id)); });
+})();
+
+/* ---------- cosine / euclidean demo ---------- */
+(function () {
+  var svg = document.getElementById('vecsvg');
+  if (!svg) return;
+  var OX = 30, OY = 230;
+  var state = { A: { x: 250, y: 90 }, B: { x: 300, y: 170 } };
+  var dragging = null;
+
+  var g = '';
+  for (var x = 30; x <= 380; x += 35) g += '<line x1="' + x + '" y1="18" x2="' + x + '" y2="230" opacity=".5"/>';
+  for (var y = 230; y >= 18; y -= 35) g += '<line x1="30" y1="' + y + '" x2="380" y2="' + y + '" opacity=".5"/>';
+  document.getElementById('grid').innerHTML = g;
+
+  function comps(p) { return { x: p.x - OX, y: OY - p.y }; }
+
+  function render() {
+    document.getElementById('vA').setAttribute('x2', state.A.x);
+    document.getElementById('vA').setAttribute('y2', state.A.y);
+    document.getElementById('vB').setAttribute('x2', state.B.x);
+    document.getElementById('vB').setAttribute('y2', state.B.y);
+    document.getElementById('hA').setAttribute('cx', state.A.x);
+    document.getElementById('hA').setAttribute('cy', state.A.y);
+    document.getElementById('hB').setAttribute('cx', state.B.x);
+    document.getElementById('hB').setAttribute('cy', state.B.y);
+    document.getElementById('lA').setAttribute('x', state.A.x + 11);
+    document.getElementById('lA').setAttribute('y', state.A.y - 7);
+    document.getElementById('lB').setAttribute('x', state.B.x + 11);
+    document.getElementById('lB').setAttribute('y', state.B.y - 7);
+
+    var a = comps(state.A), b = comps(state.B);
+    var dot = a.x * b.x + a.y * b.y;
+    var na = Math.sqrt(a.x * a.x + a.y * a.y), nb = Math.sqrt(b.x * b.x + b.y * b.y);
+    var cos = (na && nb) ? dot / (na * nb) : 0;
+    cos = Math.max(-1, Math.min(1, cos));
+    var ang = Math.acos(cos) * 180 / Math.PI;
+    var euc = Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+
+    document.getElementById('o-cos').textContent = cos.toFixed(3);
+    document.getElementById('o-ang').textContent = ang.toFixed(1) + '°';
+    document.getElementById('o-dot').textContent = Math.round(dot).toLocaleString();
+    document.getElementById('o-euc').textContent = Math.round(euc);
+
+    var r = 42;
+    var angA = Math.atan2(a.y, a.x), angB = Math.atan2(b.y, b.x);
+    var x1 = OX + r * Math.cos(angA), y1 = OY - r * Math.sin(angA);
+    var x2 = OX + r * Math.cos(angB), y2 = OY - r * Math.sin(angB);
+    var sweep = ((angB - angA + Math.PI * 2) % (Math.PI * 2)) > Math.PI ? 1 : 0;
+    document.getElementById('arcpath').setAttribute('d',
+      'M ' + x1 + ' ' + y1 + ' A ' + r + ' ' + r + ' 0 0 ' + sweep + ' ' + x2 + ' ' + y2);
+    var mid = (angA + angB) / 2;
+    document.getElementById('arclabel').setAttribute('x', OX + (r + 13) * Math.cos(mid) - 8);
+    document.getElementById('arclabel').setAttribute('y', OY - (r + 13) * Math.sin(mid) + 4);
+    document.getElementById('arclabel').textContent = Math.round(ang) + '°';
+  }
+
+  function pt(evt) {
+    var rect = svg.getBoundingClientRect();
+    var t = evt.touches ? evt.touches[0] : evt;
+    return {
+      x: (t.clientX - rect.left) / rect.width * 400,
+      y: (t.clientY - rect.top) / rect.height * 260
+    };
+  }
+  function nearest(p) {
+    var dA = Math.sqrt(Math.pow(p.x - state.A.x, 2) + Math.pow(p.y - state.A.y, 2));
+    var dB = Math.sqrt(Math.pow(p.x - state.B.x, 2) + Math.pow(p.y - state.B.y, 2));
+    if (Math.min(dA, dB) > 34) return null;
+    return dA < dB ? 'A' : 'B';
+  }
+  function down(e) { var p = pt(e); dragging = nearest(p); if (dragging) e.preventDefault(); }
+  function move(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var p = pt(e);
+    state[dragging] = { x: Math.max(34, Math.min(388, p.x)), y: Math.max(14, Math.min(226, p.y)) };
+    render();
+  }
+  function up() { dragging = null; }
+
+  svg.addEventListener('mousedown', down);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  svg.addEventListener('touchstart', down, { passive: false });
+  window.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', up);
+  render();
+})();
+
+/* ---------- chunking playground ---------- */
+(function () {
+  var SAMPLE = [
+    "## Ollama",
+    "Ollama serves every local model in this deployment. It listens on port 11434 by default. Both the embedding model and the generation model are pulled through it. Restarting Ollama does not require restarting the agents.",
+    "## Qdrant",
+    "Qdrant is the vector store backing the knowledge base. It runs on port 6339 in this deployment, which is deliberately not the Qdrant default. Collections are created with cosine distance and 768 dimensions to match the embedding model.",
+    "## MongoDB",
+    "MongoDB holds agent configuration and the registered client table. It runs on the standard port 27017. The config SDK reads from it with a short TTL cache so dashboard edits take effect without a restart.",
+    "## Phoenix",
+    "Phoenix is the telemetry collector for tracing. It is optional; when unavailable the agents log a warning at startup and continue without tracing enabled.",
+    "## Notes",
+    "Every dependency above is expected to be reachable on localhost. A dependency that is briefly unreachable must degrade rather than crash the calling agent."
+  ].join("\n\n");
+
+  var mode = 'sent';
+  var els = {
+    size: document.getElementById('r-size'),
+    ov: document.getElementById('r-ov'),
+    vsize: document.getElementById('v-size'),
+    vov: document.getElementById('v-ov'),
+    out: document.getElementById('chunks'),
+    n: document.getElementById('o-n'),
+    avg: document.getElementById('o-avg'),
+    mix: document.getElementById('o-mix'),
+    bSent: document.getElementById('s-sent'),
+    bMd: document.getElementById('s-md')
+  };
+  if (!els.out) return;
+
+  function splitSentences(text) {
+    return text.split(/(?:(?<=[.!?])\s+)|(?:\n\n+)/).filter(function (s) { return s.trim().length; });
+  }
+
+  function pack(text, size, overlap) {
+    var sents = splitSentences(text);
+    var chunks = [], cur = '';
+    sents.forEach(function (s) {
+      s = s.trim();
+      if (!cur.length) { cur = s; return; }
+      if ((cur + ' ' + s).length <= size) { cur = cur + ' ' + s; return; }
+      chunks.push(cur);
+      if (overlap > 0 && cur.length > overlap) {
+        cur = cur.slice(cur.length - overlap).replace(/^\S*\s/, '') + ' ' + s;
+      } else { cur = s; }
+    });
+    if (cur.trim().length) chunks.push(cur);
+    return chunks;
+  }
+
+  function build() {
+    var size = parseInt(els.size.value, 10);
+    var ov = parseInt(els.ov.value, 10);
+    els.vsize.textContent = size;
+    els.vov.textContent = ov;
+
+    var chunks;
+    if (mode === 'md') {
+      chunks = [];
+      SAMPLE.split(/\n\n(?=## )/).forEach(function (sec) {
+        pack(sec, size, ov).forEach(function (c) { chunks.push(c); });
+      });
+    } else {
+      chunks = pack(SAMPLE, size, ov);
+    }
+
+    var total = chunks.reduce(function (a, c) { return a + c.length; }, 0);
+    var largest = chunks.reduce(function (a, c) { return c.length > a.length ? c : a; }, '');
+    var topics = (largest.match(/##\s/g) || []).length;
+
+    els.n.textContent = chunks.length;
+    els.avg.textContent = chunks.length ? Math.round(total / chunks.length) : 0;
+    els.mix.textContent = topics || 1;
+    els.mix.className = 'sv' + (topics > 1 ? '' : ' hi');
+
+    els.out.innerHTML = chunks.map(function (c, i) {
+      var heads = (c.match(/##\s+([A-Za-z]+)/g) || []).map(function (h) { return h.replace(/##\s+/, ''); });
+      var label = heads.length ? heads.join(' + ') : 'continuation';
+      var esc = c.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return '<div class="chunk"><div class="chead"><span>chunk ' + i + ' &middot; ' + label +
+        '</span><span>' + c.length + ' chars</span></div>' + esc + '</div>';
+    }).join('');
+  }
+
+  function setMode(m) {
+    mode = m;
+    els.bSent.setAttribute('aria-pressed', String(m === 'sent'));
+    els.bMd.setAttribute('aria-pressed', String(m === 'md'));
+    build();
+  }
+
+  els.size.addEventListener('input', build);
+  els.ov.addEventListener('input', build);
+  els.bSent.addEventListener('click', function () { setMode('sent'); });
+  els.bMd.addEventListener('click', function () { setMode('md'); });
+  build();
+})();
+</script>

@@ -641,6 +641,7 @@ h1,h2,h3{
     <a href="#s3">Dev Kit</a>
     <a href="#s4">Community</a>
     <a href="#s5">Install</a>
+    <a href="#s6">How it works</a>
   </nav>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">
     <svg class="icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -1003,6 +1004,34 @@ h1,h2,h3{
   <div style="margin-top:1.4rem;">
     <p class="cta-phrase">"Register me to make my life better"</p>
     <p class="prose" style="margin-top:.6rem;max-width:56ch;">The cloud centralizes AI. Adiyan distributes it. Not another AI SaaS - a different way to own one.</p>
+  </div>
+</section>
+
+<!-- 06 : HOW IT WORKS -->
+<section class="slide" id="s6">
+  <p class="eyebrow">Under the hood</p>
+  <h2 class="h2">How Adiyan <em>remembers.</em></h2>
+  <div class="grid-split">
+    <div>
+      <p class="prose">Upload a document and Adiyan can answer questions about it months later. That is retrieval-augmented generation, and it is the part of the system most worth understanding - because when it goes wrong, it goes wrong confidently.</p>
+      <p class="prose" style="margin-top:1rem;">The full reference starts from what a single number in a list means, builds through embeddings, distance, vector databases and chunking, and ends with Adiyan's own architecture - including the measured failures that shaped it.</p>
+      <p class="pull">Fourteen chapters, from zero knowledge to the real system.</p>
+      <p style="margin-top:1.5rem;">
+        <a href="how-adiyan-works.html" class="cta-phrase" style="text-decoration:none;border-bottom:2px solid var(--accent);padding-bottom:.15rem;">Read the full reference &rarr;</a>
+      </p>
+    </div>
+    <div class="download-steps">
+      <p><b>Foundations</b> - what a dimension actually is, why cosine and not Euclidean, what a vector database does that an RDBMS cannot, and how HNSW keeps it fast.</p>
+      <p><b>The pipeline</b> - chunking, ingestion, retrieval and generation, with the real parameters: 800-character chunks, 100 of overlap, top-4, a 0.55 similarity floor.</p>
+      <p><b>The capstone</b> - Adiyan's two memory engines side by side, the full stack inventory, and five production incidents with the numbers that diagnosed them.</p>
+      <div class="tag-row" style="margin-top:1.2rem;">
+        <span class="chip">Qdrant</span>
+        <span class="chip">LlamaIndex</span>
+        <span class="chip">nomic-embed-text</span>
+        <span class="chip">Docling</span>
+        <span class="chip">mem0</span>
+      </div>
+    </div>
   </div>
 </section>
 
