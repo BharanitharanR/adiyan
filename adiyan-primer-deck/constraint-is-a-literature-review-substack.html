@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Substack paste source — Constraint Is a Literature Review</title>
+<style>
+  body { max-width: 680px; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 19px;
+         line-height: 1.6; color: #1a1a1a; background: #fff; }
+  h1 { font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 1.05rem;
+       letter-spacing: .04em; text-transform: uppercase; color: #666; margin-bottom: .2rem; }
+  h2 { font-size: 1.8rem; margin-top: 2.4rem; }
+  h3 { font-size: 1.3rem; margin-top: 2rem; }
+  em.dek { display:block; font-style: italic; color:#555; font-size:1.05rem; margin: .6rem 0 2rem; }
+  blockquote { border-left: 3px solid #ccc; margin: 1.2rem 0; padding: .2rem 1.2rem;
+               color:#444; font-style: italic; }
+  pre { background:#f4f4f4; padding:1rem; overflow-x:auto; border-radius:4px;
+        font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; line-height:1.5; }
+  code { font-family: 'SF Mono', Consolas, monospace; font-size:.9em; background:#f4f4f4; padding:.1em .3em; border-radius:3px; }
+  pre code { background:none; padding:0; }
+  ol.map li, ul.map li { margin-bottom: .9rem; }
+  hr { border:none; border-top:1px solid #ddd; margin:2.4rem 0; }
+  .banner { background:#fffbe6; border:1px solid #f0d878; padding: .9rem 1.2rem; border-radius:6px;
+            font-family: -apple-system, Helvetica, Arial, sans-serif; font-size:.9rem; margin-bottom:2rem; }
+  .banner b { display:block; margin-bottom:.3rem; }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <b>How to use this file</b>
+  Open this in a browser tab, select all the content below the divider (click just above the H1, drag to the bottom), copy it, and paste directly into a new Substack post. Because you're copying rendered text rather than raw markdown, headers, bold, italics, and blockquotes carry over as real Substack formatting instead of showing literal <code>##</code> and <code>**</code> characters. The two code blocks will likely paste as plain monospace-ish text — reselect them in Substack afterward and apply its native Code Block from the “+” insert menu if you want syntax highlighting.
+</div>
+
+<hr>
+
+<h1>The Frugal AI Engineer — Issue #2</h1>
+<h2>Constraint Is a Literature Review</h2>
+<em class="dek">Five design decisions a laptop forced on me. Five papers that say they were right, and I read them after, not before.</em>
+
+<p>Earlier when I started this series, I argued that scarcity is a design method.</p>
+
+<p>Adiyan is an AI agent harness that, in keeping with its philosophy, runs locally and uses an open-weighted local LLM. It doesn't need users to bring any paid subscriptions for embedding. No paid vector DB. No BYO LLM key.</p>
+
+<p>Out of the box, it provides a generation model. It doesn't assume a bottomless context window. It's constrained to a max of 16,000 tokens of context.</p>
+
+<p>That constraint is what forced Adiyan to be engineered around every option available, to get the best out of what it had.</p>
+
+<p>So I went scouting for published papers addressing this exact problem: context window constraints coupled with a constrained RAG system. I found five prominent papers.</p>
+
+<p>Every one of those five decisions has a paper behind it, and in several cases the paper quantifies exactly how bad the alternative is.</p>
+
+<ol class="map">
+  <li><b>Typed scratchpad; raw observations discarded every step.</b> What forced it: 16k context died at step four. What the field calls it: <b>MEM1</b>, ICLR 2026 [1].</li>
+  <li><b>Filename lists merged by plain Python, never by a model.</b> What forced it: it fabricated findings from an empty list. What the field calls it: <b>Compaction as Epistemic Failure</b> [2].</li>
+  <li><b>Recency-weighted memory, 14-day half-life.</b> What forced it: corrections lost to the facts they replaced. What the field calls it: <b>MemStrata</b> [3].</li>
+  <li><b>Heading-aware splitting before the size cap.</b> What forced it: a fact in the index scored 0.496 and was discarded. What the field calls it: <b>heading-aware chunking</b> [4][5].</li>
+  <li><b>Visibility pre-filter inside the vector query, across six read paths.</b> What forced it: a private document surfaced in someone else's results. What the field calls it: <b>the relevance-authorization gap</b> [6].</li>
+</ol>
+
+<hr>
+
+<h3>1. Context-window-efficient loops</h3>
+
+<p>Adiyan's primary architecture, the Analysis Agent, is a ReAct-style agent.</p>
+
+<p>Initially I was accumulating history. Every observation from every previous step gets fed back into the next decision. On a 200k window you never notice a problem.</p>
+
+<p>But on 16k context, it clogs the window and forces the LLM into hallucination, to the point where it defeated the purpose of building the system at all.</p>
+
+<p>So I came up with a scratchpad solution: the loop never sees its own raw history. It carries one small typed structure instead:</p>
+
+<pre><code>class Scratchpad(BaseModel):
+    findings: List[Finding]        # claim + source + supporting quote
+    documents_checked: List[str]
+    documents_known: List[str]
+    open_questions: List[str]</code></pre>
+
+<p>After every tool call, a separate compaction step folds the new observation into an updated scratchpad. It's merged, not appended, and the raw text is thrown away. The input to each decision stays roughly constant no matter how many steps run.</p>
+
+<p>Later, when I was going through the literature, I found MEM1 [1] describing the same architecture:</p>
+
+<blockquote>"enables agents to operate with <b>constant memory</b> across long multi-turn tasks. At each turn, MEM1 updates a <b>compact shared internal state</b>... strategically discarding irrelevant or redundant information."</blockquote>
+
+<p>They report 3.5× the performance at 3.7× less memory. They also train the consolidation behaviour with reinforcement learning, which I do not, because I am running Ollama on a laptop.</p>
+
+<p>For me the constraint was different, but the direction I ended up taking was very similar.</p>
+
+<hr>
+
+<h3>2. Never ask a model what arithmetic can answer</h3>
+
+<p>The compaction step from Section 1 is an LLM call. One of my tools returns nothing but a list of filenames.</p>
+
+<p>Initially I was handing that to a model and asking it to "extract findings." And I started seeing something I didn't like. The model would generate confident, detailed summaries of documents that were never opened. Those findings then went into the scratchpad as evidence, and from that point on, every subsequent step treated them as if they were real.</p>
+
+<p>I tried to fix it with prompt instructions. It did not hold.</p>
+
+<p>So I changed the implementation. That tool's output is now merged by plain Python, because a list of filenames contains nothing an LLM could legitimately call a finding. There is no reasoning needed there. It is just a list.</p>
+
+<p>While looking into this, I found "Compaction as Epistemic Failure" [2], which describes how compressing session history can turn mere observations into things that look like confirmed results:</p>
+
+<blockquote>"compression of session history can transform ephemeral observations into <b>fabricated confirmations</b>... durable disinformation that later sessions treat as ground truth."</blockquote>
+
+<p>This was exactly the kind of thing I was seeing.</p>
+
+<p>For me, this was another example of using the LLM where it wasn't needed. If a plain deterministic function can do the job, why ask the model to do it? It's not only about latency or cost. Every additional LLM call is another place where the system can start making up something that was never there.</p>
+
+<hr>
+
+<h3>3. Memory has to know what time it is</h3>
+
+<p>I corrected a fact about myself over WhatsApp. Adiyan kept answering with the old value. Both statements were stored correctly, but when retrieval happened, the old one was ranked higher.</p>
+
+<pre><code>query:       "what is my favourite colour"
+stale fact:  "My favourite colour is teal."              0.781  &lt;- returned
+correction:  "Actually my favourite colour is crimson,
+              not teal."                                  0.725</code></pre>
+
+<p>Vector search ranks by what text is about. A fact and its correction are about the same thing, so the ranking is close. The vector search does not know that one statement came later and replaced the other.</p>
+
+<p>So I added time into the scoring. I multiply similarity by:</p>
+
+<p><code>0.5 ** (age_days / 14)</code></p>
+
+<p>Basically a 14-day half-life. The older the memory gets, the less weight it gets.</p>
+
+<p>On third-party benchmark data with real timestamps, that one line recovers 74 to 93% of the failures. And in my tests it never once promoted an irrelevant-but-recent memory just because it was recent.</p>
+
+<p>Then I found MemStrata [3], which was studying this problem in a much more formal way. They report:</p>
+
+<blockquote>"cosine similarity distinguishes a contradicted fact from a duplicated one with <b>AUROC 0.59 (near chance)</b>... RAG serves superseded values <b>15 to 40% of the time</b>."</blockquote>
+
+<p>Their solution is stronger than mine. They use a deterministic supersession ledger rather than a decay term, and they report LLM-reranking baselines at 16 to 18 seconds per retrieval, against roughly 2 seconds for a deterministic rule.</p>
+
+<p>So the approach I took is not the strongest possible approach, but it was a very cheap thing to add, and it addressed the problem I was seeing.</p>
+
+<hr>
+
+<h3>4. A similarity threshold is where you hide a chunking bug</h3>
+
+<p>A query in my evaluation set: "what port does Qdrant run on." The answer was in the indexed document. Verbatim. One line.</p>
+
+<p>Similarity: 0.496. It was below my relevance floor. So I discarded it as no match.</p>
+
+<p>I initially thought maybe the similarity threshold was too high. But then I looked at the chunk. My splitter had packed five unrelated <code>##</code> sections into one roughly 3,000-character block, so that chunk embedding was basically an average of five different topics. It was not really representing any of them properly.</p>
+
+<p>I isolated the relevant section and re-embedded it. The score became: 0.665.</p>
+
+<p>Same model. Same query. Same threshold. Only the chunking changed. That is a 34% jump just by cutting the document differently.</p>
+
+<p>The cheap fix would have been to lower the threshold to 0.45, but then I would have started accepting more junk as relevant. So instead I went back to the chunking: I split authored markdown on its actual heading boundaries first, then applied the size cap on top of that.</p>
+
+<p>Later I found a 2025 study on heading-aware chunking and hierarchical document structure [4] which was looking at exactly this kind of problem. Another domain evaluation of chunking strategies [5] found structure-aware chunking to be:</p>
+
+<blockquote>"the most critical discovery, consistently achieving the highest performance in top-K metrics across the overall corpus."</blockquote>
+
+<p>This one was interesting because initially it looked like a vector similarity problem. It wasn't. It was a chunking problem.</p>
+
+<hr>
+
+<h3>5. Retrieval does not know what a permission is</h3>
+
+<p>The one that actually mattered. A live query surfaced one person's private identity document into a different requester's results.</p>
+
+<p>Retrieval was working perfectly. It found a document which was relevant to the query, but it had no idea that the requester was not supposed to see it.</p>
+
+<p>The system was initially built for one user. Then it started becoming something which could have several users, and I had not carried that boundary into retrieval.</p>
+
+<p>So the fix was a visibility pre-filter inside the vector query itself, not retrieve everything and then filter the results. The permission needs to be part of the retrieval query.</p>
+
+<pre><code>MetadataFilters(condition=FilterCondition.OR, filters=[
+    MetadataFilter(key='visibility',     value='global',       operator=EQ),
+    MetadataFilter(key='owner_identity', value=requester_id,   operator=EQ),
+])</code></pre>
+
+<p>I applied this across six separate read paths, because that is how many paths I eventually found. And every pre-existing document was defaulted to owner-only rather than trusting what was already there.</p>
+
+<p>Later I found research on multitenant retrieval [6] which formalises this as the relevance-authorization gap. The problem is pretty straightforward: relevance tells you which document is useful, authorization tells you whether the requester is allowed to see it. Vector search can do the first one. It cannot magically do the second one. Their empirical number was the alarming part:</p>
+
+<blockquote>"ungated retrieval leaks cross-tenant data in <b>98 to 100% of probes</b>."</blockquote>
+
+<p>The same research also makes the case for pre-filtering instead of post-filtering, because filtering after retrieval can have side-channel problems and can also produce empty results after the relevant document has already been retrieved.</p>
+
+<p>This was something I arrived at by staring at a real bug report. I wasn't implementing a paper. I was trying to fix what happened in Adiyan.</p>
+
+<hr>
+
+<h3>What I actually take from this</h3>
+
+<p>Not that I should have published first. Three of these five were published before I built them, and I have written elsewhere about how that felt.</p>
+
+<p>What I find interesting is that the constraints themselves pushed me towards these decisions. I did not have a 200k context window, so I had to think about how to keep the working state small. I did not want to make an LLM call for things which plain code could do, so I started separating what actually needed reasoning from what didn't. I had real users coming through WhatsApp, so I found the access-control problem through an actual request.</p>
+
+<p>And when I later went looking through the literature, I found that these were not random problems I had invented. There were papers looking at the same problems, and in some cases measuring exactly what I had started seeing. That gives me some confidence in the direction I took. Not because the implementation is the same. It isn't. But the pressure created by the constraints seems to have pushed the architecture in a similar direction.</p>
+
+<p>The other thing I keep learning from this is probably more important: read the literature at the start, when it is cheap, not at the end, when it is expensive. Twenty minutes of searching in week one can save a lot of time in week ten. Somebody else has already done the experiment. Somebody else has already measured the failure. And sometimes you can use that work to decide what not to build.</p>
+
+<p>The literature is a free experiment somebody else already paid for.</p>
+
+<hr>
+
+<h3>See the whole thing</h3>
+
+<p>Every incident above is written up with the measurements that helped me understand what was actually happening, inside a zero-to-hero reference that starts from what a dimension actually is and ends at the full architecture. It has a draggable cosine-versus-Euclidean plot and a chunking playground preloaded with the exact document that produced the 0.496, so you can reproduce the dilution and then fix it.</p>
+
+<p><b>→ <a href="https://bharanitharanr.github.io/adiyan/how-adiyan-works.html">https://bharanitharanr.github.io/adiyan/how-adiyan-works.html</a></b></p>
+
+<p>Adiyan itself, one command to install, runs on your machine, talks over WhatsApp:</p>
+
+<p><b>→ <a href="https://bharanitharanr.github.io/adiyan/">https://bharanitharanr.github.io/adiyan/</a></b></p>
+
+<p>The staleness experiments are reproducible and fetch their own benchmark data:</p>
+
+<pre><code>python3 -m research.staleness.run_longmemeval</code></pre>
+
+<hr>
+
+<p><em>Bharanitharan Ragunathan is a Principal Backend Engineer at Oracle. Creator of Adiyan, a frugal AI agent harness, Banyan (a governance DSL compiler), and ForgeX (a metadata-driven microservice generator).</em></p>
+
+<hr>
+
+<h3>References</h3>
+
+<p>
+[1] Zhou, Z. et al. <em>MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents.</em> ICLR 2026. arXiv:2506.15841 — <a href="https://arxiv.org/abs/2506.15841">https://arxiv.org/abs/2506.15841</a><br><br>
+[2] <em>Compaction as Epistemic Failure: How Agentic LLM Tools Fabricate Confirmed Results from Killed Processes.</em> arXiv:2607.13071 — <a href="https://arxiv.org/abs/2607.13071">https://arxiv.org/abs/2607.13071</a><br><br>
+[3] Yadav, N. <em>Temporal Validity in Retrieval Memory: Eliminating Stale-Fact Errors for AI Agents over Evolving Knowledge.</em> arXiv:2606.26511 — <a href="https://arxiv.org/abs/2606.26511">https://arxiv.org/abs/2606.26511</a><br><br>
+[4] Tinh, P. D. et al. <em>Optimizing Context Retrieval for RAG via Heading-Aware Chunking and Hierarchical Document Structure Integration.</em> 2025.<br><br>
+[5] <em>Evaluating Chunking Strategies for Retrieval-Augmented Generation in Oil and Gas Enterprise Documents.</em> arXiv:2603.24556 — <a href="https://arxiv.org/abs/2603.24556">https://arxiv.org/abs/2603.24556</a><br><br>
+[6] <em>Securing the Agent: Vendor-Neutral, Multitenant Enterprise Retrieval and Tool Use.</em> arXiv:2605.05287 — <a href="https://arxiv.org/abs/2605.05287">https://arxiv.org/abs/2605.05287</a><br><br>
+[7] Yao, S. et al. <em>ReAct: Synergizing Reasoning and Acting in Language Models.</em> ICLR 2023. arXiv:2210.03629 — <a href="https://arxiv.org/abs/2210.03629">https://arxiv.org/abs/2210.03629</a>
+</p>
+
+</body>
+</html>
