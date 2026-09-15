@@ -12,56 +12,44 @@ running.
 """
 import asyncio
 import logging
-import threading
-import time
 from pathlib import Path
 
-from mesh.adiyan_reader import db
 from mesh.adiyan_reader.agent_executor import AdiyanReaderAgentExecutor
 from mesh.adiyan_reader.constants import AGENT_ID, HOST, PORT
-from mesh.adiyan_reader.skills import read_next_page
 from mesh.adiyan_reader.skills_catalog import get_skills
 from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
-from mesh.lib.errors import describe_exception
-from mesh.lib.paths import state_db_path, tasks_db_path
+from mesh.lib.paths import tasks_db_path
 from mesh.observability.tracing import setup_tracing
 
 logger = logging.getLogger('AdiyanReaderServer')
 
 AGENT_CODE_DIR = Path(__file__).parent
 
-# Same reasoning as mesh/scheduler/server.py's own CATCH_UP_RETRY_SECONDS: a
-# startup-only catch-up attempt that fails once (e.g. WhatsApp's session
-# hadn't reconnected yet at that exact moment) leaves the job stuck
-# permanently otherwise - find_overdue_reading_jobs() only runs again on the
-# next full process restart without this retry loop.
-CATCH_UP_RETRY_SECONDS = 5 * 60
-
-
-async def _catch_up_overdue_reading_jobs() -> None:
-    """See db.find_overdue_reading_jobs()'s own docstring - catches a
-    nightly page that mcp/cron_trigger's own misfire handling silently
-    dropped while this mesh was down. Best-effort per job: one failing job
-    must not block the others or stop this server from starting."""
-    conn = db.connect(state_db_path(AGENT_ID))
-    overdue = db.find_overdue_reading_jobs(conn)
-    for job in overdue:
-        try:
-            await read_next_page.run(reading_job_id=job['id'])
-            logger.info(f"Caught up overdue reading job {job['id']} ({job['source_filename']!r})")
-        except Exception as e:
-            logger.warning(f"Could not catch up overdue reading job {job['id']}, will retry: {e}")
-
-
-def _catch_up_retry_loop() -> None:
-    while True:
-        time.sleep(CATCH_UP_RETRY_SECONDS)
-        try:
-            asyncio.run(_catch_up_overdue_reading_jobs())
-        except Exception as e:
-            logger.warning(f'Catch-up retry pass failed: {describe_exception(e)}')
+# Startup catch-up of overdue reading jobs was REMOVED on 2026-09-15, on the
+# owner's own instruction, after it was confirmed live to be a message-storm
+# generator rather than a recovery mechanism.
+#
+# What it did: on every process start, find_overdue_reading_jobs() returned
+# every active job whose next reading was in the past, and each one was fired
+# immediately - then a background thread repeated that pass every 5 minutes.
+# What that meant in practice: a night of agent restarts (orchestrator,
+# analysis, memory and whatsapp_mcp were each restarted several times during
+# one debugging session) re-fired all seven then-active reading jobs on every
+# single boot, delivering bursts of book pages to four different real
+# recipients who had not asked for them. The mechanism could not tell "this
+# page was genuinely missed while the mesh was down" apart from "this process
+# just restarted again," because both look identical to it: a job whose
+# next_reading_at is in the past.
+#
+# Deliberately not replaced with a capped or time-windowed variant. A missed
+# nightly page is a page the reader simply gets the following night - the cost
+# of skipping one is a page's delay, while the cost of a wrong catch-up is
+# unsolicited messages to other people's phones. cron_trigger's own scheduled
+# fire remains the single path that sends a page; if it misses one, nothing
+# retroactively replays it, which is now the intended behaviour rather than a
+# gap to close.
 
 
 async def _load_startup_config() -> dict:
@@ -88,9 +76,6 @@ async def _load_startup_config() -> dict:
 
 if __name__ == '__main__':
     setup_tracing(AGENT_ID)
-
-    asyncio.run(_catch_up_overdue_reading_jobs())
-    threading.Thread(target=_catch_up_retry_loop, daemon=True).start()
 
     startup = asyncio.run(_load_startup_config())
 

@@ -23,13 +23,12 @@ from an async handler costs nothing measurable.
 
 No more _migrate()/_MIGRATIONS/ALTER TABLE - that machinery existed only
 to add a column (`last_delivered_at`) to pre-existing SQLite rows. Mongo is
-schemaless: an old document simply doesn't have the key, and
-find_overdue_reading_jobs() below reads it as `doc.get(...) or
-doc['created_at']` instead.
+schemaless: an old document simply doesn't have the key, and every reader
+of it uses `doc.get('last_delivered_at')` rather than indexing directly.
 """
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
@@ -125,39 +124,6 @@ def advance_page(conn: Database, job_id: str, new_page: int) -> None:
         {'_id': job_id},
         {'$set': {'current_page': new_page, 'last_delivered_at': datetime.now(timezone.utc).isoformat()}},
     )
-
-
-def find_overdue_reading_jobs(conn: Database, stale_after_hours: float = 30.0) -> List[Dict[str, Any]]:
-    """Every active job whose most recent real signal of life - the last
-    page actually delivered, or its own creation if it's never had a first
-    night yet - is older than stale_after_hours. Checked once at
-    AdiyanReader's own startup (see mesh/adiyan_reader/server.py), same
-    reasoning as mesh/scheduler/db.py's own find_overdue_jobs(): catches a
-    nightly fire that mcp/cron_trigger's own misfire handling silently
-    dropped while this mesh was down (see mcp/cron_trigger/server.py's
-    MISFIRE_GRACE_SECONDS docstring for the mechanism this compensates for
-    - that one only covers up to 6 hours of downtime, this catches
-    whatever slips past it).
-
-    30 hours, not 24 - a job re-registers itself for the next literal
-    midnight UTC after it fires (see read_next_page.py), not "24 hours
-    from last delivery," so the real gap between two consecutive on-time
-    deliveries already varies by several hours depending on what time of
-    day the job was first created. 30 hours gives that natural variance
-    room without also catching a job that's merely running a few hours
-    late tonight but not actually missed.
-
-    The COALESCE(last_delivered_at, created_at) SQLite did is a plain `or`
-    here - Mongo has no NULL-coalescing filter operator worth reaching for
-    over such a small candidate set, so this filters in Python rather than
-    an aggregation pipeline."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=stale_after_hours)).isoformat()
-    overdue = []
-    for doc in conn[JOBS_COLLECTION].find({'active': True}):
-        last_signal = doc.get('last_delivered_at') or doc['created_at']
-        if last_signal < cutoff:
-            overdue.append(_doc_to_job(doc))
-    return overdue
 
 
 def set_reading_job_voice(conn: Database, job_id: str, voice: str) -> None:

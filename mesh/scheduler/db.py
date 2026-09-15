@@ -156,21 +156,6 @@ def update_next_run(conn: Collection, job_id: str, next_run_at: str) -> None:
     conn.update_one({'_id': job_id}, {'$set': {'next_run_at': next_run_at}})
 
 
-def find_overdue_jobs(conn: Collection) -> List[Dict[str, Any]]:
-    """Every job whose next_run_at has already passed - checked once at
-    Scheduler Agent's own startup (see mesh/scheduler/server.py) to catch
-    anything cron_trigger's own misfire handling silently dropped while
-    this mesh was down (see mcp/cron_trigger/server.py's
-    MISFIRE_GRACE_SECONDS docstring for the mechanism). A recurring job's
-    own next-fire computation is always relative to 'now' at the moment it
-    fires, so catching up once here - not once per missed occurrence -
-    is enough to get it current again; this isn't a queue of backlogged
-    reminders to replay. next_run_at is an ISO-8601 UTC string, so a plain
-    lexicographic '$lt' comparison is also a chronological one."""
-    now = datetime.now(timezone.utc).isoformat()
-    return [_doc_to_job(doc) for doc in conn.find({'next_run_at': {'$lt': now}})]
-
-
 def delete_job(conn: Collection, job_id: str) -> None:
     """Only removes this agent's own domain document. The matching
     cron_trigger registration is a separate store entirely - callers must

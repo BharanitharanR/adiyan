@@ -19,59 +19,38 @@ being run standalone from its own directory.
 """
 import asyncio
 import logging
-import threading
-import time
 from pathlib import Path
 
 from mesh.lib import config_sdk
 from mesh.lib.bootstrap import serve
 from mesh.lib.card import adiyan_card
-from mesh.lib.errors import describe_exception
-from mesh.lib.paths import state_db_path, tasks_db_path
+from mesh.lib.paths import tasks_db_path
 from mesh.observability.tracing import setup_tracing
-from mesh.scheduler import db
 from mesh.scheduler.agent_executor import SchedulerAgentExecutor
 from mesh.scheduler.constants import AGENT_ID, HOST, PORT
-from mesh.scheduler.skills import run_routine
 from mesh.scheduler.skills_catalog import get_skills
 
 logger = logging.getLogger('SchedulerServer')
 
 AGENT_CODE_DIR = Path(__file__).parent
 
-# Confirmed live: a startup-only catch-up attempt that fails once (e.g.
-# WhatsApp's session hadn't reconnected yet at that exact moment) leaves the
-# job stuck permanently, with no error visible anywhere the user would
-# check - find_overdue_jobs() only ever runs again on the next full process
-# restart. Retrying periodically in the background is what actually
-# recovers once whatever was down comes back, without needing a restart.
-CATCH_UP_RETRY_SECONDS = 5 * 60
-
-
-async def _catch_up_overdue_jobs() -> None:
-    """See db.find_overdue_jobs()'s own docstring - catches anything
-    cron_trigger's misfire handling silently dropped while this mesh was
-    down. Best-effort per job: one failing job (e.g. WhatsApp not
-    connected yet at this exact moment) must not block the others, stop
-    the server from starting, or stop later jobs from being retried on
-    the next pass - see CATCH_UP_RETRY_SECONDS above."""
-    conn = db.connect(state_db_path(AGENT_ID))
-    overdue = db.find_overdue_jobs(conn)
-    for job in overdue:
-        try:
-            await run_routine.run(job_id=job['id'])
-            logger.info(f"Caught up overdue job {job['id']} ({job['name']!r})")
-        except Exception as e:
-            logger.warning(f"Could not catch up overdue job {job['id']} ({job['name']!r}), will retry: {e}")
-
-
-def _catch_up_retry_loop() -> None:
-    while True:
-        time.sleep(CATCH_UP_RETRY_SECONDS)
-        try:
-            asyncio.run(_catch_up_overdue_jobs())
-        except Exception as e:
-            logger.warning(f'Catch-up retry pass failed: {describe_exception(e)}')
+# Startup catch-up of overdue jobs was REMOVED on 2026-09-15, on the owner's
+# own instruction, alongside the identical removal in
+# mesh/adiyan_reader/server.py - see that file's own note for the confirmed-
+# live incident behind it (repeated agent restarts during one debugging
+# session re-fired every overdue job on each boot, sending unsolicited
+# messages to four real recipients).
+#
+# The same failure shape applies here and is arguably worse: Scheduler's jobs
+# send WhatsApp messages to whoever the routine targets, and the 2026-08-30
+# lockdown that removed WhatsApp send from the shared 'service' tier exists
+# because of an earlier runaway-message incident from this same agent. A
+# mechanism that replays every overdue send on every process start is the
+# wrong default for anything with that history.
+#
+# The trade accepted: a routine whose fire was genuinely missed while the mesh
+# was down is not replayed - it simply runs at its next scheduled time.
+# cron_trigger's own scheduled fire is now the only path that runs a routine.
 
 
 async def _load_startup_config() -> dict:
@@ -100,9 +79,6 @@ if __name__ == '__main__':
     # Must run before any LangChain call happens (auto_instrument patches
     # LangChain at call time) - so before serve(), not inside agent_executor.
     setup_tracing(AGENT_ID)
-
-    asyncio.run(_catch_up_overdue_jobs())
-    threading.Thread(target=_catch_up_retry_loop, daemon=True).start()
 
     startup = asyncio.run(_load_startup_config())
 
