@@ -242,7 +242,7 @@ figcaption{ font-size:.79rem; color:var(--ink-faint); margin-top:.6rem; line-hei
       <ol>
         <li><a href="#ch12"><span class="n">12</span><span>Adiyan, end to end</span></a></li>
         <li><a href="#ch13"><span class="n">13</span><span>Incidents &amp; fixes</span></a></li>
-        <li><a href="#ch14"><span class="n">14</span><span>Interview drill</span></a></li>
+        <li><a href="#ch14"><span class="n">14</span><span>Ready reckoner</span></a></li>
         <li><a href="#refs"><span class="n">—</span><span>References</span></a></li>
       </ol>
     </nav>
@@ -592,7 +592,7 @@ nodes = retriever.retrieve(<span class="c-s">'what does the refund policy say'</
 
         <p>You reach for a real vector database when you need some combination of: persistence across restarts, more vectors than fit comfortably in memory, concurrent writes while serving reads, payload filtering, and search that stays fast as the collection grows. That last one is Chapter 5.</p>
 
-        <p>Worth stating plainly for interviews: <strong>vector and relational databases are complementary, not rivals.</strong> Adiyan runs three stores at once — Qdrant for vectors, MongoDB for agent config and registered clients, SQLite for the raw-file index that maps a filename to bytes on disk. Postgres with the <code>pgvector</code> extension can also do both in one engine, which is a reasonable choice when you'd rather not run a second database.</p>
+        <p>Worth stating plainly: <strong>vector and relational databases are complementary, not rivals.</strong> Adiyan runs three stores at once — Qdrant for vectors, MongoDB for agent config and registered clients, SQLite for the raw-file index that maps a filename to bytes on disk. Postgres with the <code>pgvector</code> extension can also do both in one engine, which is a reasonable choice when you'd rather not run a second database.</p>
       </section>
 
       <!-- ================= CH 5 ================= -->
@@ -1148,8 +1148,8 @@ result = memory.search(query, filters={<span class="c-s">'user_id'</span>: conta
       <!-- ================= CH 14 ================= -->
       <section id="ch14">
         <h2 class="chnum">Chapter 14</h2>
-        <h3 class="title">Interview drill</h3>
-        <p class="lab-sub" style="margin-bottom:1.1rem">Answers compressed to what you would actually say out loud, each anchored to something real.</p>
+        <h3 class="title">Ready reckoner</h3>
+        <p class="lab-sub" style="margin-bottom:1.1rem">Short answers to the questions this system gets asked most, each anchored to something real that happened while building it.</p>
 
         <details class="qa"><summary>Walk me through what happens when a user asks a question.</summary>
           <div class="ans"><p>The question is embedded with the same model used at index time — 768 dimensions, locally. That vector goes to Qdrant, which walks its HNSW graph for the nearest points by cosine similarity, applying a payload pre-filter so only chunks the requester may see are traversed. The top four come back as text, get assembled into a prompt alongside long-term memory and recent turns in a fixed order, and a local 8B model generates from that under an explicit instruction not to invent anything outside the provided context.</p></div>
