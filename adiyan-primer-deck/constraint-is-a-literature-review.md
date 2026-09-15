@@ -1,10 +1,12 @@
-# Constraint Is a Literature Review
+# The Frugal AI Engineer — Issue #2
 
-## Five design decisions a laptop forced on me. Five papers that say they were right.
+## Constraint Is a Literature Review
 
-*I did not read the research first. I ran out of context, hit a bug, and fixed it. Then I went and read the research.*
+*Five design decisions a laptop forced on me. Five papers that say they were right — and I read them after, not before.*
 
 ---
+
+This series has argued that scarcity is a design method — that the constraint does design work that discipline alone would not have done. This issue is the receipt.
 
 Adiyan is an AI agent harness that runs entirely on my own machine. No embedding API. No hosted vector database. No document that ever leaves the laptop. You talk to it over WhatsApp.
 
@@ -168,7 +170,15 @@ python3 -m research.staleness.run_longmemeval
 
 ---
 
-*Bharanitharan Ragunathan is a Principal Backend Engineer at Oracle. Creator of Banyan (a governance DSL compiler) and ForgeX (a metadata-driven microservice generator).*
+## Coming Next
+
+More production incidents, more papers I found after the fact instead of before. Same method each time: build under real constraint, then go check whether the constraint led somewhere the field already mapped.
+
+See you next week.
+
+---
+
+*Bharanitharan Ragunathan is a Principal Backend Engineer at Oracle. Creator of Banyan (a governance DSL compiler) and ForgeX (a metadata-driven microservice generator). Weekly paper validation series on Medium and LinkedIn.*
 
 ---
 
