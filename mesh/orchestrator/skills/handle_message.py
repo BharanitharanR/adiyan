@@ -93,6 +93,38 @@ _UPLOAD_INSTRUCTION_SKILLS = [
     ),
 ]
 
+# Single-skill classify pool, same shape as _UPLOAD_INSTRUCTION_SKILLS -
+# checked BEFORE the normal knowledge-base ingestion path, and only for the
+# owner (see run()'s own call site: never even classified for a customer
+# upload, since applying a vertical spec is an owner-only action end to
+# end - config_agent's own permission check would reject it anyway, this
+# just avoids spending a classify() call on every customer upload to learn
+# that). Matching "analyze_upload" instead of this would misfire on a
+# real business-vertical YAML - handled here, deliberately checked first,
+# rather than trying to make one classify pool cover both intents at once.
+_VERTICAL_SPEC_SKILLS = [
+    AgentSkill(
+        id='apply_vertical_spec',
+        name='Apply Vertical Spec',
+        description=(
+            'The caption says this uploaded file is a business/vertical configuration '
+            'spec to apply to Adiyan itself - not an ordinary document to search or read. '
+            'Only matches an explicit instruction to configure, activate, or apply a '
+            'business persona/vertical, never a plain document upload that merely mentions '
+            'a business in its content.'
+        ),
+        tags=['config', 'vertical', 'persona'],
+        examples=[
+            'Apply this business spec',
+            'This is my vertical config, activate it',
+            'Set up Adiyan with this business persona',
+            'Load this as my customer-facing configuration',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
 # Same shape as _UPLOAD_INSTRUCTION_SKILLS: a single-skill pool fed to
 # skill_router.classify() as a yes/no check, this time for "does this plain
 # text message mean start reading me a book." Deliberately NOT added to
@@ -543,6 +575,66 @@ async def _resolve_ocr_preference(caption: str, cfg: Dict[str, Any]) -> bool:
     return params.skip_image_scanning
 
 
+async def _resolve_vertical_spec_intent(caption: str, cfg: Dict[str, Any]) -> bool:
+    """True only if the caption explicitly says this upload is a business/
+    vertical spec to apply - False (falls through to normal knowledge-base
+    ingestion) for an empty caption or any classification failure, same
+    degrade-toward-the-safer-default contract as _resolve_ocr_preference:
+    misreading an ordinary document as a vertical spec would try to parse
+    it as YAML and fail loudly; misreading a real spec as an ordinary
+    document just files it away, recoverable by asking again with a
+    clearer caption."""
+    if not caption or not caption.strip():
+        return False
+    try:
+        choice = await classify(caption, _VERTICAL_SPEC_SKILLS, cfg)
+    except Exception as e:
+        logger.error(f'Vertical-spec intent classification failed: {describe_exception(e)}')
+        return False
+    return choice.skill_id == 'apply_vertical_spec'
+
+
+async def _apply_vertical_spec_upload(media: Dict[str, Any], chat_id: str, tier: str) -> Optional[str]:
+    """Reply text, or None only for a genuinely unexpected failure (Config
+    Agent unreachable, the call itself erroring) - same silent-on-failure
+    convention as _ingest_into_knowledge_base. A rejected/invalid spec
+    still gets a real, specific reply (apply_vertical_spec.run()'s own
+    'error' field), since the owner needs to know exactly what was wrong
+    to fix their spec, not silence.
+
+    Deliberately bypasses _ingest_into_knowledge_base entirely - a vertical
+    spec is Adiyan's own configuration, never something that should also
+    land in the searchable knowledge base or the nightly-reading pages
+    store the way an ordinary upload does."""
+    config_url = router.get_agent_url('config_agent')
+    if config_url is None:
+        return "Config Agent isn't reachable right now - try again in a moment."
+
+    filename = media.get('filename') or 'vertical-spec.yaml'
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        result = await call_agent(config_url, 'apply_vertical_spec', {
+            'content_b64': media['data'], 'filename': filename,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'apply_vertical_spec failed for {chat_id}: {e}')
+        return None
+
+    if not result.get('applied'):
+        return f"Couldn't apply that spec: {result.get('error') or 'unknown reason'}"
+    if not result.get('activated'):
+        return (
+            f"Applied {result.get('vertical_id')!r} but couldn't activate it: "
+            f"{result.get('error') or 'unknown reason'}"
+        )
+    business_name = result.get('business_name') or result.get('vertical_id')
+    written = result.get('written') or []
+    return (
+        f"Applied and activated {business_name!r} ({len(written)} setting(s) updated). "
+        "Your customers will see this persona starting now - your own messages are unaffected."
+    )
+
+
 async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Optional[str]:
     """None if caption is just a label, not an instruction - the caller
     then does a plain ingest-only reply, same as before this existed.
@@ -792,46 +884,57 @@ async def run(
         # document still gets the normal not-registered rejection, same as
         # any other message from them. tier is never None here, same
         # reasoning the routing branch below already documents for itself.
-        # Resolved from the caption BEFORE ingestion, not after - once
-        # Docling has already spent 30-50s/page skipping OCR it thought it
-        # needed, there's no undoing that cost. See
-        # _resolve_ocr_preference()'s own docstring for why this is a
-        # separate extract() call rather than a field on the classify()
-        # right below (_resolve_upload_instruction), and why it defaults
-        # to False (OCR stays on) on any failure.
-        skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
-        ingest_reply, source_filename = await _ingest_into_knowledge_base(
-            document or image, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
-        )
-        if ingest_reply is None or source_filename is None:
-            # Either ingestion itself failed outright (source_filename is
-            # also None in that case), or it succeeded without a resolvable
-            # source_filename (shouldn't happen given ingest_document's own
-            # contract, but analysis has nothing to run against either way)
-            # - the plain ingest outcome (possibly None, going silent) is
-            # already the right reply, nothing to add.
-            reply = ingest_reply
+        # Checked BEFORE anything else in this branch, and only for the
+        # owner - a vertical spec must never be silently swallowed into the
+        # searchable knowledge base the way an ordinary document would be.
+        # See _VERTICAL_SPEC_SKILLS's own comment for why this is never
+        # even attempted for a customer upload.
+        if tier == 'owner' and await _resolve_vertical_spec_intent(text, cfg['caption_intent']):
+            reply = await _apply_vertical_spec_upload(document or image, chat_id, tier)
         else:
-            # The caption ("analyse this presentation and share the
-            # mistakes you find") might be an actual instruction, not just
-            # a label - see _resolve_upload_instruction()'s own docstring.
-            # Only checked once ingestion has already succeeded: nothing to
-            # analyze if the document was never actually stored.
-            instruction = await _resolve_upload_instruction(text, cfg['caption_intent'])
-            if instruction is None:
+            # Resolved from the caption BEFORE ingestion, not after - once
+            # Docling has already spent 30-50s/page skipping OCR it thought
+            # it needed, there's no undoing that cost. See
+            # _resolve_ocr_preference()'s own docstring for why this is a
+            # separate extract() call rather than a field on the classify()
+            # right below (_resolve_upload_instruction), and why it
+            # defaults to False (OCR stays on) on any failure.
+            skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
+            ingest_reply, source_filename = await _ingest_into_knowledge_base(
+                document or image, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
+            )
+            if ingest_reply is None or source_filename is None:
+                # Either ingestion itself failed outright (source_filename
+                # is also None in that case), or it succeeded without a
+                # resolvable source_filename (shouldn't happen given
+                # ingest_document's own contract, but analysis has nothing
+                # to run against either way) - the plain ingest outcome
+                # (possibly None, going silent) is already the right reply,
+                # nothing to add.
                 reply = ingest_reply
             else:
-                analysis = await _run_analysis(instruction, source_filename, chat_id, tier)
-                if analysis is None:
-                    # Analysis failed - still confirm the ingest, which did
-                    # genuinely succeed, rather than losing that feedback too.
+                # The caption ("analyse this presentation and share the
+                # mistakes you find") might be an actual instruction, not
+                # just a label - see _resolve_upload_instruction()'s own
+                # docstring. Only checked once ingestion has already
+                # succeeded: nothing to analyze if the document was never
+                # actually stored.
+                instruction = await _resolve_upload_instruction(text, cfg['caption_intent'])
+                if instruction is None:
                     reply = ingest_reply
-                elif analysis.get('content_b64'):
-                    pending_document = analysis
-                    caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
                 else:
-                    reply = analysis.get('result') or ingest_reply
+                    analysis = await _run_analysis(instruction, source_filename, chat_id, tier)
+                    if analysis is None:
+                        # Analysis failed - still confirm the ingest, which
+                        # did genuinely succeed, rather than losing that
+                        # feedback too.
+                        reply = ingest_reply
+                    elif analysis.get('content_b64'):
+                        pending_document = analysis
+                        caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                    else:
+                        reply = analysis.get('result') or ingest_reply
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
         # Only reached once the gate has already let this sender through and
         # there's no image/document attached - a stranger or an upload
