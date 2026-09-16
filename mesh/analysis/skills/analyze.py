@@ -551,13 +551,50 @@ async def run(
     instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None,
     requester_id: Optional[str] = None, is_owner: bool = False,
 ) -> Dict[str, Any]:
-    cfg = await config_sdk.get_stage_config(AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'])
+    # The owner always gets pure platform behavior, regardless of which
+    # vertical is currently active - explicit config_sdk.PLATFORM_VERTICAL,
+    # not just omitting vertical_id, since omitting it still falls back to
+    # whatever's deployment-wide active (see config_sdk._resolve_vertical's
+    # own docstring). Without this, a business owner testing their own
+    # Adiyan number would see their OWN customer-facing persona applied to
+    # their own messages the moment they activated it - confirmed live this
+    # session that agent_executor.py already resolves is_owner correctly
+    # from the caller's real token before this function ever sees it, so
+    # this is the one place actually meant to branch on it.
+    vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else None
+
+    cfg = await config_sdk.get_stage_config(
+        AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'], vertical_id=vertical_id,
+    )
     strict_seed = _seeded('strict_grounding')
-    strict = await config_sdk.get_constant(AGENT_ID, 'strict_grounding', strict_seed['value'], description=strict_seed['description'])
+    strict = await config_sdk.get_constant(
+        AGENT_ID, 'strict_grounding', strict_seed['value'], vertical_id=vertical_id, description=strict_seed['description'],
+    )
     cap_seed = _seeded('observation_char_cap')
-    observation_char_cap = await config_sdk.get_constant(AGENT_ID, 'observation_char_cap', cap_seed['value'], description=cap_seed['description'])
+    observation_char_cap = await config_sdk.get_constant(
+        AGENT_ID, 'observation_char_cap', cap_seed['value'], vertical_id=vertical_id, description=cap_seed['description'],
+    )
     top_k_seed = _seeded('doc_search_top_k')
-    doc_search_top_k = await config_sdk.get_constant(AGENT_ID, 'doc_search_top_k', top_k_seed['value'], description=top_k_seed['description'])
+    doc_search_top_k = await config_sdk.get_constant(
+        AGENT_ID, 'doc_search_top_k', top_k_seed['value'], vertical_id=vertical_id, description=top_k_seed['description'],
+    )
+
+    # Business persona: only ever fetched for a non-owner sender (vertical_id
+    # is None here, so this resolves to whatever's deployment-wide active -
+    # empty string, and therefore a no-op, when nothing is). Prepended to the
+    # instruction itself rather than folded into decide_next_step_prompt_template
+    # - instruction is plain text the loop already threads everywhere
+    # (_decide_next_step/_compact/_final_answer all take it as-is), so this
+    # needs no new {placeholder} on any of those three templates and can't
+    # break them the way editing the templates directly could.
+    if not is_owner:
+        persona_seed = _seeded('business_persona_context')
+        persona_context = await config_sdk.get_constant(
+            AGENT_ID, 'business_persona_context', persona_seed['value'], description=persona_seed['description'],
+        )
+        if persona_context:
+            instruction = f'{persona_context}\n\n{instruction}'
+
     tools, tools_by_name = _make_tools(contact_name, requester_id, is_owner, observation_char_cap, doc_search_top_k, cfg)
 
     scratchpad = Scratchpad()

@@ -57,7 +57,7 @@ def _seeded(key: str) -> Dict[str, Any]:
 
 async def humanize(
     original_message: str, result: Dict[str, Any], cfg: Dict[str, Any], community: Optional[str] = None,
-    language: Optional[str] = None,
+    language: Optional[str] = None, is_owner: bool = False,
 ) -> str:
     """language: when given, the reply is composed directly in that
     language instead of whatever language `original_message` happens to
@@ -69,10 +69,21 @@ async def humanize(
     more reliable than routing an Indic-specific raw-completion model
     (sarvam-1) into this step, which was tried and confirmed live this
     session to need awkward few-shot/stop-sequence handling this ordinary
-    chat call doesn't."""
+    chat call doesn't.
+
+    is_owner: True only for the deployment's own owner (every caller must
+    pass this explicitly - it does not default to safe-for-customers or
+    safe-for-owner, since either wrong default is wrong for someone).
+    Forces the platform layer (config_sdk.PLATFORM_VERTICAL), bypassing
+    whatever business vertical is currently active deployment-wide, so the
+    owner always sees Adiyan's own voice - never their own customer-facing
+    persona - regardless of what's activated. See analyze.py's run() for
+    the same branch applied to reasoning rather than reply-wording."""
+    vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else None
+
     seeded = _seeded('humanize_prompt_template')
     template = await config_sdk.get_constant(
-        AGENT_ID, 'humanize_prompt_template', seeded['value'], description=seeded['description'],
+        AGENT_ID, 'humanize_prompt_template', seeded['value'], vertical_id=vertical_id, description=seeded['description'],
     )
     try:
         prompt = template.format(original_message=original_message, result=result)
@@ -83,6 +94,20 @@ async def humanize(
         # to the known-good seed default rather than erroring out.
         logger.warning(f'humanize_prompt_template on file is malformed, using seed default: {e}')
         prompt = seeded['value'].format(original_message=original_message, result=result)
+
+    # Business persona, appended rather than folded into the template
+    # itself - same reasoning as analyze.py's run(): free text has no
+    # {placeholder} to accidentally break. Only ever fetched for a
+    # non-owner sender; resolves to empty (a no-op) when no vertical is
+    # active, so this line changes nothing for every deployment that never
+    # touches this feature.
+    if not is_owner:
+        persona_seed = _seeded('business_persona_context')
+        persona_context = await config_sdk.get_constant(
+            AGENT_ID, 'business_persona_context', persona_seed['value'], description=persona_seed['description'],
+        )
+        if persona_context:
+            prompt += f'\n\n{persona_context}'
 
     # No schema now (see module docstring) - the model has to be told in
     # plain words to skip preamble, since with_structured_output isn't here

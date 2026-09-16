@@ -829,7 +829,7 @@ async def run(
                 elif analysis.get('content_b64'):
                     pending_document = analysis
                     caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
-                    reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
+                    reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
                 else:
                     reply = analysis.get('result') or ingest_reply
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
@@ -959,7 +959,7 @@ async def run(
                     nonlocal pending_document
                     pending_document = result
                     caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                    return await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
+                    return await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
                 if result.get('result'):
                     # Confirmed live: skipping humanize() here (unlike
                     # every other branch in this function) let Analysis
@@ -969,7 +969,7 @@ async def run(
                     # a vegetarian...") rather than a natural reply, the
                     # one branch in this whole function that skipped
                     # the humanize step everything else already gets.
-                    return await humanize(text, result, cfg['humanize'], community=community, language=reply_language)
+                    return await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
                 return "Sorry, I'm not sure how to help with that yet."
 
             target_url = await route_to_agent(text, cfg['route_to_agent'])
@@ -1011,9 +1011,9 @@ async def run(
                         # to restate.
                         pending_document = result
                         caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language)
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
                     else:
-                        reply = await humanize(text, result, cfg['humanize'], community=community, language=reply_language)
+                        reply = await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
         except Exception as e:
             # Confirmed live: this used to reply with the raw exception text
             # ("Did you mean one of: recall_contact_memory,

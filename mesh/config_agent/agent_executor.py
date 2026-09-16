@@ -22,6 +22,7 @@ from a2a.server.tasks import TaskUpdater
 from mesh.config_agent.constants import AGENT_ID
 from mesh.config_agent.skills import (
     activate_vertical,
+    apply_vertical_spec,
     deactivate_vertical,
     get_active_vertical,
     get_all_configs,
@@ -67,11 +68,14 @@ EXTRACTION_SCHEMAS = {
     'get_active_vertical': NoParams,
 }
 
-# get_all_configs/update_stage_config: DataPart-only, deliberately not in
-# SKILLS/EXTRACTION_SCHEMAS above - the config dashboard's own structured
-# calls (mesh/config_server/), never resolved from free text. See
-# query_config.py's own module docstring on why stage settings specifically
-# stay out of the NL path.
+# get_all_configs/update_stage_config/apply_vertical_spec: DataPart-only,
+# deliberately not in SKILLS/EXTRACTION_SCHEMAS above - get_all_configs and
+# update_stage_config are the config dashboard's own structured calls
+# (mesh/config_server/), never resolved from free text (see query_config.py's
+# own module docstring on why stage settings specifically stay out of the NL
+# path); apply_vertical_spec needs real uploaded file content, the same
+# reasoning ingest_document/onboard_mcp_server already document for
+# themselves.
 SKILL_HANDLERS = {
     'query_config': query_config.run,
     'update_config': update_config.run,
@@ -81,6 +85,7 @@ SKILL_HANDLERS = {
     'activate_vertical': activate_vertical.run,
     'deactivate_vertical': deactivate_vertical.run,
     'get_active_vertical': get_active_vertical.run,
+    'apply_vertical_spec': apply_vertical_spec.run,
 }
 
 

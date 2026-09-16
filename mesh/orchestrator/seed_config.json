@@ -3,6 +3,10 @@
     "humanize_prompt_template": {
       "value": "The user said: \"{original_message}\"\n\nHere is the structured result from handling their request: {result}\n\nWrite a short, natural WhatsApp reply based only on what is in this result - do not invent anything not present in it.",
       "description": "Prompt used to rewrite an agent's raw answer into a natural WhatsApp-toned reply before sending."
+    },
+    "business_persona_context": {
+      "value": "",
+      "description": "Free-text instructions for how Adiyan should sound to this business's customers - tone, brand voice, fallback phrasing. Empty on the platform layer (no persona) by default; a real value only ever comes from a vertical override, written by mesh/config_agent/skills/apply_vertical_spec.py from an uploaded vertical-spec YAML. Applied only when the sender is not the owner - see humanize()'s own docstring."
     }
   }
 }

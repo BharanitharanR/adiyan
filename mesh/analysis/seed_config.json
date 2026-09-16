@@ -56,6 +56,10 @@
       "value": true,
       "description": "If true, only tool-verified evidence counts as a basis for an answer - even an ordinary general-knowledge question gets an honest \"nothing relevant found\" instead of an answer from the model's own training data. If false, general knowledge is a legitimate fallback when no document/memory/agent had anything relevant, but a specific verifiable detail (a date, a price, a port number) still requires real tool-verified evidence."
     },
+    "business_persona_context": {
+      "value": "",
+      "description": "Free-text instructions for how the ReAct loop should reason and behave on behalf of a specific business - hard rules, boundaries. Empty on the platform layer by default; a real value only comes from a vertical override written by mesh/config_agent/skills/apply_vertical_spec.py. Applied only when is_owner is False - see run()'s own docstring."
+    },
     "observation_char_cap": {
       "value": 6000,
       "description": "Max characters kept from any single tool result before it's truncated - protects the ReAct loop's own prompt from being blown out by one huge document dump."
