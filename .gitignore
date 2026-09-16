@@ -42,3 +42,6 @@ mesh/adiyan_reader/voice_training/models/
 
 # LongMemEval benchmark data (15MB, fetched by run_longmemeval.py)
 research/staleness/data/
+
+# Packaged Agent Skill zips (built artifacts, source is the unzipped folder)
+agent_skills/*.zip
