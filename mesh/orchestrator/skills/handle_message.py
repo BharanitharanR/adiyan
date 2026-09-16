@@ -192,6 +192,20 @@ class _BookReadingRequest(BaseModel):
     book_reference: str = Field(description="How the caller referred to the book - a title, a partial title, or a description like 'the book I uploaded yesterday'. Copy their own wording, don't invent or complete a title they didn't say.")
 
 
+class _UploadOcrPreference(BaseModel):
+    skip_image_scanning: bool = Field(
+        default=False,
+        description=(
+            "True only if the caller's caption explicitly says this upload is "
+            "plain digital text and doesn't need image/OCR scanning - e.g. "
+            "asking for it to be processed fast, or saying no image scan is "
+            "needed, or that it's just text. False by default, and False if "
+            "the caption says nothing about this at all - never assume a "
+            "document is scan-free just because nothing was said."
+        ),
+    )
+
+
 async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[str]:
     """None if this message isn't actually a "start reading" request - the
     caller then falls through to normal routing, same degrade-on-failure
@@ -388,7 +402,7 @@ async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) ->
 
 
 async def _ingest_into_knowledge_base(
-    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str],
+    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str], do_ocr: bool = True,
 ) -> Tuple[Optional[str], Optional[str]]:
     """(reply, source_filename). reply is None only for a genuinely
     unexpected failure (see this module's own silent-on-failure convention,
@@ -427,7 +441,15 @@ async def _ingest_into_knowledge_base(
     permissions.mint_token() already uses for this exact sender. Every
     upload defaults to visibility='private' (memory_index.py's own default)
     - it's visible only to whoever uploaded it, and the owner, unless later
-    explicitly marked global."""
+    explicitly marked global.
+
+    do_ocr defaults True (Docling's own default, safe for anything that
+    might be scanned) - the caller only passes False once
+    _resolve_ocr_preference() has confirmed the uploader's own caption
+    explicitly said this document is scan-free. See memory_index.py's
+    _pdf_converter() docstring for why that confirmation matters: a wrong
+    guess here means genuinely scanned pages come back silently blank
+    instead of OCR'd."""
     memory_url = router.get_agent_url('memory')
     if memory_url is None:
         return "Knowledge Bank isn't reachable right now - try again in a moment.", None
@@ -447,6 +469,7 @@ async def _ingest_into_knowledge_base(
             'mimetype': mimetype,
             'username': contact_name or chat_id,
             'owner_identity': chat_id,
+            'do_ocr': do_ocr,
         }, token=token)
     except Exception as e:
         logger.error(f'Ingestion failed for {chat_id}: {e}')
@@ -477,6 +500,7 @@ async def _ingest_into_knowledge_base(
             'content_b64': media['data'],
             'filename': filename,
             'username': contact_name or chat_id,
+            'do_ocr': do_ocr,
         }, token=token)
         if book_result.get('ingested'):
             reply += f" Ready to be read aloud too ({int(book_result['num_pages'])} pages)."
@@ -484,6 +508,39 @@ async def _ingest_into_knowledge_base(
         logger.warning(f'Page-ingestion failed for {chat_id}: {e}')
 
     return reply, result.get('source_filename')
+
+
+async def _resolve_ocr_preference(caption: str, cfg: Dict[str, Any]) -> bool:
+    """False (the safe default - OCR stays on) unless the caption itself
+    explicitly says this upload is plain text with nothing to scan. Same
+    degrade-on-failure contract every other resolver in this module
+    follows: an extraction failure here must never accidentally skip OCR
+    on a document that actually needed it, so it fails toward doing more
+    work, not less.
+
+    Deliberately a separate extract() call, not a field bolted onto
+    _resolve_upload_instruction()'s existing classify() - that one only
+    ever answers "is this caption an analysis instruction," a plain
+    skill_id match with no structured fields of its own to extend.
+
+    This is genuinely worth its own small model call rather than a vector-
+    similarity shortcut against a set of example phrasings: the whole
+    point of this flag is telling apart phrasings that share the same
+    vocabulary but mean opposite things ("no image scan needed" vs "scan
+    the images carefully, it has photos") - exactly the negation case this
+    session's own staleness research found embeddings handle badly
+    (cos("teal", "not teal") = 0.86, nearly as close as the term itself).
+    An extraction model reads the whole sentence's grammar instead of
+    just measuring vocabulary overlap, which is what this decision
+    actually turns on."""
+    if not caption or not caption.strip():
+        return False
+    try:
+        params = await extract(caption, 'upload_ocr_preference', _UploadOcrPreference, cfg)
+    except Exception as e:
+        logger.error(f'OCR-preference extraction failed: {describe_exception(e)}')
+        return False
+    return params.skip_image_scanning
 
 
 async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Optional[str]:
@@ -735,8 +792,16 @@ async def run(
         # document still gets the normal not-registered rejection, same as
         # any other message from them. tier is never None here, same
         # reasoning the routing branch below already documents for itself.
+        # Resolved from the caption BEFORE ingestion, not after - once
+        # Docling has already spent 30-50s/page skipping OCR it thought it
+        # needed, there's no undoing that cost. See
+        # _resolve_ocr_preference()'s own docstring for why this is a
+        # separate extract() call rather than a field on the classify()
+        # right below (_resolve_upload_instruction), and why it defaults
+        # to False (OCR stays on) on any failure.
+        skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
         ingest_reply, source_filename = await _ingest_into_knowledge_base(
-            document or image, chat_id, tier, contact_name,
+            document or image, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
         )
         if ingest_reply is None or source_filename is None:
             # Either ingestion itself failed outright (source_filename is

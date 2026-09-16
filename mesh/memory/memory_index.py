@@ -154,6 +154,37 @@ def _split_trailing_fragment(text: str) -> tuple:
     return stripped[:boundary].rstrip(), stripped[boundary:].lstrip()
 
 
+def _pdf_converter(do_ocr: bool = True):
+    """A DocumentConverter for one PDF/generic-document conversion.
+
+    Docling's own default (do_ocr=True) already scopes OCR to just the
+    bitmap/shape regions of a page (base_ocr_model.py's
+    _find_pdf_aware_layout_ocr_rects), not the whole page - a genuinely
+    digital-text document should cost almost nothing extra. Confirmed live
+    this session though: a real digital-text book (selectable text,
+    confirmed by the uploader) still triggered OCR on nearly every page,
+    at 30-50s/page because the installed rapidocr build reloads its full
+    model weights on every single invocation - for a long book that's
+    hours, not minutes, even though the actual body text never needed OCR
+    at all. do_ocr=False is the caller's way of saying "skip that path
+    entirely, I've confirmed there's no scanned content here" - see
+    mesh/orchestrator/skills/handle_message.py's _resolve_ocr_preference()
+    for where that confirmation actually comes from (the uploader's own
+    caption, e.g. "process fast, no image scan needed"), never assumed.
+
+    Deliberately NOT applied to _extract_pptx_markdown()'s own OCR path -
+    that one OCRs individual picture shapes it has already confirmed have
+    no real text of their own, a different and still-necessary use."""
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
+    pipeline_options = PdfPipelineOptions(do_ocr=do_ocr)
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)},
+    )
+
+
 def _extract_pptx_markdown(content: bytes, filename: str) -> str:
     """Docling's own PPTX backend only extracts native text shapes and
     represents embedded pictures as bare '<!-- image -->' placeholders - it
@@ -330,7 +361,7 @@ class MemoryIndex:
 
     def ingest_document(
         self, content: bytes, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
-        owner_identity: Optional[str] = None, visibility: str = 'private',
+        owner_identity: Optional[str] = None, visibility: str = 'private', do_ocr: bool = True,
     ) -> tuple:
         """Returns (chunks_count, source_filename) - source_filename is the composite
         <username>/<filename> key this document is now stored under everywhere
@@ -375,10 +406,9 @@ class MemoryIndex:
             # typically is.
             markdown = _extract_pptx_markdown(content, safe_name)
         else:
-            from docling.document_converter import DocumentConverter
             from docling_core.types.io import DocumentStream
 
-            converter = DocumentConverter()
+            converter = _pdf_converter(do_ocr)
             result = converter.convert(DocumentStream(name=safe_name, stream=io.BytesIO(content)))
             markdown = result.document.export_to_markdown()
 
@@ -427,7 +457,9 @@ class MemoryIndex:
 
         return len(chunks), source_key
 
-    def ingest_document_by_page(self, content: bytes, filename: str, username: str) -> tuple:
+    def ingest_document_by_page(
+        self, content: bytes, filename: str, username: str, do_ocr: bool = True,
+    ) -> tuple:
         """Same Docling parse ingest_document() uses, but keeps page
         boundaries instead of collapsing the whole document into one
         markdown string first - export_to_markdown(page_no=N) pulls just
@@ -446,14 +478,13 @@ class MemoryIndex:
         Returns (num_pages, source_filename), same shape as
         ingest_document()'s own return, for the same reason (a caller often
         wants to act on the just-ingested document right away)."""
-        from docling.document_converter import DocumentConverter
         from docling_core.types.io import DocumentStream
 
         safe_user = _safe_filename(username)
         safe_name = _safe_filename(filename)
         source_key = f'{safe_user}/{safe_name}'
 
-        converter = DocumentConverter()
+        converter = _pdf_converter(do_ocr)
         result = converter.convert(DocumentStream(name=safe_name, stream=io.BytesIO(content)))
         doc = result.document
         num_pages = doc.num_pages()

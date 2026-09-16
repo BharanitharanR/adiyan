@@ -20,14 +20,16 @@ from mesh.memory.memory_index import get_memory_index
 logger = logging.getLogger('MemoryIngestBook')
 
 
-def run(content_b64: str, filename: str, username: str) -> Dict[str, Any]:
+def run(content_b64: str, filename: str, username: str, do_ocr: bool = True) -> Dict[str, Any]:
     memory_index = get_memory_index(QDRANT_URL, OLLAMA_URL)
     if memory_index is None:
         return {'ingested': False, 'num_pages': 0, 'available': False, 'error': None}
 
     content = base64.b64decode(content_b64)
     try:
-        num_pages, source_filename = memory_index.ingest_document_by_page(content, filename, username)
+        num_pages, source_filename = memory_index.ingest_document_by_page(
+            content, filename, username, do_ocr=do_ocr,
+        )
     except Exception as e:
         logger.warning(f"Failed to ingest book {filename!r}: {e}")
         return {'ingested': False, 'num_pages': 0, 'available': True, 'error': str(e), 'source_filename': None}

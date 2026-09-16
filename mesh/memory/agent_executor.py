@@ -6,6 +6,7 @@ already knows exactly what it wants and will always use the DataPart path;
 free text is still supported for genuine A2A compliance, not because it's
 the expected way in.
 """
+import asyncio
 from pathlib import Path
 from typing import Any, Dict
 
@@ -168,7 +169,18 @@ class MemoryAgentExecutor(AgentExecutor):
             params.setdefault('requester_id', claims.get('sub'))
             params.setdefault('is_owner', claims.get('tier') == 'owner')
 
-        result = handler(**params)
+        # to_thread, not a plain call: every handler here is a normal sync
+        # function, and ingest_book/ingest_document's Docling parse (OCR
+        # especially) can run for minutes with no internal await point of
+        # its own. Called directly, that fully occupies this process's one
+        # event loop for its whole duration - confirmed live this session,
+        # a multi-minute book ingestion left this agent unable to answer
+        # even a plain search_knowledge_base call until it finished. A
+        # thread doesn't make the ingestion itself faster, but PyTorch's
+        # CPU work (what OCR actually spends its time in) releases the GIL
+        # during computation, so a background thread genuinely lets this
+        # loop keep serving other requests while it runs.
+        result = await asyncio.to_thread(handler, **params)
         await updater.add_artifact(parts=[new_data_part(result)])
         await updater.complete()
 

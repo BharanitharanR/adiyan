@@ -31,7 +31,7 @@ logger = logging.getLogger('MemoryIngest')
 
 def run(
     content_b64: str, filename: str, timestamp: str, username: str, mimetype: Optional[str] = None,
-    owner_identity: Optional[str] = None, visibility: str = 'private',
+    owner_identity: Optional[str] = None, visibility: str = 'private', do_ocr: bool = True,
 ) -> Dict[str, Any]:
     memory_index = get_memory_index(QDRANT_URL, OLLAMA_URL)
     if memory_index is None:
@@ -41,7 +41,7 @@ def run(
     try:
         chunks, source_filename = memory_index.ingest_document(
             content, filename, timestamp, username, mimetype=mimetype,
-            owner_identity=owner_identity, visibility=visibility,
+            owner_identity=owner_identity, visibility=visibility, do_ocr=do_ocr,
         )
     except Exception as e:
         logger.warning(f"Failed to ingest {filename!r}: {e}")
