@@ -29,6 +29,7 @@ the owner would have no way to know which fields actually landed if this
 degraded partially instead.
 """
 import base64
+import io
 import logging
 import re
 from typing import Any, Dict
@@ -37,6 +38,20 @@ import yaml
 
 from mesh.config_agent.skills.update_config import _coerce, _CoerceError
 from mesh.lib import config_sdk
+
+# Extensions treated as literal YAML text, decoded directly - anything else
+# (pdf, docx, ...) goes through Docling first. Confirmed live this session:
+# the adiyan-vertical-spec skill's own instructions explicitly allow "a
+# .yaml file, a .txt file, or a PDF with the same YAML text inside" as
+# equally valid containers, and a business owner's first real attempt was a
+# .yaml upload that a caption ("here is my coaching business details")
+# mentioning neither "spec" nor "apply" correctly failed to classify as a
+# vertical-spec intent, only to then hit Docling's own "file format not
+# allowed" for a raw .yaml file - Docling parses documents, not config
+# files. A PDF wrapping the identical YAML text is exactly the opposite
+# problem: Docling CAN read it, but the plain yaml.safe_load() below can't
+# make sense of a PDF's binary container directly.
+_PLAIN_TEXT_EXTENSIONS = ('.yaml', '.yml', '.txt')
 
 logger = logging.getLogger('ApplyVerticalSpec')
 
@@ -117,6 +132,48 @@ async def _validate_and_collect_writes(spec: Dict[str, Any]) -> list:
     return writes
 
 
+def _extract_yaml_text(raw: bytes, filename: str) -> str:
+    """The actual YAML source, however it arrived. A .yaml/.yml/.txt
+    upload's bytes already ARE that text - decoded directly. A PDF/.docx
+    is assumed to be a document whose visible text content is itself the
+    YAML - the exact shape the adiyan-vertical-spec skill's own
+    instructions describe as an equally valid container.
+
+    Deliberately NOT Docling here, despite mesh/memory/memory_index.py
+    using it for every other document type in this codebase - confirmed
+    live this session that Docling's export_to_markdown() actively
+    destroys YAML: it reflows the page's lines into prose paragraphs
+    (collapsing every newline that indentation-sensitive YAML depends on)
+    and markdown-escapes underscores (`business_name` came back as
+    `business\\_name`), producing a "mapping values are not allowed here"
+    parse error on a perfectly well-formed source PDF. Docling is built to
+    make a document more READABLE, which is the opposite of what
+    preserving a machine format needs. pypdf's extract_text() / python-
+    docx's paragraph text both keep each line exactly as its own line,
+    confirmed live to round-trip this exact PDF back through yaml.safe_load
+    correctly, which Docling's own extraction could not.
+
+    Raises on genuine failure (undecodable bytes, an unsupported format,
+    no extractable text) - caught once in run()."""
+    lower = filename.lower()
+    if lower.endswith(_PLAIN_TEXT_EXTENSIONS):
+        return raw.decode('utf-8')
+
+    if lower.endswith('.pdf'):
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(raw))
+        return '\n'.join(page.extract_text() or '' for page in reader.pages)
+
+    if lower.endswith('.docx'):
+        import docx
+        document = docx.Document(io.BytesIO(raw))
+        return '\n'.join(paragraph.text for paragraph in document.paragraphs)
+
+    raise ValueError(
+        f"unsupported file type for {filename!r} - upload as .yaml, .yml, .txt, .pdf, or .docx."
+    )
+
+
 async def run(content_b64: str, filename: str) -> Dict[str, Any]:
     try:
         raw = base64.b64decode(content_b64)
@@ -124,7 +181,12 @@ async def run(content_b64: str, filename: str) -> Dict[str, Any]:
         return {'applied': False, 'error': f'Could not decode the uploaded file: {e}'}
 
     try:
-        spec = yaml.safe_load(raw)
+        yaml_text = _extract_yaml_text(raw, filename)
+    except Exception as e:
+        return {'applied': False, 'error': f"Couldn't read {filename!r} as text or a document: {e}"}
+
+    try:
+        spec = yaml.safe_load(yaml_text)
     except Exception as e:
         return {'applied': False, 'error': f'Not valid YAML: {e}'}
 

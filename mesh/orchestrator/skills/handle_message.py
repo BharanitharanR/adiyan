@@ -889,8 +889,25 @@ async def run(
         # searchable knowledge base the way an ordinary document would be.
         # See _VERTICAL_SPEC_SKILLS's own comment for why this is never
         # even attempted for a customer upload.
-        if tier == 'owner' and await _resolve_vertical_spec_intent(text, cfg['caption_intent']):
-            reply = await _apply_vertical_spec_upload(document or image, chat_id, tier)
+        #
+        # is_yaml_upload checked first, and OR'd with the caption classify
+        # rather than replacing it - confirmed live this session that a
+        # real caption ("here is my coaching business details") reads as an
+        # ordinary document label to a classifier with no reason to think
+        # otherwise, and doesn't even mention "spec"/"apply"/"vertical" -
+        # the classify alone will keep missing genuine specs phrased that
+        # naturally. A .yaml/.yml filename is a much stronger, free signal:
+        # Docling cannot parse YAML as a document at all (the exact
+        # "Conversion failed... File format not allowed" error that same
+        # real upload hit, going to the normal ingestion path), so an
+        # upload with that extension was never going to succeed as an
+        # ordinary document anyway - there is no real downside to treating
+        # it as a spec attempt first.
+        media_for_upload = document or image
+        filename = (media_for_upload or {}).get('filename') or ''
+        is_yaml_upload = filename.lower().endswith(('.yaml', '.yml'))
+        if tier == 'owner' and (is_yaml_upload or await _resolve_vertical_spec_intent(text, cfg['caption_intent'])):
+            reply = await _apply_vertical_spec_upload(media_for_upload, chat_id, tier)
         else:
             # Resolved from the caption BEFORE ingestion, not after - once
             # Docling has already spent 30-50s/page skipping OCR it thought
@@ -901,7 +918,7 @@ async def run(
             # defaults to False (OCR stays on) on any failure.
             skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
             ingest_reply, source_filename = await _ingest_into_knowledge_base(
-                document or image, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
+                media_for_upload, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
             )
             if ingest_reply is None or source_filename is None:
                 # Either ingestion itself failed outright (source_filename
