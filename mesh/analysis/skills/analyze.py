@@ -579,22 +579,13 @@ async def run(
         AGENT_ID, 'doc_search_top_k', top_k_seed['value'], vertical_id=vertical_id, description=top_k_seed['description'],
     )
 
-    # Business persona: only ever fetched for a non-owner sender (vertical_id
-    # is None here, so this resolves to whatever's deployment-wide active -
-    # empty string, and therefore a no-op, when nothing is). Prepended to the
-    # instruction itself rather than folded into decide_next_step_prompt_template
-    # - instruction is plain text the loop already threads everywhere
-    # (_decide_next_step/_compact/_final_answer all take it as-is), so this
-    # needs no new {placeholder} on any of those three templates and can't
-    # break them the way editing the templates directly could.
-    if not is_owner:
-        persona_seed = _seeded('business_persona_context')
-        persona_context = await config_sdk.get_constant(
-            AGENT_ID, 'business_persona_context', persona_seed['value'], description=persona_seed['description'],
-        )
-        if persona_context:
-            instruction = f'{persona_context}\n\n{instruction}'
-
+    # Business persona is no longer fetched here - mesh/lib/persona_hook.py
+    # (read automatically inside every _agent.ask() call below, via
+    # mesh/lib/bootstrap.py's executor wrapper) handles this platform-wide
+    # now, for every agent, not just this one. This function keeps only
+    # the vertical_id bypass above, which is genuinely agent-specific
+    # (analysis's own strict_grounding/observation_char_cap/doc_search_top_k)
+    # and can't be generalized the same way.
     tools, tools_by_name = _make_tools(contact_name, requester_id, is_owner, observation_char_cap, doc_search_top_k, cfg)
 
     scratchpad = Scratchpad()

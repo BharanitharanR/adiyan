@@ -7,6 +7,10 @@
     "craft_generic_prompt_template": {
       "value": "Write ONE warm, general journaling reflection question for someone writing tonight. Nothing is known about this specific person, so do not reference any personal detail as if it were true.\n\nTheme (if any): {theme}",
       "description": "Fallback journaling reflection prompt when Memory Agent has no snippets for this contact. Needs a {theme} placeholder."
+    },
+    "business_persona_context": {
+      "value": "",
+      "description": "Free-text instructions for how Journal should sound and reason when crafting a reflection prompt on behalf of a specific business's customer. Empty on the platform layer by default; a real value only comes from a vertical override written by mesh/config_agent/skills/apply_vertical_spec.py. Applied only when the sender is not the owner - see mesh/lib/persona_hook.py's own docstring."
     }
   }
 }

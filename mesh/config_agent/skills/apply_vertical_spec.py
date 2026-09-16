@@ -65,6 +65,11 @@ logger = logging.getLogger('ApplyVerticalSpec')
 _ALLOWED_CONSTANTS = {
     'orchestrator': {'summon_phrase', 'card_description', 'business_persona_context'},
     'analysis': {'strict_grounding', 'business_persona_context'},
+    'scheduler': {'business_persona_context'},
+    'journal': {'business_persona_context'},
+    'adiyan_reader': {'business_persona_context'},
+    'config_agent': {'business_persona_context'},
+    'micro_habits': {'business_persona_context'},
 }
 
 _VERTICAL_ID_RE = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')

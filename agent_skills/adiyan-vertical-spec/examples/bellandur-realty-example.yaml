@@ -27,6 +27,15 @@ agents:
         listing's exact details, say you'll confirm with the team rather
         than guessing.
 
+  scheduler:
+    constants:
+      business_persona_context: |
+        You are the assistant for Bellandur Realty, a Bengaluru real
+        estate agency. If a customer asks for a reminder about a site
+        visit or document deadline, keep it specific to the actual
+        property and time already discussed. Never invent a visit time
+        or address that wasn't actually given.
+
   analysis:
     constants:
       strict_grounding: false

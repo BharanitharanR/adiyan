@@ -54,27 +54,38 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore
 from a2a.types import AgentCard, AgentSkill
 
-from mesh.lib import config_sdk, memory_hook, permissions, registry_client
+from mesh.lib import config_sdk, memory_hook, permissions, persona_hook, registry_client
 
 logger = logging.getLogger('bootstrap')
 
 
-class _MemoryWiredExecutor(AgentExecutor):
-    """Wraps an agent's own executor with the memory read-side hook - see
-    the Phase 5 design (memory_hook.py's own docstring on CURRENT_CONTEXT).
-    Every agent that calls build_app() gets this automatically, because
-    DefaultRequestHandler is only ever constructed here, never by an
-    agent's own server.py directly - the exact same lever this module
-    already uses for agent-registry self-registration (see this module's
-    top docstring).
+class _PlatformWiredExecutor(AgentExecutor):
+    """Wraps an agent's own executor with every platform read-side hook
+    that resolves once per incoming request and gets read later via a
+    ContextVar, not a threaded parameter - currently memory_hook.py's
+    CURRENT_CONTEXT (Phase 5 design, see that module's own docstring) and
+    persona_hook.py's CURRENT_PERSONA_CONTEXT (business-vertical personas -
+    see that module's own docstring). Every agent that calls build_app()
+    gets both automatically, because DefaultRequestHandler is only ever
+    constructed here, never by an agent's own server.py directly - the
+    exact same lever this module already uses for agent-registry
+    self-registration (see this module's top docstring). A third hook of
+    this shape is one more `.set()`/`.reset()` pair here, never a change
+    to any individual agent.
 
     Same interface as the wrapped executor (AgentExecutor's own two
     abstract methods), so DefaultRequestHandler can't tell the difference -
     this is a proxy, not a replacement. The wrapped agent's own executor
-    code is never touched, imported differently, or aware this exists."""
+    code is never touched, imported differently, or aware this exists.
 
-    def __init__(self, inner: AgentExecutor):
+    Named _PlatformWiredExecutor, not _MemoryWiredExecutor (its name
+    before persona_hook existed) - the old name undersold what it now
+    does; nothing outside this module ever referenced the class by name,
+    so the rename is free."""
+
+    def __init__(self, inner: AgentExecutor, agent_id: str):
         self._inner = inner
+        self._agent_id = agent_id
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Same token every agent's own permission check already verifies
@@ -87,7 +98,9 @@ class _MemoryWiredExecutor(AgentExecutor):
         if identity_key:
             memory_hook.ensure_identity(identity_key)
             context_value = memory_hook.fetch_context(identity_key)
-        reset_token = memory_hook.CURRENT_CONTEXT.set(context_value)
+        memory_reset_token = memory_hook.CURRENT_CONTEXT.set(context_value)
+        persona_value = await persona_hook.resolve_persona_context(self._agent_id, claims)
+        persona_reset_token = persona_hook.CURRENT_PERSONA_CONTEXT.set(persona_value)
         try:
             await self._inner.execute(context, event_queue)
         finally:
@@ -96,7 +109,8 @@ class _MemoryWiredExecutor(AgentExecutor):
             # picks up next. Framework guarantees single execution per
             # request (see AgentExecutor.execute's own docstring), but
             # nothing guarantees single execution per *process* over time.
-            memory_hook.CURRENT_CONTEXT.reset(reset_token)
+            memory_hook.CURRENT_CONTEXT.reset(memory_reset_token)
+            persona_hook.CURRENT_PERSONA_CONTEXT.reset(persona_reset_token)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         await self._inner.cancel(context, event_queue)
@@ -250,7 +264,7 @@ def build_app(
     task_store = DatabaseTaskStore(engine=engine, create_table=True)
 
     request_handler = DefaultRequestHandler(
-        agent_executor=_MemoryWiredExecutor(executor),
+        agent_executor=_PlatformWiredExecutor(executor, agent_id),
         task_store=task_store,
         agent_card=agent_card,
     )

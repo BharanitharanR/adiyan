@@ -7,6 +7,10 @@
     "compose_generic_prompt_template": {
       "value": "Write a short WhatsApp reminder message for this: \"{description}\". This is a self-chat with no name to address - never write \"Hi [Name]\" or any bracketed placeholder, and never invent a name. Do not invent specific details (like actual to-do items) that are not in the description itself - this is a nudge, not a report. If the description gives nothing concrete to say beyond itself, just restate it plainly instead of dressing it up with generic warmth.",
       "description": "Fallback reminder-message wording for anything Journal Agent doesn't cover. Needs a {description} placeholder. Rewritten after a live bug: the original ('warm... nudge') reliably produced unfilled \"Hi [Name]\" placeholders for content-free descriptions, since nothing ever told the model this is a self-chat with no name to fill in. run_routine.py's _looks_like_unfilled_template() is the backstop if this still slips through - the message is dropped rather than sent."
+    },
+    "business_persona_context": {
+      "value": "",
+      "description": "Free-text instructions for how Scheduler should sound and reason when composing a reminder or resolving a schedule on behalf of a specific business's customer. Empty on the platform layer by default; a real value only comes from a vertical override written by mesh/config_agent/skills/apply_vertical_spec.py. Applied only when the sender is not the owner - see mesh/lib/persona_hook.py's own docstring."
     }
   }
 }

@@ -1,3 +1,8 @@
 {
-  "constants": {}
+  "constants": {
+    "business_persona_context": {
+      "value": "",
+      "description": "Free-text instructions for how MicroHabits should sound and reason when acting on behalf of a specific business's customer. Empty on the platform layer by default; a real value only comes from a vertical override written by mesh/config_agent/skills/apply_vertical_spec.py. Applied only when the sender is not the owner - see mesh/lib/persona_hook.py's own docstring."
+    }
+  }
 }

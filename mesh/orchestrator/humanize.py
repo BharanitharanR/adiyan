@@ -95,19 +95,13 @@ async def humanize(
         logger.warning(f'humanize_prompt_template on file is malformed, using seed default: {e}')
         prompt = seeded['value'].format(original_message=original_message, result=result)
 
-    # Business persona, appended rather than folded into the template
-    # itself - same reasoning as analyze.py's run(): free text has no
-    # {placeholder} to accidentally break. Only ever fetched for a
-    # non-owner sender; resolves to empty (a no-op) when no vertical is
-    # active, so this line changes nothing for every deployment that never
-    # touches this feature.
-    if not is_owner:
-        persona_seed = _seeded('business_persona_context')
-        persona_context = await config_sdk.get_constant(
-            AGENT_ID, 'business_persona_context', persona_seed['value'], description=persona_seed['description'],
-        )
-        if persona_context:
-            prompt += f'\n\n{persona_context}'
+    # Business persona is no longer fetched here - mesh/lib/persona_hook.py
+    # (read automatically inside _agent.ask() below, via
+    # mesh/lib/bootstrap.py's executor wrapper) handles this platform-wide
+    # now, for every agent, not just this one. is_owner is still needed
+    # above though, for the vertical_id bypass on humanize_prompt_template
+    # itself - that part is genuinely this function's own, not something
+    # persona_hook generalizes.
 
     # No schema now (see module docstring) - the model has to be told in
     # plain words to skip preamble, since with_structured_output isn't here

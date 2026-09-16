@@ -36,9 +36,11 @@ Ask these one at a time, in a natural conversational tone - don't dump all eight
 
 8. **A short unique ID for your business** - lowercase letters, numbers, and hyphens only (e.g. `vizag-travel-co`). If they don't have one, propose one from the business name and confirm it.
 
+9. **Would customers ever ask this number for a reminder/scheduling, a reflective journaling prompt, or a book being read aloud?** Most businesses only need the core assistant (covered by questions 1-8) - skip this unless the owner's use case plausibly involves one of those. If unsure, default to setting `business_persona_context` everywhere it's accepted anyway; it's free-text and costs nothing to repeat.
+
 ## Producing the output
 
-Once all eight are answered, write the YAML using this exact shape - do not add, rename, or restructure keys beyond what's shown:
+Once the interview is answered, write the YAML using this exact shape - do not add, rename, or restructure keys beyond what's shown. `orchestrator` and `analysis` are always present; the other five agents are optional, added only per question 9:
 
 ```yaml
 vertical_id: <the id from question 8>
@@ -64,6 +66,33 @@ agents:
       business_persona_context: |
         <the SAME paragraph as orchestrator's above - both agents need it, since
         one reasons and the other writes the final reply>
+
+  # Optional, only when question 9 says a touchpoint applies - each block is
+  # identical in shape, just business_persona_context on its own:
+  scheduler:
+    constants:
+      business_persona_context: |
+        <the SAME paragraph as orchestrator's above>
+
+  journal:
+    constants:
+      business_persona_context: |
+        <the SAME paragraph as orchestrator's above>
+
+  adiyan_reader:
+    constants:
+      business_persona_context: |
+        <the SAME paragraph as orchestrator's above>
+
+  config_agent:
+    constants:
+      business_persona_context: |
+        <the SAME paragraph as orchestrator's above>
+
+  micro_habits:
+    constants:
+      business_persona_context: |
+        <the SAME paragraph as orchestrator's above>
 ```
 
 Rules for filling this in:
@@ -71,6 +100,7 @@ Rules for filling this in:
 - Keep it under ~200 words. This gets read on every single customer message - long, rambling instructions cost real money and slow every reply down.
 - `strict_grounding: true` if the owner wants to minimize the assistant saying anything not backed by an uploaded document. `false` if they're fine with it using judgment/estimates.
 - Every hard rule from question 5 and every boundary from question 7 must actually appear somewhere in `business_persona_context` - don't silently drop one because it didn't fit neatly.
+- `scheduler`, `journal`, `adiyan_reader`, `config_agent`, `micro_habits` only ever get `business_persona_context` - never `strict_grounding`, `summon_phrase`, or `card_description`, which don't exist on those agents. See `references/config-vocabulary.md` for the full field list per agent.
 
 ## Handing it back
 

@@ -28,6 +28,15 @@ agents:
         back to you" rather than guessing. Payment and cancellation policy
         questions go to the team directly.
 
+  scheduler:
+    constants:
+      business_persona_context: |
+        You are the assistant for Cauvery Trails, a travel agency in
+        Trichy. If a customer asks for a reminder about an upcoming trip
+        or a payment deadline, keep the wording specific to the actual
+        trip details already discussed, not a generic travel platitude.
+        Never invent a departure time or date that wasn't actually given.
+
   analysis:
     constants:
       strict_grounding: false

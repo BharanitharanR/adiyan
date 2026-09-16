@@ -41,7 +41,7 @@ import httpx
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from mesh.lib import config_sdk, llm_log, memory_hook, permissions
+from mesh.lib import config_sdk, llm_log, memory_hook, permissions, persona_hook
 from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
 from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
@@ -294,6 +294,18 @@ class AdiyanAgent:
         earlier tonight: recall today only happens if the model chooses
         to call an optional tool; this happens unconditionally.
 
+        Business-persona hook (mesh/lib/persona_hook.py): same shape and
+        same exclusions as the memory hook just above, for the same
+        reasons - if mesh/lib/bootstrap.py's executor wrapper resolved an
+        active business persona for the caller of this whole A2A request
+        (never for the owner's own messages - see persona_hook.py's own
+        docstring), it's prepended to `prompt` right alongside the memory
+        block, automatically, no caller of ask() changes. This is what
+        makes a brand-new agent business-persona-aware the moment it calls
+        bootstrap.serve() like every other agent already must - adding its
+        own `business_persona_context` seed constant is the only step it
+        ever needs; reading it back happens here, once, forever.
+
         think: explicit thinking-mode toggle for models that support it
         (confirmed live this session: qwen3:8b-16k reports 'thinking' in
         its own /api/show capabilities) - True forces it on, False forces
@@ -319,9 +331,41 @@ class AdiyanAgent:
         second, fabricated question-and-answer exchange past its real
         answer with nothing to stop it. Ignored (never sent to Ollama) for
         any other call shape."""
-        memory_context = memory_hook.CURRENT_CONTEXT.get() if schema is None and image_b64 is None and not raw else ''
-        if memory_context:
-            prompt = f'{memory_context}\n\n{prompt}'
+        # Same exclusion for both blocks, same reasoning: skill_router.py's
+        # classify()/extract() (stage='classify'/'extract', the two
+        # highest-volume schema callers of this method) need the model
+        # parsing structured output strictly from `prompt` alone - a
+        # business persona paragraph ahead of a fixed skill list or an
+        # exact-wording extraction risks degrading that decision for no
+        # benefit. raw would literally vocalize either block at the start
+        # of a synthesized voice note, since Orpheus has no idea that text
+        # isn't meant to be spoken.
+        #
+        # Deliberately NOT "any schema call" - confirmed live this session
+        # that this excluded far more than classify/extract without
+        # anyone intending it to: Journal Agent's craft_reflection_prompt
+        # (stage='craft_generic'/'craft_personalized') and Scheduler's
+        # compose_generic/resolve_schedule all pass a schema too, purely to
+        # get a clean {field: value} return shape, not because they're
+        # picking from a fixed list or extracting exact wording - these are
+        # genuine content-generation calls that should see both blocks the
+        # same as any plain-text call. Scoped to the two real stage names
+        # instead, so adding business_persona_context to more agents (see
+        # persona_hook.py's own docstring) actually reaches their prompts
+        # instead of being silently excluded by the mere presence of a
+        # schema.
+        _inject_context = (schema is None or stage not in ('classify', 'extract')) and image_b64 is None and not raw
+        persona_context = persona_hook.CURRENT_PERSONA_CONTEXT.get() if _inject_context else ''
+        memory_context = memory_hook.CURRENT_CONTEXT.get() if _inject_context else ''
+        # Persona (who this agent is being, platform-wide for this whole
+        # request) ahead of memory (what's specifically known about this
+        # one person) - the frame comes before the specifics it's applied
+        # to. join() over two plain string concatenations so neither block
+        # being empty (the common case - most deployments never activate a
+        # vertical) needs its own special-cased if/elif here.
+        context_prefix = '\n\n'.join(block for block in (persona_context, memory_context) if block)
+        if context_prefix:
+            prompt = f'{context_prefix}\n\n{prompt}'
 
         # Central LLM logging (mesh/lib/llm_log.py): every branch below logs
         # its own prompt/response right at its own return point, since each
