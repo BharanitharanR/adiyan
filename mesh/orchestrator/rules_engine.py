@@ -52,13 +52,17 @@ ADIYAN_MENTION = DEFAULT_SUMMON_PHRASE
 
 
 async def get_summon_phrase() -> str:
-    """The phrase a message must contain (anywhere, case-insensitive) for
-    Adiyan to respond at all. Dashboard-editable; defaults to '@adiyan'. A
-    blank configured value falls back to the default rather than meaning
-    "respond to everything" - an empty summon phrase would re-open the
-    exact ambient-reply / echo loop this gate exists to close."""
+    """The PLATFORM layer's own phrase - '@adiyan' unless the platform
+    default itself was edited on the dashboard. Explicit vertical_id=
+    PLATFORM_VERTICAL, not the old implicit "whatever's deployment-wide
+    active" resolution - see _resolve_summoned_vertical()'s own docstring
+    for why '@adiyan' now always means platform defaults specifically, even
+    while another vertical's own phrase is also live. A blank configured
+    value falls back to the default rather than meaning "respond to
+    everything" - an empty summon phrase would re-open the exact
+    ambient-reply / echo loop this gate exists to close."""
     phrase = await config_sdk.get_constant(
-        AGENT_ID, 'summon_phrase', DEFAULT_SUMMON_PHRASE,
+        AGENT_ID, 'summon_phrase', DEFAULT_SUMMON_PHRASE, vertical_id=config_sdk.PLATFORM_VERTICAL,
         description=(
             'Text a message must contain (anywhere, case-insensitive) for Adiyan to respond '
             'at all - applies to every sender and every chat. "register me" / "unregister me" '
@@ -66,6 +70,54 @@ async def get_summon_phrase() -> str:
         ),
     )
     return (phrase or DEFAULT_SUMMON_PHRASE).strip().lower()
+
+
+async def _resolve_summoned_vertical(text: str) -> Tuple[bool, Optional[str]]:
+    """(summoned, vertical_id_or_None) - checks every real vertical's own
+    summon_phrase FIRST (each an explicit, independent lookup, never the
+    old implicit "whatever's deployment-wide active" fallback), then the
+    platform's own '@adiyan'. Returns the first phrase actually found in
+    the text; a vertical whose phrase isn't present doesn't apply, no
+    matter how many other verticals exist.
+
+    This is what lets N business verticals coexist on one deployment:
+    "which vertical applies" is now a property of THIS message (which
+    phrase it contains), not a single global toggle every agent asks
+    config_sdk for. '@adiyan' always means platform defaults specifically
+    now, even while a vertical's own phrase is also live - see
+    get_summon_phrase()'s own docstring. If two verticals were ever
+    misconfigured with the same phrase, the first one found wins silently;
+    apply_vertical_spec.py is responsible for refusing that collision
+    before it can ever be written.
+
+    vertical_enabled (a constant, default True) is the deactivate_vertical/
+    activate_vertical toggle under this model - a disabled vertical's
+    AgentConfig documents (and its own summon_phrase) are left completely
+    intact, just skipped here, so re-activating it later never needs the
+    phrase re-entered or the spec re-uploaded.
+
+    (False, None) means no phrase matched at all - the caller's existing
+    thumb rule (no summon phrase, no response) applies unchanged."""
+    text_lower = text.lower()
+    for vertical_id in await config_sdk.list_vertical_ids(AGENT_ID):
+        # get_vertical_own_constant, deliberately not get_constant - a
+        # vertical that never set its own summon_phrase must be skipped
+        # entirely here, not treated as if it explicitly matched the
+        # platform default. Confirmed live this session as a real bug: a
+        # leftover test vertical with no phrase of its own was silently
+        # shadowing '@adiyan' the moment it was listed first.
+        phrase = await config_sdk.get_vertical_own_constant(AGENT_ID, vertical_id, 'summon_phrase')
+        if not isinstance(phrase, str) or not phrase.strip():
+            continue
+        enabled = await config_sdk.get_constant(AGENT_ID, 'vertical_enabled', True, vertical_id=vertical_id)
+        if not enabled:
+            continue
+        if phrase.strip().lower() in text_lower:
+            return True, vertical_id
+    platform_phrase = await get_summon_phrase()
+    if platform_phrase in text_lower:
+        return True, None
+    return False, None
 
 
 def strip_summon_phrase(text: str, phrase: str = DEFAULT_SUMMON_PHRASE) -> str:
@@ -197,17 +249,25 @@ async def check(
     from_number: Optional[str],
     cfg: Dict[str, Any],
     is_self_chat: bool = False,
-) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (reply, tier). reply is set if the rules engine has already
-    handled this message (registration, unregistration, or an add-named-
-    contact admin command) - the caller should send that reply and stop,
-    not route further. reply is None if the message should proceed to
-    normal routing - which now requires the summon phrase (get_summon_phrase(),
-    dashboard-configurable, default '@adiyan') to be present, for BOTH the
-    owner (in their self-chat or a client's chat) AND a registered client.
-    A registered client's message with no register/unregister command and
-    no summon phrase returns (None, None): silence. tier is the permission
-    tier (mesh/lib/permissions.py) to mint a token for before routing.
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Returns (reply, tier, vertical_id). reply is set if the rules engine
+    has already handled this message (registration, unregistration, or an
+    add-named-contact admin command) - the caller should send that reply and
+    stop, not route further. reply is None if the message should proceed to
+    normal routing - which now requires a summon phrase to be present, for
+    BOTH the owner (in their self-chat or a client's chat) AND a registered
+    client. A registered client's message with no register/unregister
+    command and no summon phrase returns (None, None, None): silence. tier
+    is the permission tier (mesh/lib/permissions.py) to mint a token for
+    before routing.
+
+    vertical_id is which business vertical's own phrase matched
+    (_resolve_summoned_vertical()), or None for the platform default
+    '@adiyan' / no match at all - the caller threads this into every
+    mint_token() call for this message, which is what makes N verticals
+    able to coexist on one deployment (see permissions.mint_token()'s own
+    docstring): which vertical applies is resolved once, here, from this
+    message's own text, not asked ambiently downstream by every agent.
 
     is_self_chat matters only for deciding whether an owner-authored message
     (is_owner(from_number) is True) should trigger at all - see the owner
@@ -218,19 +278,19 @@ async def check(
     with a confused fallback message - "is_owner" alone can't tell an actual
     command from you just talking to someone.
 
-    (None, None) - reply AND tier both unset - means either an unregistered
-    stranger with no register/unregister command, or an owner-authored
-    message that isn't eligible to trigger Adiyan at all (see below): stay
-    completely silent, same as the legacy ValidatorAgent's behavior for the
-    stranger case. Confirmed live why the stranger case has to be true
-    silence, not even a canned rejection reply: an active reply to every
-    unregistered sender, with no group exclusion upstream either, is what
-    let a single WhatsApp group flood back a "not registered" reply into
-    itself for every message any member sent. The caller must check for
-    this exact (None, None) combination and stop before ever calling
+    (None, None, None) - reply AND tier both unset - means either an
+    unregistered stranger with no register/unregister command, or an
+    owner-authored message that isn't eligible to trigger Adiyan at all (see
+    below): stay completely silent, same as the legacy ValidatorAgent's
+    behavior for the stranger case. Confirmed live why the stranger case has
+    to be true silence, not even a canned rejection reply: an active reply
+    to every unregistered sender, with no group exclusion upstream either,
+    is what let a single WhatsApp group flood back a "not registered" reply
+    into itself for every message any member sent. The caller must check
+    for reply is None and tier is None and stop before ever calling
     send_message - it's the only combination that means "send nothing," as
-    opposed to (None, tier) meaning "proceed to
-    routing," so don't restructure this without preserving that."""
+    opposed to (None, tier, ...) meaning "proceed to routing," so don't
+    restructure this without preserving that."""
     # Every clients-table read/write below goes through this, never the raw
     # chat_id - see db.resolve_identity_key()'s docstring: the same contact
     # can be addressed in different JID forms depending on which field you
@@ -239,15 +299,16 @@ async def check(
 
     # The thumb rule: no summon phrase in the message, no response - for
     # anyone, in any chat (see this module's own header comment and the
-    # 2026-09-10 runaway-loop incident). Fetched once here; register/
-    # unregister below are the only things allowed past without it.
-    summon_phrase = await get_summon_phrase()
-    summoned = summon_phrase in text.lower()
+    # 2026-09-10 runaway-loop incident). Resolved once here (against every
+    # live vertical's own phrase, not just the platform default - see
+    # _resolve_summoned_vertical()'s own docstring); register/unregister
+    # below are the only things allowed past without it.
+    summoned, vertical_id = await _resolve_summoned_vertical(text)
 
     if await is_owner(from_number):
         admin_reply = await _try_add_named_contact(conn, text, cfg)
         if admin_reply is not None:
-            return admin_reply, 'owner'
+            return admin_reply, 'owner', vertical_id
 
         # An owner-authored message only ever triggers Adiyan in your own
         # self-chat or an already-registered client's chat - never in a
@@ -257,31 +318,31 @@ async def check(
         # message.
         eligible_chat = is_self_chat or db.is_whitelisted(conn, identity_key)
         if not eligible_chat or not summoned:
-            return None, None
-        return None, 'owner'
+            return None, None, None
+        return None, 'owner', vertical_id
 
     command = _detect_command(text)
     whitelisted = db.is_whitelisted(conn, identity_key)
 
     if command == 'register':
         db.add_client(conn, identity_key, contact_name)
-        return REGISTERED_REPLY, permissions.default_client_tier()
+        return REGISTERED_REPLY, permissions.default_client_tier(), None
     if command == 'unregister':
         if whitelisted:
             db.remove_client(conn, identity_key)
-            return UNREGISTERED_REPLY, None
+            return UNREGISTERED_REPLY, None, None
         else:
-            return None, None
+            return None, None, None
     if not whitelisted:
         # Silent, not a rejection reply - see check()'s docstring for why.
-        return None, None
+        return None, None, None
 
     # Registered client, real message: same thumb rule as the owner branch.
     # Without this, every message a client sent (and every watermark-less
     # echo of Adiyan's own reply) re-entered routing and could be answered -
     # the exact gap behind the 2026-09-10 loop in a client chat.
     if not summoned:
-        return None, None
+        return None, None, None
 
     tier = db.get_metadata(conn, identity_key).get('permission_type') or permissions.default_client_tier()
-    return None, tier
+    return None, tier, vertical_id

@@ -51,18 +51,29 @@ CURRENT_PERSONA_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar('a
 
 async def resolve_persona_context(agent_id: str, claims: Optional[Dict[str, Any]]) -> str:
     """'' for the owner, for a machine/service caller (no real `tier`
-    claim resolves to 'owner'), or when no vertical is active - every
-    reader already treats '' as "nothing to add." Resolves through
-    config_sdk's normal vertical > platform layering (no explicit
-    vertical_id passed), so this is '' by construction whenever nothing is
-    active, with no special-casing needed here for that case - only the
-    owner check below is this module's own logic; everything else is
-    config_sdk's existing resolution doing its job."""
+    claim resolves to 'owner'), or when no vertical applies - every reader
+    already treats '' as "nothing to add."
+
+    vertical_id comes from claims['vertical_id'] - permissions.mint_token()'s
+    own field, set once per message by rules_engine.check()'s phrase-registry
+    resolution (which of N coexisting verticals' own summon phrase this
+    message actually matched), not asked ambiently from config_sdk's legacy
+    "whatever's deployment-wide active" state. Omitted (None) falls through
+    to that legacy resolution unchanged - a caller that never adopts
+    per-message vertical propagation keeps working exactly as before.
+
+    Orchestrator's OWN persona (read by its own ask() calls, e.g.
+    humanize()) is a special case: bootstrap.py's wrapper resolves this
+    once, before handle_message.py has even parsed the incoming text, so it
+    has no vertical_id yet at that point - see handle_message.py's own
+    re-set of persona_hook.CURRENT_PERSONA_CONTEXT once rules_engine.check()
+    actually determines it."""
     is_owner = bool(claims) and claims.get('tier') == 'owner'
     if is_owner:
         return ''
+    vertical_id = (claims or {}).get('vertical_id')
     try:
-        return await config_sdk.get_constant(agent_id, 'business_persona_context', '')
+        return await config_sdk.get_constant(agent_id, 'business_persona_context', '', vertical_id=vertical_id)
     except Exception as e:
         logger.warning(f'Could not resolve business_persona_context for {agent_id!r}: {e}')
         return ''

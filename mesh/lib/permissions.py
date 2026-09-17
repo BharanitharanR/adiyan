@@ -62,15 +62,30 @@ def default_client_tier() -> str:
     return _load_config()['default_client_tier']
 
 
-def mint_token(subject: str, tier: str) -> str:
+def mint_token(subject: str, tier: str, vertical_id: Optional[str] = None) -> str:
     """subject: chat_id for a real WhatsApp identity, or 'service' for an
     internal machine caller with no WhatsApp identity behind it. tier: the
     permission tier that decides what subject can do - 'owner', 'service',
     or a client's own permission_type (usually 'standard', but
     clients.metadata.permission_type can be set to any tier defined in
-    permissions_config.json)."""
+    permissions_config.json).
+
+    vertical_id: which business vertical's own summon phrase this specific
+    message matched (rules_engine.check()'s own phrase-registry resolution),
+    or None for a plain '@adiyan' message / a machine caller with no such
+    concept. Carried in the token, not resolved ambiently downstream -
+    letting two verticals coexist on one deployment means "which vertical
+    applies" is a property of THIS message, not a single deployment-wide
+    toggle every agent can independently ask config_sdk for. Every hop this
+    token travels (bootstrap.py's executor wrapper, analyze.py's own
+    owner-bypass) reads it from here; omitting it is exactly the old
+    behavior (falls back to config_sdk's legacy "whatever's deployment-wide
+    active" resolution), so existing single-vertical callers need no
+    changes."""
     now = int(time.time())
-    claims = {'sub': subject, 'tier': tier, 'iat': now, 'exp': now + TOKEN_TTL_SECONDS}
+    claims: Dict[str, Any] = {'sub': subject, 'tier': tier, 'iat': now, 'exp': now + TOKEN_TTL_SECONDS}
+    if vertical_id is not None:
+        claims['vertical_id'] = vertical_id
     return jwt.encode(claims, _signing_key(), algorithm=ALGORITHM)
 
 

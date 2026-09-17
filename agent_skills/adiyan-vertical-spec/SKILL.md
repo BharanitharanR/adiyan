@@ -12,7 +12,9 @@ metadata:
 
 ## What this produces
 
-A single YAML file the business owner uploads to their Adiyan WhatsApp number. Adiyan reads it, creates a "vertical" (an isolated business-configuration profile), and activates it - from then on, every message from that owner's customers gets answered in that business's voice, under that business's rules, automatically. The owner's own messages to Adiyan are unaffected; only customer-facing replies change.
+A single YAML file the business owner uploads to their Adiyan WhatsApp number. Adiyan reads it, creates a "vertical" (an isolated business-configuration profile), and makes it live - immediately reachable by its own wake phrase (`summon_phrase`), alongside the plain `@adiyan` default and any other business vertical already uploaded. Multiple businesses can run on the same Adiyan number at once this way; a customer's message is routed to whichever vertical's own phrase it actually contains. The owner's own messages to Adiyan are unaffected regardless of which phrase they use; only customer-facing replies change.
+
+Each vertical needs its own, genuinely unique `summon_phrase` - Adiyan refuses to apply a spec whose phrase is already used by another live vertical, so double-check question 2's answer isn't a phrase already claimed (e.g. by asking the owner, or checking with `get_active_vertical` if you have access to the deployment).
 
 Read `references/config-vocabulary.md` before drafting the YAML - it lists exactly which fields exist and what each one actually controls. **Never invent a field name that isn't in that reference.** Adiyan will reject anything it doesn't recognize.
 

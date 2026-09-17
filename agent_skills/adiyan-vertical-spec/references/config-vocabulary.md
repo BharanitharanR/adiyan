@@ -8,7 +8,7 @@ Adiyan has over 80 configurable fields across 20+ internal agents in total. This
 
 | Field | Type | What it controls |
 |---|---|---|
-| `summon_phrase` | string | The word/phrase a customer's message must contain (anywhere, case-insensitive) for Adiyan to respond at all. Default is `@adiyan`. Keep it short, no spaces work best. |
+| `summon_phrase` | string | The word/phrase a customer's message must contain (anywhere, case-insensitive) for THIS vertical to respond. Default is `@adiyan`, but that's the platform default - a real vertical needs its OWN distinct phrase (e.g. `@marinaspice`), since multiple verticals can be live on one Adiyan number at once and Adiyan refuses to apply a spec whose phrase already belongs to another vertical. Keep it short, no spaces work best. |
 | `card_description` | string | One-sentence public description of what this Adiyan number does - shown in its own discovery metadata. |
 | `business_persona_context` | string (multi-line) | Free-text instructions, written directly TO Adiyan, describing how to behave toward this business's customers - tone, hard rules, boundaries, fallback phrasing. This is the main lever the interview produces. |
 

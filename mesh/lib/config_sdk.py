@@ -428,6 +428,25 @@ async def get_full_config(agent_id: str, vertical_id: str = PLATFORM_VERTICAL) -
     return {'stages': doc.stages, 'constants': doc.constants, 'descriptions': doc.descriptions}
 
 
+async def get_vertical_own_constant(agent_id: str, vertical_id: str, key: str) -> Any:
+    """The value ONLY if THIS vertical's own document explicitly has `key`
+    set - None otherwise. Deliberately not get_constant(): that function's
+    own auto-seed-on-first-miss returns `default` for a vertical with
+    nothing on file without ever writing it into that vertical's own
+    constants, so a caller checking "does THIS vertical have its own X"
+    (rules_engine.py's phrase registry, most pointedly) would otherwise see
+    every never-configured vertical as if it had explicitly set the exact
+    same default value - confirmed live this session as a real bug: a
+    leftover test vertical with no summon_phrase of its own was silently
+    matching '@adiyan' too, shadowing the platform default the moment it
+    happened to be listed before it. Never touches the platform layer and
+    never seeds anything - a pure "what does this one document say" read."""
+    doc = await _get_agent_doc(agent_id, vertical_id)
+    if doc is None or key not in doc.constants:
+        return None
+    return doc.constants[key]
+
+
 async def list_vertical_ids(agent_id: str) -> List[str]:
     """Every vertical_id that has its own override document for this
     agent_id (excluding the platform layer itself) - lets the dashboard

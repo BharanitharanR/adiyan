@@ -54,7 +54,8 @@
       "allow": [
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document",
-        "mcp.whatsapp.send_image"
+        "mcp.whatsapp.send_image",
+        "mcp.whatsapp.send_location"
       ]
     },
     "config_server_otp": {
@@ -96,7 +97,8 @@
         "analysis.analyse_this",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document",
-        "mcp.whatsapp.send_image"
+        "mcp.whatsapp.send_image",
+        "mcp.whatsapp.send_location"
       ]
     }
   }

@@ -549,19 +549,25 @@ def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]
 
 async def run(
     instruction: str, source_filename: Optional[str] = None, contact_name: Optional[str] = None,
-    requester_id: Optional[str] = None, is_owner: bool = False,
+    requester_id: Optional[str] = None, is_owner: bool = False, vertical_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     # The owner always gets pure platform behavior, regardless of which
-    # vertical is currently active - explicit config_sdk.PLATFORM_VERTICAL,
-    # not just omitting vertical_id, since omitting it still falls back to
-    # whatever's deployment-wide active (see config_sdk._resolve_vertical's
-    # own docstring). Without this, a business owner testing their own
-    # Adiyan number would see their OWN customer-facing persona applied to
-    # their own messages the moment they activated it - confirmed live this
-    # session that agent_executor.py already resolves is_owner correctly
-    # from the caller's real token before this function ever sees it, so
-    # this is the one place actually meant to branch on it.
-    vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else None
+    # vertical_id was resolved for this message - explicit
+    # config_sdk.PLATFORM_VERTICAL, not just the caller-supplied vertical_id,
+    # since a business owner testing their own Adiyan number must never see
+    # their OWN customer-facing persona applied to their own messages, no
+    # matter which vertical's phrase they happened to type. Confirmed live
+    # this session that agent_executor.py already resolves is_owner
+    # correctly from the caller's real token before this function ever sees
+    # it, so this is the one place actually meant to branch on it.
+    #
+    # vertical_id itself comes from rules_engine.check()'s phrase-registry
+    # resolution (mesh/orchestrator/rules_engine.py), carried in the token's
+    # claims and forwarded by agent_executor.py - which of N coexisting
+    # verticals this message's own summon phrase matched, not config_sdk's
+    # legacy deployment-wide "active" toggle. None here (a caller that
+    # never adopted this) falls back to that legacy resolution unchanged.
+    vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else vertical_id
 
     cfg = await config_sdk.get_stage_config(
         AGENT_ID, 'react', load_runtime_config(AGENT_CODE_DIR)['react'], vertical_id=vertical_id,

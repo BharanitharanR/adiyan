@@ -57,7 +57,7 @@ def _seeded(key: str) -> Dict[str, Any]:
 
 async def humanize(
     original_message: str, result: Dict[str, Any], cfg: Dict[str, Any], community: Optional[str] = None,
-    language: Optional[str] = None, is_owner: bool = False,
+    language: Optional[str] = None, is_owner: bool = False, vertical_id: Optional[str] = None,
 ) -> str:
     """language: when given, the reply is composed directly in that
     language instead of whatever language `original_message` happens to
@@ -75,15 +75,20 @@ async def humanize(
     pass this explicitly - it does not default to safe-for-customers or
     safe-for-owner, since either wrong default is wrong for someone).
     Forces the platform layer (config_sdk.PLATFORM_VERTICAL), bypassing
-    whatever business vertical is currently active deployment-wide, so the
-    owner always sees Adiyan's own voice - never their own customer-facing
-    persona - regardless of what's activated. See analyze.py's run() for
-    the same branch applied to reasoning rather than reply-wording."""
-    vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else None
+    whatever vertical_id was passed in, so the owner always sees Adiyan's
+    own voice - never their own customer-facing persona. See analyze.py's
+    run() for the same branch applied to reasoning rather than
+    reply-wording.
+
+    vertical_id: which vertical's own summon phrase this message matched
+    (rules_engine.check(), threaded through handle_message.py's own call
+    sites) - None falls back to config_sdk's legacy deployment-wide
+    "active" resolution, same as omitting it always has."""
+    effective_vertical_id = config_sdk.PLATFORM_VERTICAL if is_owner else vertical_id
 
     seeded = _seeded('humanize_prompt_template')
     template = await config_sdk.get_constant(
-        AGENT_ID, 'humanize_prompt_template', seeded['value'], vertical_id=vertical_id, description=seeded['description'],
+        AGENT_ID, 'humanize_prompt_template', seeded['value'], vertical_id=effective_vertical_id, description=seeded['description'],
     )
     try:
         prompt = template.format(original_message=original_message, result=result)

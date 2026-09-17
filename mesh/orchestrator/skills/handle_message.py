@@ -37,7 +37,7 @@ from indic_transliteration import sanscript
 from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 
-from mesh.lib import chat_cache, config_sdk, permissions, vision
+from mesh.lib import chat_cache, config_sdk, permissions, persona_hook, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.audio_transcribe import language_display_name, transcribe_audio
@@ -272,7 +272,9 @@ async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optio
     return params.book_reference if params.book_reference.strip() else None
 
 
-async def _start_book_reading(book_reference: str, chat_id: str, from_number: Optional[str], tier: str) -> Optional[str]:
+async def _start_book_reading(
+    book_reference: str, chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
     """Reply text for the sender, or None only on a genuinely unexpected
     failure (an agent unreachable, the calls themselves erroring) - same
     silent-on-unexpected-failure convention run()'s own except-block already
@@ -301,7 +303,7 @@ async def _start_book_reading(book_reference: str, chat_id: str, from_number: Op
     if memory_url is None:
         return "Knowledge Bank isn't reachable right now - try again in a moment."
 
-    token = permissions.mint_token(chat_id, tier)
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
     try:
         resolved = await call_agent(memory_url, 'resolve_book', {'query': book_reference}, token=token)
     except Exception as e:
@@ -407,7 +409,9 @@ async def _resolve_read_now_request(text: str, cfg: Dict[str, Any]) -> bool:
     return choice.skill_id == 'read_now'
 
 
-async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) -> Optional[str]:
+async def _read_page_now(
+    chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
     """Reply text, or None only on a genuinely unexpected failure - same
     convention every other action function in this module follows. Calls
     adiyan_reader's read_now directly with phone_number only
@@ -423,7 +427,7 @@ async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) ->
     if reader_url is None:
         return "The book reader isn't reachable right now - try again in a moment."
 
-    token = permissions.mint_token(chat_id, tier)
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
     try:
         result = await call_agent(reader_url, 'read_now', {'phone_number': from_number or chat_id}, token=token)
     except Exception as e:
@@ -435,6 +439,7 @@ async def _read_page_now(chat_id: str, from_number: Optional[str], tier: str) ->
 
 async def _ingest_into_knowledge_base(
     media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str], do_ocr: bool = True,
+    vertical_id: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """(reply, source_filename). reply is None only for a genuinely
     unexpected failure (see this module's own silent-on-failure convention,
@@ -492,7 +497,7 @@ async def _ingest_into_knowledge_base(
         extension = 'pdf' if mimetype == 'application/pdf' else mimetype.split('/')[-1]
         filename = f'whatsapp_upload.{extension}'
 
-    token = permissions.mint_token(chat_id, tier)
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
     try:
         result = await call_agent(memory_url, 'ingest_document', {
             'content_b64': media['data'],
@@ -653,7 +658,9 @@ async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Opti
     return caption if choice.skill_id == 'analyze_upload' else None
 
 
-async def _run_analysis(instruction: str, source_filename: str, chat_id: str, tier: str) -> Optional[Dict[str, Any]]:
+async def _run_analysis(
+    instruction: str, source_filename: str, chat_id: str, tier: str, vertical_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """None on any failure (Analysis Agent unreachable, the call itself
     erroring) - the caller falls back to the plain ingest confirmation
     rather than surfacing a raw error, same silent-on-unexpected-failure
@@ -668,7 +675,7 @@ async def _run_analysis(instruction: str, source_filename: str, chat_id: str, ti
         logger.error('Analysis Agent not present in the current agent pool')
         return None
 
-    token = permissions.mint_token(chat_id, tier)
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
     try:
         return await call_agent(analysis_url, 'analyse_this', {
             'instruction': instruction,
@@ -708,6 +715,7 @@ async def run(
     image: Optional[Dict[str, Any]] = None,
     document: Optional[Dict[str, Any]] = None,
     audio: Optional[Dict[str, Any]] = None,
+    location: Optional[Dict[str, Any]] = None,
     is_self_chat: bool = False,
 ) -> Dict[str, Any]:
     # Mongo-backed via mesh/lib/config_sdk.py (pilot agent for the central
@@ -720,6 +728,19 @@ async def run(
         AGENT_ID, 'whatsapp_mcp_url', WHATSAPP_MCP_URL,
         description='URL of the WhatsApp MCP server used to actually send the reply back to the sender.',
     )
+
+    # A shared location carries no body text of its own (same as a photo or
+    # voice note) - folded into `text` here, same principle as
+    # transcribe_audio() below, so a customer sharing their location never
+    # silently vanishes with nothing for the rest of this pipeline (rules_
+    # engine's own gate, routing, the ReAct loop) to see. Only when there's
+    # no caption already - a location sent WITH a typed message (e.g. "here's
+    # @adiyan where to deliver") keeps that text untouched, the coordinates
+    # just aren't described a second time in it.
+    if location is not None and not text.strip():
+        parts = [p for p in (location.get('description'), location.get('address')) if p]
+        where = ' - '.join(parts) if parts else f"{location.get('latitude')}, {location.get('longitude')}"
+        text = f'[shared a location: {where}]'
 
     text, kb_pending = await _resolve_image_intent(text, image)
     if document is not None:
@@ -820,7 +841,7 @@ async def run(
     reply_language = language_display_name(detected_language) if audio_pending else None
 
     conn = db.connect(state_db_path(AGENT_ID))
-    gate_reply, tier = await rules_engine.check(
+    gate_reply, tier, vertical_id = await rules_engine.check(
         conn, chat_id, contact_name, text, from_number, cfg['add_named_contact'],
         is_self_chat=is_self_chat,
     )
@@ -830,12 +851,32 @@ async def run(
         # reaches send_message at all, unlike every other branch below.
         return {'chat_id': chat_id, 'reply': None, 'delivered': False}
 
-    # Strip the summon phrase before routing - every message that reaches
-    # here carried it (that's now the thumb rule for owner and client
-    # alike, see rules_engine.check()), and it's a signal about whether to
-    # respond, not part of the actual request. Uses the same dashboard-
-    # configured phrase the gate checked.
-    summon_phrase = await rules_engine.get_summon_phrase()
+    # Orchestrator's OWN persona (read by this process's own ask() calls,
+    # e.g. humanize() below) was already resolved once by bootstrap.py's
+    # wrapper - before this function had even parsed the incoming text, so
+    # before rules_engine.check() could determine which vertical (if any)
+    # actually applies. Re-set here with the now-known answer, overriding
+    # that earlier guess for the rest of THIS request - contextvars support
+    # exactly this (a later .set() in the same task is what every later
+    # .get() in it sees). Skipped for the owner: persona_hook.py's own
+    # resolve_persona_context() already forces '' for is_owner regardless of
+    # vertical_id, so there's nothing to correct.
+    if tier != 'owner':
+        persona_hook.CURRENT_PERSONA_CONTEXT.set(
+            await persona_hook.resolve_persona_context(AGENT_ID, {'tier': tier, 'vertical_id': vertical_id})
+        )
+
+    # Strip whichever phrase actually matched - vertical_id is None for the
+    # platform default, or a specific vertical whose OWN phrase won instead
+    # (see rules_engine.check()'s own docstring on why "which vertical
+    # applies" is now resolved per-message, not read from one deployment-
+    # wide toggle). Every mint_token() call below carries this same
+    # vertical_id, which is what lets two verticals' messages get correctly
+    # separated even while both are live on this one deployment.
+    summon_phrase = await config_sdk.get_constant(
+        AGENT_ID, 'summon_phrase', rules_engine.DEFAULT_SUMMON_PHRASE,
+        vertical_id=vertical_id or config_sdk.PLATFORM_VERTICAL,
+    )
     text = rules_engine.strip_summon_phrase(text, summon_phrase)
 
     # POC: a sender can opt this one message into compute_share's
@@ -919,6 +960,7 @@ async def run(
             skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
             ingest_reply, source_filename = await _ingest_into_knowledge_base(
                 media_for_upload, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
+                vertical_id=vertical_id,
             )
             if ingest_reply is None or source_filename is None:
                 # Either ingestion itself failed outright (source_filename
@@ -940,7 +982,7 @@ async def run(
                 if instruction is None:
                     reply = ingest_reply
                 else:
-                    analysis = await _run_analysis(instruction, source_filename, chat_id, tier)
+                    analysis = await _run_analysis(instruction, source_filename, chat_id, tier, vertical_id=vertical_id)
                     if analysis is None:
                         # Analysis failed - still confirm the ingest, which
                         # did genuinely succeed, rather than losing that
@@ -949,7 +991,7 @@ async def run(
                     elif analysis.get('content_b64'):
                         pending_document = analysis
                         caption_source = {k: v for k, v in analysis.items() if k != 'content_b64'}
-                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
                     else:
                         reply = analysis.get('result') or ingest_reply
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
@@ -959,12 +1001,12 @@ async def run(
         # documents. Lazily evaluated (only classified when the branches
         # above didn't already claim this message) - no wasted LLM call on
         # every upload or gate-handled message.
-        reply = await _start_book_reading(book_reference, chat_id, from_number, tier)
+        reply = await _start_book_reading(book_reference, chat_id, from_number, tier, vertical_id=vertical_id)
     elif await _resolve_read_now_request(text, cfg):
         # Same lazy-evaluation reasoning as the book-reading branch above -
         # only classified once nothing earlier in this chain already
         # claimed the message.
-        reply = await _read_page_now(chat_id, from_number, tier)
+        reply = await _read_page_now(chat_id, from_number, tier, vertical_id=vertical_id)
     elif community == 'communitySearch':
         # The sender explicitly asked to skip this machine entirely, not
         # just the final reply-wording step - route_to_agent()'s own
@@ -998,7 +1040,7 @@ async def run(
             # tier is never None here - the only way to reach this branch is
             # gate_reply being None, and rules_engine.check() only returns a
             # None tier alongside a set reply (the not-registered rejection).
-            token = permissions.mint_token(chat_id, tier)
+            token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
 
             # Short-term chat history, prepended only for the two forward
             # calls below - NOT for route_to_agent()'s own classify() call
@@ -1079,7 +1121,7 @@ async def run(
                     nonlocal pending_document
                     pending_document = result
                     caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                    return await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                    return await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
                 if result.get('result'):
                     # Confirmed live: skipping humanize() here (unlike
                     # every other branch in this function) let Analysis
@@ -1089,7 +1131,7 @@ async def run(
                     # a vegetarian...") rather than a natural reply, the
                     # one branch in this whole function that skipped
                     # the humanize step everything else already gets.
-                    return await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                    return await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
                 return "Sorry, I'm not sure how to help with that yet."
 
             target_url = await route_to_agent(text, cfg['route_to_agent'])
@@ -1131,9 +1173,9 @@ async def run(
                         # to restate.
                         pending_document = result
                         caption_source = {k: v for k, v in result.items() if k != 'content_b64'}
-                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                        reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
                     else:
-                        reply = await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner')
+                        reply = await humanize(text, result, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
         except Exception as e:
             # Confirmed live: this used to reply with the raw exception text
             # ("Did you mean one of: recall_contact_memory,

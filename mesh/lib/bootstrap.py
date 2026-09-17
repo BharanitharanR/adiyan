@@ -13,11 +13,12 @@ mesh/mcp/agent_registry/server.py for why it fetches this agent's own
 agent-card back rather than trusting a self-reported skill list.
 
 Two more things every agent gets for free from calling this, both closing
-the same real gap: activating a vertical (mesh/lib/config_sdk.py's
-set_active_vertical_id()) is supposed to change every agent's behavior at
-once, but the Agent Registry only ever learns an agent's skills by fetching
-its /.well-known/agent-card.json at registration time - once, at startup -
-and never again on its own. Without both pieces below, a vertical's custom
+the same real gap: a business vertical going live (mesh/config_agent/skills/
+apply_vertical_spec.py's write, or activate_vertical/deactivate_vertical
+toggling it) is supposed to change every agent's behavior at once, but the
+Agent Registry only ever learns an agent's skills by fetching its
+/.well-known/agent-card.json at registration time - once, at startup - and
+never again on its own. Without both pieces below, a vertical's custom
 skill description would apply to this agent's own internal classify
 decisions (skills_catalog.py's get_skills() already resolves that live) but
 never reach what Orchestrator sees when deciding whether to route to this
@@ -30,9 +31,11 @@ agent in the first place:
     extend() on the repeated `skills` field, not a plain attribute
     reassignment.
   - The vertical-change poller (always runs, regardless of
-    skills_refresher): watches config_sdk.get_active_vertical_id() and
-    re-registers with the Agent Registry whenever it changes, which is what
-    actually makes the registry re-fetch and store the now-current card.
+    skills_refresher): watches every vertical this agent has any
+    configuration for, plus each one's enabled flag, and re-registers with
+    the Agent Registry whenever that set changes - N verticals can be live
+    at once now (see mesh/orchestrator/rules_engine.py's own docstring),
+    so there's no longer one single deployment-wide value to watch instead.
 """
 import asyncio
 import contextlib
@@ -182,18 +185,36 @@ async def _poll_vertical_and_reregister(agent_id: str, url: str) -> None:
     of competing with it.
 
     See this module's own top docstring for why this exists at all: the
-    Agent Registry never re-fetches a live agent-card on its own, so
-    activating a vertical needs *something* to trigger a re-fetch, or
-    Orchestrator's routing decisions keep seeing whatever skill description
-    was true at this agent's last startup."""
-    last_known_vertical = _UNCHECKED
+    Agent Registry never re-fetches a live agent-card on its own, so a new
+    or newly-(de)activated vertical needs *something* to trigger a
+    re-fetch, or Orchestrator's routing decisions keep seeing whatever skill
+    description was true at this agent's last startup.
+
+    Watches (vertical_id, enabled) for every vertical this agent has ANY
+    configuration for - not config_sdk.get_active_vertical_id() (a single
+    deployment-wide value, retired for this purpose now that phrase-based
+    routing lets N verticals be live at once, see
+    mesh/orchestrator/rules_engine.py's own docstring). A vertical appearing
+    for the first time (apply_vertical_spec.py's write) or having its
+    enabled flag flip (activate_vertical/deactivate_vertical) both show up
+    as a fingerprint change here, the same two transitions the old single
+    value used to catch. Editing an already-enabled vertical's own
+    card_description in place without touching enabled is NOT caught by
+    this poll and never was by the old value either - the same
+    pre-existing gap, not a new one."""
+    last_known_fingerprint = _UNCHECKED
     while True:
         try:
-            current = await config_sdk.get_active_vertical_id()
-            if current != last_known_vertical:
+            vertical_ids = await config_sdk.list_vertical_ids(agent_id)
+            pairs = []
+            for vid in vertical_ids:
+                enabled = await config_sdk.get_constant(agent_id, 'vertical_enabled', True, vertical_id=vid)
+                pairs.append((vid, enabled))
+            fingerprint = frozenset(pairs)
+            if fingerprint != last_known_fingerprint:
                 if await registry_client.register(agent_id, url):
-                    logger.info(f"Re-registered {agent_id!r} after active vertical changed to {current!r}")
-                    last_known_vertical = current
+                    logger.info(f'Re-registered {agent_id!r} after its vertical configuration changed')
+                    last_known_fingerprint = fingerprint
                 # Left unchanged (not re-marked _UNCHECKED) on a failed
                 # re-registration - the next poll retries the same
                 # transition rather than silently giving up on it.

@@ -91,7 +91,34 @@ def _validate_vertical_id(vertical_id: Any) -> str:
     return vertical_id
 
 
-async def _validate_and_collect_writes(spec: Dict[str, Any]) -> list:
+async def _check_summon_phrase_collision(vertical_id: str, new_phrase: Any) -> None:
+    """Raises _SpecError if new_phrase already belongs to a DIFFERENT
+    vertical - phrase-based routing (mesh/orchestrator/rules_engine.py's
+    _resolve_summoned_vertical()) means two verticals sharing one phrase
+    would have the first one found silently shadow the second forever, with
+    no error ever surfacing to either business owner. Re-uploading the SAME
+    vertical's own spec with its own existing phrase is fine (not a
+    collision with itself); a blank/non-string phrase is left to _coerce's
+    own type validation, not this check."""
+    if not isinstance(new_phrase, str) or not new_phrase.strip():
+        return
+    new_phrase_norm = new_phrase.strip().lower()
+    for other_vertical_id in await config_sdk.list_vertical_ids('orchestrator'):
+        if other_vertical_id == vertical_id:
+            continue
+        # get_vertical_own_constant, not get_constant - a vertical with no
+        # phrase of its own must never be compared as if it had explicitly
+        # set one (see rules_engine.py's own fix for the live bug this
+        # exact confusion caused).
+        other_phrase = await config_sdk.get_vertical_own_constant('orchestrator', other_vertical_id, 'summon_phrase')
+        if isinstance(other_phrase, str) and other_phrase.strip().lower() == new_phrase_norm:
+            raise _SpecError(
+                f'summon_phrase {new_phrase!r} is already used by vertical {other_vertical_id!r} - '
+                'pick a different wake phrase so both businesses stay reachable.'
+            )
+
+
+async def _validate_and_collect_writes(spec: Dict[str, Any], vertical_id: str) -> list:
     """Every (agent_id, key, coerced_value) this spec asks for - raises
     _SpecError on the FIRST problem found, rather than collecting a list of
     errors, since any single bad field means nothing should be written."""
@@ -122,6 +149,8 @@ async def _validate_and_collect_writes(spec: Dict[str, Any]) -> list:
                     f'{agent_id}.{key!r} is not settable by a vertical spec. '
                     f'Allowed for {agent_id!r}: {sorted(allowed_keys)}.'
                 )
+            if agent_id == 'orchestrator' and key == 'summon_phrase':
+                await _check_summon_phrase_collision(vertical_id, new_value)
             # Type-matched against whatever's CURRENTLY on the platform layer
             # for this key - same _coerce() update_config.py's own WhatsApp
             # free-text path already relies on, so "strict_grounding: false"
@@ -200,7 +229,7 @@ async def run(content_b64: str, filename: str) -> Dict[str, Any]:
 
     try:
         vertical_id = _validate_vertical_id(spec.get('vertical_id'))
-        writes = await _validate_and_collect_writes(spec)
+        writes = await _validate_and_collect_writes(spec, vertical_id)
     except _SpecError as e:
         return {'applied': False, 'error': str(e)}
 
@@ -213,12 +242,20 @@ async def run(content_b64: str, filename: str) -> Dict[str, Any]:
             logger.error(f'Failed writing {agent_id}.{key} for vertical {vertical_id!r} - config store may be unreachable.')
             return {'applied': False, 'error': 'Could not write the configuration - the config store may be unreachable.'}
 
-    activated = await config_sdk.set_active_vertical_id(vertical_id)
+    # No separate deployment-wide "activation" anymore - phrase-based
+    # routing (mesh/orchestrator/rules_engine.py's _resolve_summoned_vertical())
+    # makes this vertical reachable by its own summon_phrase the moment its
+    # constants exist, alongside every other configured vertical and plain
+    # platform defaults. Explicitly written True (not just left to
+    # vertical_enabled's own default-True) so a spec RE-applied after a
+    # deliberate deactivate_vertical call correctly re-enables it, rather
+    # than silently staying off because a prior write already exists.
+    activated = await config_sdk.set_constant('orchestrator', 'vertical_enabled', True, vertical_id=vertical_id)
     if not activated:
         return {
             'applied': True, 'activated': False, 'vertical_id': vertical_id,
             'written': [f'{a}.{k}' for a, k, _ in writes],
-            'error': 'Wrote the configuration but could not activate it - try activating manually.',
+            'error': 'Wrote the configuration but could not enable it - try activating manually.',
         }
 
     return {

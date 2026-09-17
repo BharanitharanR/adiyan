@@ -73,8 +73,14 @@ class OpenWAAdapter:
             "timestamp": 1691234567890,
             "session_id": "adiyan",
             "whatsapp_message_id": "3EB0XXX@c.us",
-            "from_number": "919080089081"
+            "from_number": "919080089081",
+            "media": null,
+            "location": null
         }
+        `location`, when present, is {latitude, longitude, description, address} -
+        see penwa's wwebjs-message-events.ts, which maps whatsapp-web.js's own
+        Location structure onto the webhook payload's data.location field
+        this reads from.
         """
 
         event_type = webhook_data.get('event')
@@ -227,8 +233,28 @@ class OpenWAAdapter:
                 'filename': raw_media.get('filename') if raw_type == 'document' else None,
             }
 
-        # Ignore messages without body or media
-        if not media and (not message_body or not message_body.strip()):
+        # A shared location - like image/document/audio above, carries no
+        # body text of its own, so without this it hit the empty-message
+        # check just below and vanished silently (confirmed live this
+        # session as the exact same class of bug the voice-note media type
+        # gap was: a real payload field (penwa's wwebjs-message-events.ts
+        # maps msg.location onto incomingMessage.location, forwarded as-is
+        # in the webhook's data) that nothing here ever read). lat/lng are
+        # always present when raw_type == 'location' (MessageTypes.LOCATION
+        # in whatsapp-web.js); description/address/url are optional labels
+        # WhatsApp itself only sometimes carries.
+        location = None
+        if raw_type == 'location' and data.get('location'):
+            raw_location = data['location']
+            location = {
+                'latitude': raw_location.get('latitude'),
+                'longitude': raw_location.get('longitude'),
+                'description': raw_location.get('description'),
+                'address': raw_location.get('address'),
+            }
+
+        # Ignore messages without body, media, or location
+        if not media and not location and (not message_body or not message_body.strip()):
             logger.debug("Ignoring empty message")
             return None
 
@@ -244,6 +270,7 @@ class OpenWAAdapter:
             'whatsapp_message_id': message_id,  # Store original message ID
             'from_number': from_number,  # Store phone number for identification
             'media': media,  # None for a plain text message
+            'location': location,  # None unless this message shared a location pin
             # message.sent only ever fires for the account's own outgoing
             # sends (see the docstring above) - unconditionally true here,
             # never parsed from a JID. The one reliable owner signal

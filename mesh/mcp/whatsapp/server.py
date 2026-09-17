@@ -130,6 +130,21 @@ async def send_voice(chat_id: str, content_b64: str, ctx: Context, mimetype: str
 
 
 @mcp.tool()
+async def send_location(
+    chat_id: str, latitude: float, longitude: float, ctx: Context,
+    description: Optional[str] = None, address: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends a real WhatsApp location pin (map preview, not a text message
+    with coordinates typed out) to chat_id - e.g. a business's own outlet
+    for a site visit or pickup. description/address are the optional label
+    shown under the pin. Same failure contract as send_message - raises,
+    doesn't swallow, delivery failures."""
+    permissions.enforce_mcp_permission(ctx, 'mcp.whatsapp.send_location')
+    result = await _openwa.send_location(chat_id, latitude, longitude, description=description, address=address)
+    return {'sent': True, 'result': result}
+
+
+@mcp.tool()
 async def get_own_phone(ctx: Context) -> Dict[str, Any]:
     """The linked account's own phone number - lets a caller (Orchestrator's
     rules engine) recognize the owner without Orchestrator ever touching
@@ -319,6 +334,7 @@ async def handle_webhook(request: Request) -> JSONResponse:
             'image': image,
             'document': document,
             'audio': audio,
+            'location': message.get('location'),
             'is_self_chat': message['is_self_chat'],
         })
         return JSONResponse({'status': 'forwarded'})

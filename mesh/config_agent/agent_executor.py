@@ -51,20 +51,24 @@ class UpdateConfigParams(BaseModel):
 
 
 class ActivateVerticalParams(BaseModel):
-    vertical_id: str = Field(description='The vertical to switch this deployment onto.')
+    vertical_id: str = Field(description='The vertical to (re-)enable.')
+
+
+class DeactivateVerticalParams(BaseModel):
+    vertical_id: str = Field(description='The vertical to disable - stops answering to its own summon phrase, but keeps every setting on file.')
 
 
 class NoParams(BaseModel):
-    """deactivate_vertical/get_active_vertical take no arguments - still
-    need a schema so extract() has something to run against, even though
-    it'll extract nothing."""
+    """get_active_vertical takes no arguments - still needs a schema so
+    extract() has something to run against, even though it'll extract
+    nothing."""
 
 
 EXTRACTION_SCHEMAS = {
     'query_config': QueryConfigParams,
     'update_config': UpdateConfigParams,
     'activate_vertical': ActivateVerticalParams,
-    'deactivate_vertical': NoParams,
+    'deactivate_vertical': DeactivateVerticalParams,
     'get_active_vertical': NoParams,
 }
 

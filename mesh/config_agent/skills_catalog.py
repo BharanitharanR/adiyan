@@ -47,16 +47,17 @@ SKILLS = [
         id='activate_vertical',
         name='Activate Vertical',
         description=(
-            'Switch the whole deployment onto a business-vertical agent\'s own config '
-            'overrides - every agent that has one starts using it immediately. The '
-            'vertical must already have at least one setting configured somewhere; '
-            'refuses to activate an unknown one rather than switching to nothing.'
+            'Re-enable a named business vertical that was previously deactivated, so it '
+            'answers to its own summon phrase again - every other configured vertical (and '
+            'plain platform defaults) keep working the whole time, this only affects the '
+            'one named. The vertical must already have at least one setting configured '
+            'somewhere; refuses an unknown one rather than creating a phantom vertical.'
         ),
         tags=['config', 'admin', 'vertical'],
         examples=[
             'Activate the gym_trainer vertical',
-            'Switch this deployment to nutrition_coach',
-            'Turn on the gym_trainer persona',
+            'Turn the gym_trainer persona back on',
+            'Re-enable nutrition_coach',
         ],
         input_modes=['text/plain'],
         output_modes=['application/json'],
@@ -64,12 +65,17 @@ SKILLS = [
     AgentSkill(
         id='deactivate_vertical',
         name='Deactivate Vertical',
-        description='Revert the whole deployment back to plain platform defaults - undoes activate_vertical.',
+        description=(
+            'Stop a named business vertical from answering to its own summon phrase - '
+            'every other configured vertical (and plain platform defaults) are unaffected. '
+            'Its settings and summon phrase stay on file, so activate_vertical can bring it '
+            'straight back with no re-upload.'
+        ),
         tags=['config', 'admin', 'vertical'],
         examples=[
-            'Deactivate the vertical',
-            'Go back to platform defaults',
-            'Turn off gym_trainer',
+            'Deactivate the gym_trainer vertical',
+            'Turn off nutrition_coach',
+            'Stop responding to the gym_trainer wake phrase',
         ],
         input_modes=['text/plain'],
         output_modes=['application/json'],
@@ -77,12 +83,16 @@ SKILLS = [
     AgentSkill(
         id='get_active_vertical',
         name='Get Active Vertical',
-        description='Which vertical (if any) this deployment is currently running under.',
+        description=(
+            'List every business vertical configured on this deployment, its own summon '
+            'phrase, and whether it is currently enabled - multiple can be live at once, '
+            'alongside plain platform defaults on @adiyan.'
+        ),
         tags=['config', 'admin', 'vertical'],
         examples=[
-            'Which vertical is active right now?',
-            'What persona is this deployment running?',
-            'Are we on platform defaults or a vertical?',
+            'Which verticals are configured right now?',
+            'What personas is this deployment running?',
+            'List the active business verticals',
         ],
         input_modes=['text/plain'],
         output_modes=['application/json'],

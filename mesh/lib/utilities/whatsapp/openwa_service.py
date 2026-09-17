@@ -253,6 +253,38 @@ class OpenWAService:
         logger.info(f"Sent voice note to {chat_id}: {result.get('messageId')}")
         return result
 
+    async def send_location(
+        self, chat_id: str, latitude: float, longitude: float,
+        description: Optional[str] = None, address: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send a real WhatsApp location pin (map preview + coordinates),
+        not a text message with lat/long typed out - penwa's send-location
+        endpoint (mesh/lib/utilities/whatsapp: no engine-specific handling
+        needed here, unlike catalog/product, since whatsapp-web.js's
+        Location primitive works on the engine this deployment actually
+        runs). description/address are the optional label WhatsApp shows
+        under the pin (e.g. a restaurant's name and street address) - both
+        None sends a bare coordinate pin."""
+        session_id = await self._session_id_or_refresh()
+        # description/address omitted entirely rather than sent as JSON
+        # null - the DTO's @IsOptional() means "field absent is fine," not
+        # "an explicit null passes @IsString()'s own check."
+        body: Dict[str, Any] = {'chatId': chat_id, 'latitude': latitude, 'longitude': longitude}
+        if description is not None:
+            body['description'] = description
+        if address is not None:
+            body['address'] = address
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={'X-API-Key': self.api_key, 'Content-Type': 'application/json'},
+            timeout=30.0,
+        ) as client:
+            response = await client.post(f'/api/sessions/{session_id}/messages/send-location', json=body)
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Sent location to {chat_id}: {result.get('messageId')}")
+        return result
+
     async def get_session_status(self) -> Dict[str, Any]:
         """Return the raw session record (status, phone, pushName, etc.)."""
         session_id = await self._session_id_or_refresh()

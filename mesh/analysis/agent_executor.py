@@ -101,6 +101,7 @@ class AnalysisAgentExecutor(AgentExecutor):
         claims = claims or {}
         params.setdefault('requester_id', claims.get('sub'))
         params.setdefault('is_owner', claims.get('tier') == 'owner')
+        params.setdefault('vertical_id', claims.get('vertical_id'))
 
         try:
             result = await analyze.run(**params)
