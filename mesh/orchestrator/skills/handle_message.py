@@ -37,7 +37,7 @@ from indic_transliteration import sanscript
 from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 
-from mesh.lib import chat_cache, config_sdk, permissions, persona_hook, vision
+from mesh.lib import chat_cache, config_sdk, customer_record, permissions, persona_hook, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.audio_transcribe import language_display_name, transcribe_audio
@@ -236,6 +236,49 @@ class _UploadOcrPreference(BaseModel):
             "document is scan-free just because nothing was said."
         ),
     )
+
+
+class _CustomerObservation(BaseModel):
+    note: Optional[str] = Field(
+        default=None,
+        description=(
+            "A short factual sentence, ABOUT the customer, worth remembering later - a stated "
+            "preference, an interest, a detail about what they're asking for or considering. Written "
+            "in the third person as a plain fact for a future reader (e.g. 'Prefers less spicy food' "
+            "or 'Asked about the weekend biryani special'), never as advice, a suggestion, or a "
+            "comment on how Adiyan should have replied. Copy only what they actually said; never "
+            "invent a detail, a decision, or a commitment they didn't make. None if this exchange has "
+            "nothing new worth keeping (most ordinary back-and-forth doesn't)."
+        ),
+    )
+
+
+async def _observe_customer(
+    text: str, reply: str, vertical_id: str, identity_key: str, extract_cfg: Dict[str, Any],
+) -> None:
+    """Best-effort, additive customer_section update for a non-owner
+    message under an active vertical - mesh/lib/customer_record.py's own
+    docstring on why this is the ONLY LLM-inferred write path (a plain
+    'notes' list, not an open-ended field set) and why a consequential fact
+    never goes through here. Never raises - a failed observation must not
+    affect a reply that's already been sent, same convention the
+    remember_interaction call just above already follows."""
+    try:
+        prompt = (
+            'A customer just exchanged one message with a business assistant. Extract a fact ABOUT '
+            'THE CUSTOMER worth keeping for next time - not a summary of the exchange, not advice on '
+            'how to reply.\n\n'
+            f'Customer said: "{text}"\n\n'
+            f'Assistant replied: "{reply}"'
+        )
+        observation = await _agent.ask(
+            prompt, stage='observe_customer', schema=_CustomerObservation,
+            model=extract_cfg['model'], temperature=extract_cfg['temperature'],
+        )
+        if observation.note:
+            await customer_record.append_customer_note(vertical_id, identity_key, observation.note)
+    except Exception as e:
+        logger.warning(f'Customer observation failed for {identity_key!r} in vertical {vertical_id!r}: {e}')
 
 
 async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[str]:
@@ -1268,5 +1311,16 @@ async def run(
                 }, token=remember_token)
         except Exception as e:
             logger.warning(f'Failed to remember interaction for {chat_id}: {e}')
+
+        # customer_record's own customer_section - separate from mem0 above
+        # (a different store, a different purpose: a durable per-business
+        # record, not general-purpose semantic recall) and only attempted
+        # when a real vertical applies to this message. Never for the owner
+        # - there's no "customer" to record when the owner is talking to
+        # their own number, same is_owner reasoning persona_hook.py's own
+        # docstring already documents for business_persona_context.
+        if vertical_id and tier != 'owner':
+            identity_key = db.resolve_identity_key(chat_id)
+            await _observe_customer(text, reply or '', vertical_id, identity_key, cfg['extract_parameters'])
 
     return {'chat_id': chat_id, 'reply': reply, 'delivered': delivered}

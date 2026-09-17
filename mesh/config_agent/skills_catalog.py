@@ -97,4 +97,23 @@ SKILLS = [
         input_modes=['text/plain'],
         output_modes=['application/json'],
     ),
+    AgentSkill(
+        id='update_customer_record',
+        name='Update Customer Record',
+        description=(
+            "Set a fact on a specific customer's record for the currently-summoned business "
+            "vertical - the ONLY way a consequential fact (payment confirmed, active/inactive, a "
+            "subscription plan) gets recorded, since customers can never write or see this "
+            "themselves. Requires the customer's real phone number, not just their name. Must be "
+            "issued under that business's own wake phrase, not the plain @adiyan default."
+        ),
+        tags=['config', 'admin', 'vertical', 'customer'],
+        examples=[
+            'Mark 9198765432 as paid for the tiffin plan',
+            "Set Priya's (9198765432) subscription status to active",
+            'Record that 919876543210 confirmed their order',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
 ]

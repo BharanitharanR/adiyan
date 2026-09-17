@@ -57,7 +57,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore
 from a2a.types import AgentCard, AgentSkill
 
-from mesh.lib import config_sdk, memory_hook, permissions, persona_hook, registry_client
+from mesh.lib import config_sdk, customer_record_hook, memory_hook, permissions, persona_hook, registry_client
 
 logger = logging.getLogger('bootstrap')
 
@@ -104,6 +104,8 @@ class _PlatformWiredExecutor(AgentExecutor):
         memory_reset_token = memory_hook.CURRENT_CONTEXT.set(context_value)
         persona_value = await persona_hook.resolve_persona_context(self._agent_id, claims)
         persona_reset_token = persona_hook.CURRENT_PERSONA_CONTEXT.set(persona_value)
+        customer_record_value = await customer_record_hook.resolve_customer_record_context(self._agent_id, claims)
+        customer_record_reset_token = customer_record_hook.CURRENT_CUSTOMER_RECORD.set(customer_record_value)
         try:
             await self._inner.execute(context, event_queue)
         finally:
@@ -114,6 +116,7 @@ class _PlatformWiredExecutor(AgentExecutor):
             # nothing guarantees single execution per *process* over time.
             memory_hook.CURRENT_CONTEXT.reset(memory_reset_token)
             persona_hook.CURRENT_PERSONA_CONTEXT.reset(persona_reset_token)
+            customer_record_hook.CURRENT_CUSTOMER_RECORD.reset(customer_record_reset_token)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         await self._inner.cancel(context, event_queue)

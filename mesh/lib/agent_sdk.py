@@ -41,7 +41,7 @@ import httpx
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from mesh.lib import config_sdk, llm_log, memory_hook, permissions, persona_hook
+from mesh.lib import config_sdk, customer_record_hook, llm_log, memory_hook, permissions, persona_hook
 from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
 from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
@@ -357,13 +357,19 @@ class AdiyanAgent:
         _inject_context = (schema is None or stage not in ('classify', 'extract')) and image_b64 is None and not raw
         persona_context = persona_hook.CURRENT_PERSONA_CONTEXT.get() if _inject_context else ''
         memory_context = memory_hook.CURRENT_CONTEXT.get() if _inject_context else ''
+        customer_record_context = customer_record_hook.CURRENT_CUSTOMER_RECORD.get() if _inject_context else ''
         # Persona (who this agent is being, platform-wide for this whole
-        # request) ahead of memory (what's specifically known about this
-        # one person) - the frame comes before the specifics it's applied
-        # to. join() over two plain string concatenations so neither block
-        # being empty (the common case - most deployments never activate a
-        # vertical) needs its own special-cased if/elif here.
-        context_prefix = '\n\n'.join(block for block in (persona_context, memory_context) if block)
+        # request), then the customer record (what THIS business already
+        # knows about THIS customer), then memory (what's known about this
+        # one person in general, across any business) - business-specific
+        # framing before business-specific facts before general facts.
+        # join() over plain string concatenation so any block being empty
+        # (the common case - most deployments never activate a vertical, and
+        # customer_record_hook's own allowlist keeps it '' for most agents
+        # even when one is) needs no special-cased if/elif here.
+        context_prefix = '\n\n'.join(
+            block for block in (persona_context, customer_record_context, memory_context) if block
+        )
         if context_prefix:
             prompt = f'{context_prefix}\n\n{prompt}'
 

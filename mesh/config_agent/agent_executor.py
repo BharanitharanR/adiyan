@@ -29,6 +29,7 @@ from mesh.config_agent.skills import (
     onboard_mcp_server,
     query_config,
     update_config,
+    update_customer_record,
     update_stage_config,
 )
 from mesh.config_agent.skills_catalog import SKILLS
@@ -64,12 +65,19 @@ class NoParams(BaseModel):
     nothing."""
 
 
+class UpdateCustomerRecordParams(BaseModel):
+    phone_number: str = Field(description="The customer's phone number exactly as given (digits, spaces, country code, '+' - whatever form the caller used). Do not invent or reformat it.")
+    field: str = Field(description="A short snake_case name for the fact being set, e.g. 'payment_status', 'active', 'subscription_plan'.")
+    value: str = Field(description='The value to set, as stated by the caller.')
+
+
 EXTRACTION_SCHEMAS = {
     'query_config': QueryConfigParams,
     'update_config': UpdateConfigParams,
     'activate_vertical': ActivateVerticalParams,
     'deactivate_vertical': DeactivateVerticalParams,
     'get_active_vertical': NoParams,
+    'update_customer_record': UpdateCustomerRecordParams,
 }
 
 # get_all_configs/update_stage_config/apply_vertical_spec: DataPart-only,
@@ -90,6 +98,7 @@ SKILL_HANDLERS = {
     'deactivate_vertical': deactivate_vertical.run,
     'get_active_vertical': get_active_vertical.run,
     'apply_vertical_spec': apply_vertical_spec.run,
+    'update_customer_record': update_customer_record.run,
 }
 
 
@@ -140,6 +149,15 @@ class ConfigAgentExecutor(AgentExecutor):
         if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
+
+        # Scoped to this one skill, not every handler - update_customer_record.run()
+        # is the only one that accepts vertical_id, and setting it unconditionally
+        # on `params` would raise a TypeError for every other skill's own handler.
+        # vertical_id itself comes from rules_engine.check()'s phrase-registry
+        # resolution (mesh/orchestrator/rules_engine.py), carried in the token's
+        # claims the same way analysis's own owner-bypass reads it.
+        if skill_id == 'update_customer_record':
+            params.setdefault('vertical_id', (claims or {}).get('vertical_id'))
 
         try:
             result = await handler(**params)
