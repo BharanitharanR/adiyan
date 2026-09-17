@@ -104,8 +104,22 @@ Rules for filling this in:
 - Every hard rule from question 5 and every boundary from question 7 must actually appear somewhere in `business_persona_context` - don't silently drop one because it didn't fit neatly.
 - `scheduler`, `journal`, `adiyan_reader`, `config_agent`, `micro_habits` only ever get `business_persona_context` - never `strict_grounding`, `summon_phrase`, or `card_description`, which don't exist on those agents. See `references/config-vocabulary.md` for the full field list per agent.
 
+## Customer records - automatic, not a spec field
+
+The moment this vertical goes live, Adiyan starts keeping a private record for every one of this business's customers - what they've asked about, expressed interest in, mentioned wanting. This needs **no YAML field and no interview question** - it isn't something the spec configures, it just happens once the vertical exists, the same way `business_persona_context` starts applying the moment the spec is uploaded.
+
+There is exactly one thing the owner can do that the spec itself can't: set a fact on a specific customer's record that only the owner should control - a payment confirmed, a subscription marked active, an order confirmed. Never suggest phrasing that claims Adiyan infers these automatically; it deliberately never does, so a customer can't talk their own record into a false state. The one real command for this, always sent under the vertical's own summon phrase:
+
+```
+<summon_phrase> mark <phone number> as <fact> for <field>
+```
+
+e.g. `@marinaspice mark 9198765432 as paid for the tiffin plan`, or `@ascentcoach set 9198765432's subscription to active`. It always needs the customer's real phone number, not just their name.
+
 ## Handing it back
 
 Give the business owner the complete YAML in a fenced code block, plus one plain-English sentence confirming what it does: "This tells Adiyan to answer your customers as [business name] - warm tone, [key rule], and to say '[fallback line]' when it doesn't know something. Upload this file to your Adiyan WhatsApp number to activate it."
+
+Also tell them, in the same handoff, that Adiyan will start keeping a private record of each customer automatically, and give them one real example of the owner-only command above, using their own business's own wake phrase - this is the one thing about customer records they actually need to know, everything else is automatic.
 
 If they want it as a downloadable file rather than a chat code block, that's fine - the content is what matters, not the container. A `.yaml` file, a `.txt` file, or a PDF with the same YAML text inside all work equally well once it reaches Adiyan - Adiyan reads the text content, not the file format.

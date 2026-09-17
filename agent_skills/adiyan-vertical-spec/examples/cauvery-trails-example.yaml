@@ -1,3 +1,12 @@
+# Once this spec is applied, Adiyan automatically keeps a private record for
+# every customer of Cauvery Trails - what they've asked about, shown interest
+# in. No setup needed for this - it just starts working.
+#
+# The one thing it never infers on its own: a payment, a booking confirmation,
+# an active/inactive status. Set those yourself, any time, with:
+#   @cauverytrails mark <phone number> as <fact> for <field>
+# e.g. "@cauverytrails mark 9198765432 as paid for the Thanjavur package"
+
 vertical_id: cauvery-trails-trichy
 business_name: Cauvery Trails
 generated_at: "2026-09-17"

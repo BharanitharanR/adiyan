@@ -41,3 +41,7 @@ If a business owner's answer seems to call for one of these (e.g. "I want it to 
 ## `vertical_id`
 
 Not itself a field under an agent - the top-level identifier for this whole business profile. Lowercase letters, numbers, and hyphens only, no spaces, no leading/trailing hyphen (e.g. `vizag-travel-co`, `sunrise-bakery`). This is how Adiyan tells one business's overrides apart from another's, and from the platform defaults every other Adiyan deployment uses.
+
+## Customer records - a platform feature, never a spec field
+
+Do not invent a YAML field for this - it does not exist and never should. The moment a `vertical_id` goes live, Adiyan automatically keeps a private per-customer record for that business (what they've asked about, shown interest in) with no configuration needed at all. The only thing spec-generation should ever tell the owner about this is the one owner-only command that sets a fact the platform will never infer on its own (a payment, an active/inactive status) - see `SKILL.md`'s own "Customer records" section for the exact phrasing and an example using that business's real wake phrase.

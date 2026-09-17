@@ -1,3 +1,12 @@
+# Once this spec is applied, Adiyan automatically keeps a private record for
+# every client of Ascent Executive Coaching - what they've asked about, shown
+# interest in. No setup needed for this - it just starts working.
+#
+# The one thing it never infers on its own: a payment, a session confirmation,
+# an active/inactive status. Set those yourself, any time, with:
+#   @ascentcoach mark <phone number> as <fact> for <field>
+# e.g. "@ascentcoach set 9198765432's subscription to active"
+
 vertical_id: ascent-executive-coaching
 business_name: Ascent Executive Coaching
 generated_at: "2026-09-17"

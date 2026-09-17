@@ -1,3 +1,12 @@
+# Once this spec is applied, Adiyan automatically keeps a private record for
+# every customer of Marina Spice Kitchen - what they've asked about, shown
+# interest in. No setup needed for this - it just starts working.
+#
+# The one thing it never infers on its own: a payment, an order confirmation,
+# an active/inactive status. Set those yourself, any time, with:
+#   @marinaspice mark <phone number> as <fact> for <field>
+# e.g. "@marinaspice mark 9198765432 as paid for the tiffin plan"
+
 vertical_id: marina-spice-kitchen
 business_name: Marina Spice Kitchen
 generated_at: "2026-09-17"
