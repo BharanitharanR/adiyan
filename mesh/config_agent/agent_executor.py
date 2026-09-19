@@ -28,6 +28,7 @@ from mesh.config_agent.skills import (
     get_all_configs,
     onboard_mcp_server,
     query_config,
+    register_workflow,
     update_config,
     update_customer_record,
     update_stage_config,
@@ -71,6 +72,12 @@ class UpdateCustomerRecordParams(BaseModel):
     value: str = Field(description='The value to set, as stated by the caller.')
 
 
+class RegisterWorkflowParams(BaseModel):
+    name: str = Field(description="A short snake_case name for this workflow, e.g. 'order_confirmation' - what the caller will refer to it as later.")
+    webhook_path: str = Field(description="The path segment of this workflow's n8n webhook URL, e.g. 'new-order' for http://localhost:5678/webhook/new-order.")
+    description: str = Field(description='A short plain-language description of what this workflow does and when to use it, e.g. "Place a food order and get a confirmation ID and ETA".')
+
+
 EXTRACTION_SCHEMAS = {
     'query_config': QueryConfigParams,
     'update_config': UpdateConfigParams,
@@ -78,6 +85,7 @@ EXTRACTION_SCHEMAS = {
     'deactivate_vertical': DeactivateVerticalParams,
     'get_active_vertical': NoParams,
     'update_customer_record': UpdateCustomerRecordParams,
+    'register_workflow': RegisterWorkflowParams,
 }
 
 # get_all_configs/update_stage_config/apply_vertical_spec: DataPart-only,
@@ -99,6 +107,7 @@ SKILL_HANDLERS = {
     'get_active_vertical': get_active_vertical.run,
     'apply_vertical_spec': apply_vertical_spec.run,
     'update_customer_record': update_customer_record.run,
+    'register_workflow': register_workflow.run,
 }
 
 
@@ -150,13 +159,14 @@ class ConfigAgentExecutor(AgentExecutor):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
 
-        # Scoped to this one skill, not every handler - update_customer_record.run()
-        # is the only one that accepts vertical_id, and setting it unconditionally
-        # on `params` would raise a TypeError for every other skill's own handler.
-        # vertical_id itself comes from rules_engine.check()'s phrase-registry
-        # resolution (mesh/orchestrator/rules_engine.py), carried in the token's
-        # claims the same way analysis's own owner-bypass reads it.
-        if skill_id == 'update_customer_record':
+        # Scoped to these two skills, not every handler - update_customer_record.run()
+        # and register_workflow.run() are the only ones that accept vertical_id, and
+        # setting it unconditionally on `params` would raise a TypeError for every
+        # other skill's own handler. vertical_id itself comes from
+        # rules_engine.check()'s phrase-registry resolution (mesh/orchestrator/
+        # rules_engine.py), carried in the token's claims the same way analysis's
+        # own owner-bypass reads it.
+        if skill_id in ('update_customer_record', 'register_workflow'):
             params.setdefault('vertical_id', (claims or {}).get('vertical_id'))
 
         try:

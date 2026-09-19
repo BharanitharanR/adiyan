@@ -67,6 +67,18 @@
     "doc_search_top_k": {
       "value": 5,
       "description": "How many passages search_within_document returns per query - more raises the odds the actually-relevant one is included, at the cost of a longer observation to read."
+    },
+    "n8n_workflows_base_url": {
+      "value": "http://localhost:5678/webhook",
+      "description": "Base URL trigger_workflow posts to - n8n's own webhook base path on this same machine. A vertical never needs to override this (all verticals share one local n8n instance); the per-workflow path comes from workflow_registry instead."
+    },
+    "workflow_registry": {
+      "value": [],
+      "description": "This vertical's own list of automated workflows the ReAct loop's trigger_workflow tool can call, e.g. [{\"name\": \"order_confirmation\", \"webhook_path\": \"new-order\", \"description\": \"Place a food order and get a confirmation ID + ETA\"}]. Empty on the platform layer by default - a real list only comes from a vertical calling config_agent's register_workflow skill (never written here directly). trigger_workflow's own tool description is built from this list at call time, so a new workflow becomes callable the moment it's registered, with no code change or restart."
+    },
+    "msg_workflow_bad_response": {
+      "value": "The workflow ran but didn't return a usable result - tell the customer this may not have gone through and offer to try again, rather than confirming it succeeded.",
+      "description": "Returned by trigger_workflow when the n8n webhook responded with an empty or unparseable body - e.g. a workflow bug or an unexpected response shape."
     }
   }
 }

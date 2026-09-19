@@ -116,4 +116,23 @@ SKILLS = [
         input_modes=['text/plain'],
         output_modes=['application/json'],
     ),
+    AgentSkill(
+        id='register_workflow',
+        name='Register Workflow',
+        description=(
+            'Register a new n8n workflow the currently-summoned business vertical can trigger during '
+            'a conversation - after building it in n8n\'s own editor, tell Adiyan its name, webhook '
+            'path, and what it does. No code change or restart needed: the analysis agent\'s '
+            'trigger_workflow tool picks it up on the very next request. Re-registering an existing '
+            'name replaces its old webhook path/description rather than duplicating it.'
+        ),
+        tags=['config', 'admin', 'vertical', 'workflow'],
+        examples=[
+            'Register a workflow called order_confirmation at new-order for placing food orders and getting a confirmation ID and ETA',
+            'Add a workflow named payment_reminder using webhook path payment-reminder that sends a payment reminder message',
+            'Register the feedback_request workflow at feedback-request',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
 ]

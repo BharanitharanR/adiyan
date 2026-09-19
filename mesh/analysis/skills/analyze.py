@@ -36,6 +36,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -138,9 +139,79 @@ async def _get_message(key: str, **kwargs: str) -> str:
 # and mesh/lib/mcp_registry.py - see docs/TOOL_RESOLUTION_DESIGN.md.
 
 
+def _build_trigger_workflow_tool(
+    vertical_id: Optional[str], requester_id: Optional[str], workflow_registry: List[Dict[str, Any]],
+):
+    """trigger_workflow's description is built here, not written as a static
+    docstring - it has to list whatever workflows THIS vertical actually has
+    registered right now (mesh/config_agent/skills/register_workflow.py),
+    which varies per business and can change at any moment with no restart.
+    Read once per analyse_this call (run() already fetched workflow_registry
+    before _make_tools was called), not per tool invocation - a request
+    mid-run using a workflow registered a second ago is an acceptable gap,
+    the alternative (re-fetching on every single tool call) buys nothing a
+    real business needs.
+
+    This is what actually delivers "add a new n8n workflow without a code
+    change": the registry is the only thing that has to change for a new
+    workflow to become something the model can decide to call - this
+    function's own code never mentions a specific business's workflow by
+    name."""
+    registry_by_name = {
+        w['name']: w for w in workflow_registry
+        if isinstance(w, dict) and w.get('name') and w.get('webhook_path')
+    }
+
+    if registry_by_name:
+        listing = '\n'.join(
+            f"- {name}: {w.get('description') or 'no description on file'}" for name, w in registry_by_name.items()
+        )
+        description = (
+            "Trigger one of this business's own automated workflows by name - a real action with a real "
+            "side effect (placing an order, sending a reminder, whatever that workflow does), not a way to "
+            "answer a question. Available workflows:\n" + listing + "\n\n"
+            "Pass workflow_name exactly as listed above, and a short plain-language description of what THIS "
+            "specific request needs (e.g. what was ordered) in `request`. Only call this once the customer has "
+            "clearly asked for the thing this workflow does, and don't call it more than once for the same ask."
+        )
+    else:
+        description = (
+            "No automated workflows are configured for this business yet - calling this will always fail. If "
+            "the customer wants something done that would normally need one (placing an order, etc.), tell "
+            "them it needs to be handled manually instead of calling this."
+        )
+
+    async def trigger_workflow(workflow_name: str, request: str) -> str:
+        entry = registry_by_name.get(workflow_name)
+        if entry is None:
+            available = ', '.join(registry_by_name) or '(none configured)'
+            return f'Unknown workflow {workflow_name!r}. Available: {available}'
+        base_url_seed = _seeded('n8n_workflows_base_url')
+        base_url = await config_sdk.get_constant(
+            AGENT_ID, 'n8n_workflows_base_url', base_url_seed['value'],
+            vertical_id=vertical_id, description=base_url_seed['description'],
+        )
+        url = f"{base_url.rstrip('/')}/{entry['webhook_path'].lstrip('/')}"
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(url, json={
+                    'chat_id': requester_id, 'vertical_id': vertical_id, 'request': request,
+                })
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            return f'trigger_workflow failed: {describe_exception(e)}'
+        if not data:
+            return await _get_message('msg_workflow_bad_response')
+        return 'Workflow completed: ' + ', '.join(f'{k}={v}' for k, v in data.items())
+
+    return tool(trigger_workflow, description=description)
+
+
 def _make_tools(
     contact_name: Optional[str], requester_id: Optional[str], is_owner: bool,
     observation_char_cap: int, doc_search_top_k: int, react_cfg: Dict[str, Any],
+    vertical_id: Optional[str] = None, workflow_registry: Optional[List[Dict[str, Any]]] = None,
 ):
     """Tool functions as closures, not module-level - contact_name varies
     per call, and multiple analyse_this calls can run concurrently with
@@ -342,9 +413,11 @@ def _make_tools(
         a user's uploaded documents - that's search_documents' job."""
         return await tool_resolution.resolve_and_execute(question, react_cfg)
 
+    trigger_workflow = _build_trigger_workflow_tool(vertical_id, requester_id, workflow_registry or [])
+
     tools = [
         search_documents, read_document, search_within_document, list_documents,
-        recall_memory, discover_agents, consult_agent, resolve_and_execute, finish,
+        recall_memory, discover_agents, consult_agent, resolve_and_execute, trigger_workflow, finish,
     ]
     return tools, {t.name: t for t in tools}
 
@@ -592,7 +665,13 @@ async def run(
     # the vertical_id bypass above, which is genuinely agent-specific
     # (analysis's own strict_grounding/observation_char_cap/doc_search_top_k)
     # and can't be generalized the same way.
-    tools, tools_by_name = _make_tools(contact_name, requester_id, is_owner, observation_char_cap, doc_search_top_k, cfg)
+    registry_seed = _seeded('workflow_registry')
+    workflow_registry = await config_sdk.get_constant(
+        AGENT_ID, 'workflow_registry', registry_seed['value'], vertical_id=vertical_id, description=registry_seed['description'],
+    )
+    tools, tools_by_name = _make_tools(
+        contact_name, requester_id, is_owner, observation_char_cap, doc_search_top_k, cfg, vertical_id, workflow_registry,
+    )
 
     scratchpad = Scratchpad()
     if source_filename:

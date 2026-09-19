@@ -203,6 +203,22 @@ COMPONENTS=(
     "ngrok|4040|ngrok http https://localhost:8425 --log=stdout"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
+    # Deterministic workflow execution (order-lifecycle-style state
+    # machines, and anything else better suited to a real graph than LLM
+    # reasoning) - see mesh/tools/provision_n8n_owner.js's own docstring.
+    # No Docker, matching every other component here - plain npm install,
+    # plain process.
+    #
+    # cmd here is "n8n start", not "mesh/tools/run_n8n.sh" - same
+    # deliberate mismatch mongo_mcp's own entry above already documents
+    # for itself. run_n8n.sh's own last line is `exec n8n start`, which
+    # REPLACES that process's image (same PID, new cmdline) rather than
+    # forking a child - confirmed live that once exec runs, `ps` shows
+    # only `node .../bin/n8n start`, with no trace of run_n8n.sh left
+    # anywhere for do_stop()'s pkill -f to find. launch_component()'s own
+    # n8n branch below still runs the real wrapper script; cmd here exists
+    # only so pkill -f matches what the process actually becomes.
+    "n8n|5678|n8n start"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
 )
 # The hardcoded core set ends here. Everything appended past this index is a
@@ -314,6 +330,14 @@ launch_component() {
         # prepended only here, at the actual launch site, while cmd
         # itself stays exactly what pkill needs to find the real worker.
         nohup npx -y $cmd >> "$logfile" 2>&1 &
+    elif [ "$name" = "n8n" ]; then
+        # Launches the real wrapper script, not the literal $cmd string -
+        # see this component's own COMPONENTS entry comment for why $cmd
+        # ("n8n start") is deliberately just what pkill -f needs to match
+        # post-exec, not what actually gets run. Same "cmd stays semantic,
+        # launch site adds what's actually needed" split as mongo_mcp's
+        # own npx prefix above.
+        nohup mesh/tools/run_n8n.sh >> "$logfile" 2>&1 &
     elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ]; then
         # A raw binary/npm invocation, not a `python3 -m` module - mongod
         # logs to its own configured path (systemLog.path in
