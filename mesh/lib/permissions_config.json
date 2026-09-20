@@ -21,6 +21,7 @@
         "adiyan_reader.start_reading",
         "adiyan_reader.read_next_page",
         "adiyan_reader.read_now",
+        "adiyan_reader.read_range",
         "adiyan_reader.change_voice",
         "adiyan_reader.dispatch_questions",
         "mcp.cron_trigger.register_trigger",
@@ -28,7 +29,14 @@
         "mcp.whatsapp.get_own_phone",
         "mcp.agent_registry.register_agent",
         "mcp.agent_registry.list_agents",
-        "compute_share.gossip"
+        "compute_share.gossip",
+        "config_agent.deactivate_vertical"
+      ]
+    },
+    "verticals_demo_service": {
+      "description": "verticals_demo's own outbound call (mesh/mcp/whatsapp/verticals_demo.py) - registering a one-shot cron_trigger fire that deactivates a demo vertical after its TTL, replacing the old asyncio.sleep()-based timer that died on every whatsapp_mcp restart and left demo verticals stuck active indefinitely (confirmed live: demo-copper-kettle-cafe-73632f stayed enabled hours past its 1-hour TTL after several restarts during this session's debugging). Its own tier, not 'service' directly: verticals_demo has no other outbound call today, so there's no reason to give it the rest of 'service's allow list.",
+      "allow": [
+        "mcp.cron_trigger.register_trigger"
       ]
     },
     "adiyan_reader_service": {
@@ -39,6 +47,13 @@
         "mcp.whatsapp.resolve_chat_id",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_voice"
+      ]
+    },
+    "config_agent_service": {
+      "description": "config_agent's own outbound calls - today, exactly one: mesh/config_agent/skills/message_customer.py resolving a registered customer's real chat_id and sending an owner-composed message to them directly, outside any reply cycle (the actual proactive-outreach capability a vertical owner gets - see mesh/adiyan_reader/skills/read_next_page.py's identical resolve_chat_id+send_message pattern, which this deliberately mirrors rather than inventing a new one). Its own tier, not 'service': same narrow-blast-radius reasoning as adiyan_reader_service and scheduler_service above - a config_agent token being misused should never be able to reach WhatsApp send through some OTHER agent's grant, and vice versa. This is owner-initiated (the skill itself is owner-only, gated the same way update_customer_record.py and register_workflow.py are), not automated/timer-driven, so it isn't the runaway-message risk the 2026-08-30 lockdown was written against - documented here anyway since every WhatsApp-send tier in this file explains its own risk posture.",
+      "allow": [
+        "mcp.whatsapp.resolve_chat_id",
+        "mcp.whatsapp.send_message"
       ]
     },
     "scheduler_service": {
@@ -94,6 +109,7 @@
         "adiyan_reader.start_reading",
         "adiyan_reader.read_next_page",
         "adiyan_reader.read_now",
+        "adiyan_reader.read_range",
         "analysis.analyse_this",
         "mcp.whatsapp.send_message",
         "mcp.whatsapp.send_document",
