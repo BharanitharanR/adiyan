@@ -8,13 +8,13 @@ real conversation exchange has already happened, not classified from free
 text on Memory Agent's own card - there's no user-facing request that
 should ever mean "please remember this."
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mesh.memory import mem0_backend
 
 
-def run(contact_name: str, user_text: str, reply_text: str) -> Dict[str, Any]:
+def run(contact_name: str, user_text: str, reply_text: str, vertical_id: Optional[str] = None) -> Dict[str, Any]:
     if not mem0_backend.is_available():
         return {'remembered': False, 'available': False}
-    mem0_backend.remember(contact_name=contact_name, user_text=user_text, reply_text=reply_text)
+    mem0_backend.remember(contact_name=contact_name, user_text=user_text, reply_text=reply_text, vertical_id=vertical_id)
     return {'remembered': True, 'available': True}

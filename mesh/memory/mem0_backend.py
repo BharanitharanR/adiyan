@@ -105,7 +105,23 @@ def is_available() -> bool:
     return _get_memory() is not None
 
 
-def remember(contact_name: str, user_text: str, reply_text: str) -> None:
+def _scoped_user_id(contact_name: str, vertical_id: Optional[str]) -> str:
+    """mem0's own dedup/retrieval boundary is whatever user_id it's given -
+    contact_name alone means the SAME person messaging two different demo
+    verticals shares one memory pool between them. Confirmed live: a
+    customer's booking details for a travel/real-estate demo (a beach trip,
+    a rental unit, a ₹2,500 total) surfaced as "what you know about this
+    person" inside a completely unrelated car-rental vertical's reply,
+    which then fabricated a ₹250 price and a fictional family for a
+    customer who never mentioned either - built entirely out of a stitched-
+    together, wrong-business memory, not out of nothing. vertical_id=None
+    (a genuinely cross-business flow like Journal Agent's reflection, or a
+    caller that hasn't been updated to pass one yet) falls back to the old,
+    unscoped key rather than inventing a fake bucket for it."""
+    return f'{vertical_id}::{contact_name}' if vertical_id else contact_name
+
+
+def remember(contact_name: str, user_text: str, reply_text: str, vertical_id: Optional[str] = None) -> None:
     """Stores one real conversation exchange as {user turn, assistant turn}
     - Mem0's own extraction decides what's actually salient from that pair,
     not this function. Best-effort: a failure here never blocks a WhatsApp
@@ -122,7 +138,7 @@ def remember(contact_name: str, user_text: str, reply_text: str) -> None:
                 {'role': 'user', 'content': user_text},
                 {'role': 'assistant', 'content': reply_text},
             ],
-            user_id=contact_name,
+            user_id=_scoped_user_id(contact_name, vertical_id),
         )
     except Exception as e:
         logger.warning(f"Failed to store conversation memory for {contact_name!r}: {e}")
@@ -144,19 +160,25 @@ def _recency_weight(timestamp_str: str) -> float:
     return 0.5 ** (max(age_days, 0) / RECENCY_HALF_LIFE_DAYS)
 
 
-def retrieve(contact_name: str, query: str, top_k: int = DEFAULT_TOP_K) -> List[str]:
+def retrieve(contact_name: str, query: str, top_k: int = DEFAULT_TOP_K, vertical_id: Optional[str] = None) -> List[str]:
     """Up to top_k past interaction snippets for this contact, ranked by
     similarity combined with recency - not Mem0's own raw similarity
     ranking. See this module's own docstring for the confirmed-live reason
     that matters: a corrected fact doesn't reliably outrank the stale one
-    it corrected, on similarity alone."""
+    it corrected, on similarity alone.
+
+    vertical_id must match whatever remember() stored this contact's
+    memories under, or nothing written under a vertical-scoped key will
+    ever be found - see _scoped_user_id above."""
     memory = _get_memory()
     if memory is None:
         return []
     try:
         # A wider net than top_k - recency re-ranking can promote a memory
         # that wasn't even in Mem0's own raw top-k similarity results.
-        result = memory.search(query, filters={'user_id': contact_name}, top_k=max(top_k * 3, 10))
+        result = memory.search(
+            query, filters={'user_id': _scoped_user_id(contact_name, vertical_id)}, top_k=max(top_k * 3, 10),
+        )
     except Exception as e:
         logger.warning(f"Failed to search conversation memory for {contact_name!r}: {e}")
         return []

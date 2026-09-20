@@ -8,7 +8,7 @@ the expected way in.
 """
 import asyncio
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,7 @@ class RecallParams(BaseModel):
     contact_name: str = Field(description="The exact contact identifier to look up - not a display name guess.")
     query: str = Field(description="What to search for in their history, e.g. 'recent mood, work stress'.")
     top_k: int = Field(default=3, description="How many past snippets to retrieve.")
+    vertical_id: Optional[str] = Field(default=None, description="Never guess this from the text - only a DataPart caller that already knows it should ever set it.")
 
 
 class SearchKBParams(BaseModel):

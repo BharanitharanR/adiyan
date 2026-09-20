@@ -504,23 +504,42 @@ class AdiyanAgent:
         Requires 'memory.share_knowledge_document' in your tier."""
         return await self.call_agent(MEMORY_AGENT_URL, 'share_knowledge_document', {'query': query})
 
-    async def recall_contact_memory(self, contact_name: str, query: str, top_k: int = 3) -> Dict[str, Any]:
+    async def recall_contact_memory(
+        self, contact_name: str, query: str, top_k: int = 3, vertical_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Short-term memory: raw read-back of actual past conversation
         with one specific contact - moods, goals, things they said
         directly. Not for using that history to reason or advise; this is
         only "what do we know." Requires 'memory.recall_contact_memory'
-        in your tier."""
+        in your tier.
+
+        vertical_id scopes this to one business - pass the SAME vertical_id
+        remember_interaction stored this contact's memories under, or
+        nothing will come back. Omit only for a genuinely cross-business
+        caller (e.g. Journal Agent's own reflection prompt, which is the
+        owner's personal journal, not tied to any one vertical) - confirmed
+        live that leaving this unscoped lets one contact's facts from an
+        unrelated business bleed into a different business's reply (a
+        travel-booking demo's price/family details fabricated into a
+        car-rental demo's answer to a question that never mentioned
+        either)."""
         return await self.call_agent(
-            MEMORY_AGENT_URL, 'recall_contact_memory', {'contact_name': contact_name, 'query': query, 'top_k': top_k},
+            MEMORY_AGENT_URL, 'recall_contact_memory',
+            {'contact_name': contact_name, 'query': query, 'top_k': top_k, 'vertical_id': vertical_id},
         )
 
-    async def remember_interaction(self, contact_name: str, user_text: str, reply_text: str) -> Dict[str, Any]:
+    async def remember_interaction(
+        self, contact_name: str, user_text: str, reply_text: str, vertical_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Short-term memory: writes one new turn (what the contact said,
         what was replied) to that contact's conversation history. Requires
-        'memory.remember_interaction' in your tier."""
+        'memory.remember_interaction' in your tier.
+
+        vertical_id: see recall_contact_memory's own docstring - must match
+        on both the write and read side for a business-scoped caller."""
         return await self.call_agent(
             MEMORY_AGENT_URL, 'remember_interaction',
-            {'contact_name': contact_name, 'user_text': user_text, 'reply_text': reply_text},
+            {'contact_name': contact_name, 'user_text': user_text, 'reply_text': reply_text, 'vertical_id': vertical_id},
         )
 
     async def schedule(

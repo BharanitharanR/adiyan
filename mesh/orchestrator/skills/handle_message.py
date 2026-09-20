@@ -1044,11 +1044,36 @@ async def run(
         # documents. Lazily evaluated (only classified when the branches
         # above didn't already claim this message) - no wasted LLM call on
         # every upload or gate-handled message.
+        #
+        # should_remember=True here (and in the two read_range/read_now
+        # branches below) - previously left unset, so no book-reading
+        # exchange ever reached mem0 at all. Confirmed live this was the
+        # actual root cause of a real memory bug: a stale fact from some
+        # earlier, unrelated exchange ("User requested to have 'The Power
+        # of Now' read to them") was the ONLY book-shaped memory this
+        # contact had, because nothing about their real, ongoing reading
+        # activity was ever being written to compete with or update it -
+        # working around that gap by avoiding memory entirely (routing
+        # "no title named" through adiyan_reader's own deterministic active-
+        # job lookup instead) fixed the immediate symptom but left the
+        # underlying memory blind spot in place. Recording the real
+        # exchange here is the actual fix: memory now reflects what's
+        # genuinely happening, not just whatever happened to slip in
+        # through the generic fallback path once.
+        should_remember = True
         reply = await _start_book_reading(book_reference, chat_id, from_number, tier, vertical_id=vertical_id)
+    elif (range_pages := await _resolve_read_range_request(text, cfg)) is not None:
+        # Checked BEFORE _resolve_read_now_request - "read all" or "read
+        # page 1 to 10" would otherwise also plausibly match read_now's own
+        # single-next-page description. Same lazy-evaluation reasoning as
+        # the book-reading branch above.
+        should_remember = True
+        reply = await _read_page_range(chat_id, from_number, tier, range_pages[0], range_pages[1], vertical_id=vertical_id)
     elif await _resolve_read_now_request(text, cfg):
         # Same lazy-evaluation reasoning as the book-reading branch above -
         # only classified once nothing earlier in this chain already
         # claimed the message.
+        should_remember = True
         reply = await _read_page_now(chat_id, from_number, tier, vertical_id=vertical_id)
     elif community == 'communitySearch':
         # The sender explicitly asked to skip this machine entirely, not
@@ -1127,6 +1152,7 @@ async def run(
                     service_token = permissions.mint_token('orchestrator', 'service')
                     recall_result = await call_agent(memory_url, 'recall_contact_memory', {
                         'contact_name': contact_name or chat_id, 'query': text, 'top_k': 3,
+                        'vertical_id': vertical_id,
                     }, token=service_token)
                     snippets = recall_result.get('snippets') or []
                     if snippets:
@@ -1308,6 +1334,7 @@ async def run(
                     'contact_name': contact_name or chat_id,
                     'user_text': text,
                     'reply_text': reply,
+                    'vertical_id': vertical_id,
                 }, token=remember_token)
         except Exception as e:
             logger.warning(f'Failed to remember interaction for {chat_id}: {e}')
