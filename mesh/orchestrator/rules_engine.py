@@ -120,6 +120,41 @@ async def _resolve_summoned_vertical(text: str) -> Tuple[bool, Optional[str]]:
     return False, None
 
 
+# Same prefix mesh/mcp/whatsapp/verticals_demo.py's own _build_spec() gives every
+# vertical it creates - never a real production vertical_id, which is chosen by
+# the business owner via apply_vertical_spec.py, not generated. Checked here so
+# the 30-minute no-phrase-needed session (see db.record_summon's own docstring)
+# only ever applies to a live-portal-demo visitor's own conversation, not a real
+# customer of an actual installed business - a deliberate scope decision, not a
+# technical limitation of the session mechanism itself.
+_DEMO_VERTICAL_PREFIX = 'demo-'
+
+
+def _is_demo_vertical(vertical_id: Optional[str]) -> bool:
+    return bool(vertical_id) and vertical_id.startswith(_DEMO_VERTICAL_PREFIX)
+
+
+async def _fallback_to_active_session(
+    conn: db.Collection, identity_key: str,
+) -> Tuple[bool, Optional[str]]:
+    """Only called once _resolve_summoned_vertical() has already found no
+    phrase in THIS message - the same (False, None) shape that function
+    returns, upgraded to (True, vertical_id) if this identity summoned a
+    still-live demo vertical within the last db.SESSION_WINDOW_SECONDS.
+    Re-checks vertical_enabled here rather than trusting the session blindly -
+    a demo vertical's own TTL (verticals_demo.py's cron-scheduled expiry) can
+    fire in the middle of an otherwise-still-valid 30-minute window, and a
+    deactivated vertical must stay unreachable regardless of what the session
+    says."""
+    vertical_id = db.get_active_session_vertical(conn, identity_key)
+    if not _is_demo_vertical(vertical_id):
+        return False, None
+    enabled = await config_sdk.get_constant(AGENT_ID, 'vertical_enabled', True, vertical_id=vertical_id)
+    if not enabled:
+        return False, None
+    return True, vertical_id
+
+
 def strip_summon_phrase(text: str, phrase: str = DEFAULT_SUMMON_PHRASE) -> str:
     """Removes every occurrence of the summon phrase before the text is
     handed to routing/classification, so the summon itself isn't just
@@ -257,9 +292,17 @@ async def check(
     normal routing - which now requires a summon phrase to be present, for
     BOTH the owner (in their self-chat or a client's chat) AND a registered
     client. A registered client's message with no register/unregister
-    command and no summon phrase returns (None, None, None): silence. tier
-    is the permission tier (mesh/lib/permissions.py) to mint a token for
-    before routing.
+    command and no summon phrase returns (None, None, None): silence,
+    UNLESS this identity summoned a still-enabled demo vertical
+    (mesh/mcp/whatsapp/verticals_demo.py's 'demo-' prefix) within the last
+    db.SESSION_WINDOW_SECONDS (see _fallback_to_active_session()) - a live-
+    portal-demo visitor gets a real back-and-forth without repeating the
+    phrase every message, for exactly that fixed window from their last
+    explicit phrase, never longer. Real production verticals are
+    deliberately excluded from this fallback; they keep the strict every-
+    message-needs-the-phrase behavior described above. tier is the
+    permission tier (mesh/lib/permissions.py) to mint a token for before
+    routing.
 
     vertical_id is which business vertical's own phrase matched
     (_resolve_summoned_vertical()), or None for the platform default
@@ -317,8 +360,14 @@ async def check(
         # registered client) never fires Adiyan just because you sent a
         # message.
         eligible_chat = is_self_chat or db.is_whitelisted(conn, identity_key)
-        if not eligible_chat or not summoned:
+        if not eligible_chat:
             return None, None, None
+        if not summoned:
+            summoned, vertical_id = await _fallback_to_active_session(conn, identity_key)
+            if not summoned:
+                return None, None, None
+        elif _is_demo_vertical(vertical_id):
+            db.record_summon(conn, identity_key, vertical_id)
         return None, 'owner', vertical_id
 
     command = _detect_command(text)
@@ -342,7 +391,11 @@ async def check(
     # echo of Adiyan's own reply) re-entered routing and could be answered -
     # the exact gap behind the 2026-09-10 loop in a client chat.
     if not summoned:
-        return None, None, None
+        summoned, vertical_id = await _fallback_to_active_session(conn, identity_key)
+        if not summoned:
+            return None, None, None
+    elif _is_demo_vertical(vertical_id):
+        db.record_summon(conn, identity_key, vertical_id)
 
     tier = db.get_metadata(conn, identity_key).get('permission_type') or permissions.default_client_tier()
     return None, tier, vertical_id

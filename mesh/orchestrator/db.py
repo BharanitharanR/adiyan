@@ -104,3 +104,59 @@ def update_metadata(conn: Collection, chat_id: str, updates: Dict[str, Any]) -> 
         {'$set': {'metadata': current, 'updated_at': datetime.now(timezone.utc).isoformat()}},
     )
     return current if result.matched_count else {}
+
+
+# How long an explicit summon phrase keeps a demo vertical reachable
+# without the phrase - see rules_engine.check()'s own use of these two
+# functions for why this exists (letting a live-portal-demo visitor have
+# an actual back-and-forth without repeating the phrase every message)
+# and why it's demo-only and fixed rather than sliding.
+SESSION_WINDOW_SECONDS = 30 * 60
+
+
+def record_summon(conn: Collection, identity_key: str, vertical_id: str) -> None:
+    """Starts (or restarts) a fixed SESSION_WINDOW_SECONDS window during
+    which this identity's phrase-less messages are treated as still
+    talking to vertical_id. Unconditional overwrite, upserting a bare
+    document if this identity has never been seen before (a not-yet-
+    registered demo visitor's first, phrase-bearing message) - an explicit
+    phrase is always a deliberate signal, so typing it again mid-window
+    intentionally restarts the clock rather than being a no-op, and this
+    write never touches is_whitelisted/contact_name, so it can't
+    accidentally register someone."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn.update_one(
+        {'_id': identity_key},
+        {'$set': {'active_vertical_id': vertical_id, 'active_vertical_started_at': now}},
+        upsert=True,
+    )
+
+
+def get_active_session_vertical(conn: Collection, identity_key: str) -> Optional[str]:
+    """The vertical_id a phrase-less message from this identity should be
+    treated as still talking to, if record_summon() was called for it
+    within the last SESSION_WINDOW_SECONDS - None otherwise (never
+    started, expired, or no such identity at all).
+
+    Fixed window, not sliding: only an explicit phrase (record_summon)
+    resets the clock - a phrase-less message never extends it. The fixed
+    cutoff, not the relaxation itself, is what keeps this from reopening
+    the 2026-09-10 runaway-loop risk the summon-phrase thumb rule
+    (rules_engine.check()'s own docstring) was written against: even a
+    conversation that keeps being answered goes silent again exactly
+    SESSION_WINDOW_SECONDS after the last real phrase, not indefinitely."""
+    doc = conn.find_one({'_id': identity_key})
+    if not doc:
+        return None
+    vertical_id = doc.get('active_vertical_id')
+    started_at = doc.get('active_vertical_started_at')
+    if not vertical_id or not started_at:
+        return None
+    try:
+        started = datetime.fromisoformat(started_at)
+    except ValueError:
+        return None
+    age_seconds = (datetime.now(timezone.utc) - started).total_seconds()
+    if age_seconds > SESSION_WINDOW_SECONDS:
+        return None
+    return vertical_id
