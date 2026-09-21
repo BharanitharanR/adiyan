@@ -98,16 +98,29 @@ class GeneratedVerticalSpec(BaseModel):
     summon_phrase: str = Field(description="ONE short lowercase word, 5-12 letters, no spaces - e.g. 'spicehouse' for a restaurant called Spice House, or 'crumbs' for a bakery called Sweet Crumbs. Never a sentence or the description itself.")
     card_description: str = Field(description="One sentence describing what this assistant does for this specific business.")
     tone: str = Field(description="2-4 words describing the tone to speak in, e.g. 'warm and friendly', 'brisk and professional'.")
+    key_facts: List[str] = Field(
+        default_factory=list,
+        description=(
+            "0-5 literal, concrete facts the owner explicitly stated and that the assistant needs to actually "
+            "recite back to customers - a real link/URL, a real schedule or timing, a real address, a real "
+            "phone number, a real price they explicitly gave. Each entry is the fact ITSELF, copied verbatim "
+            "from the owner's own words, never a paraphrase or a rounded/reformatted version - e.g. "
+            "'Zoom link: https://us05web.zoom.us/j/88272214438' or 'Open 8am to 10pm daily', not 'the business "
+            "has a Zoom link' or 'business hours are provided'. This is the ONLY place a concrete fact belongs - "
+            "if a fact given by the owner isn't captured here verbatim, the assistant will never actually have "
+            "it and will either refuse or invent one the moment a customer asks."
+        ),
+    )
     key_dos: List[str] = Field(
         default_factory=list,
         description=(
-            "0-3 short instructions for things the assistant should always do, each a few words, e.g. "
-            "'confirm pickup time clearly'. Empty list if the description gives nothing specific. NEVER an "
-            "instruction to provide a menu, prices, inventory, stock levels, or any other specific fact - this "
-            "demo never collects that data, so an instruction like 'always give menu and prices' guarantees "
-            "the assistant will invent numbers it doesn't have the moment a customer asks. If the description "
-            "only names what the business sells with no actual prices/inventory given, leave that detail out "
-            "of key_dos entirely rather than turning it into an instruction to report it."
+            "0-3 short BEHAVIORAL instructions for things the assistant should always do, each a few words, "
+            "e.g. 'confirm pickup time clearly'. Empty list if the description gives nothing specific. NEVER an "
+            "instruction to provide a fact (a menu, prices, inventory, a link, a schedule, an address, or "
+            "anything else concrete) - any such fact belongs in key_facts instead, verbatim, or not at all. An "
+            "instruction like 'always give the Zoom link' with the actual link left out of key_facts guarantees "
+            "the assistant will invent one the moment a customer asks - key_dos is for HOW to behave, key_facts "
+            "is for WHAT is actually true, and the two must never be conflated."
         ),
     )
     key_donts: List[str] = Field(default_factory=list, description="0-3 short instructions for things the assistant should never do, each a few words, e.g. 'quote exact prices, redirect to the owner instead'. Empty list if the description gives nothing specific.")
@@ -128,16 +141,29 @@ _GENERATE_PROMPT_TEMPLATE = """A business owner described their business in thei
 Business owner's own words:
 \"\"\"{description}\"\"\"
 
-Example, for "We're a laundry pickup service in Bangalore called QuickWash, we collect and deliver same day":
+Example 1, for "We're a laundry pickup service in Bangalore called QuickWash, we collect and deliver same day":
 - business_name: "QuickWash"
 - summon_phrase: "quickwash"
 - card_description: "A same-day laundry pickup and delivery service in Bangalore."
 - tone: "efficient and friendly"
+- key_facts: []
 - key_dos: ["confirm pickup and delivery timing clearly"]
 - key_donts: []
 - workflows: ["Customers can book a laundry pickup"]
 
-Ground every field ONLY in what the owner actually said - never invent a specific fact (a price, an hour, a policy) they didn't mention, and never invent a workflow that isn't clearly implied."""
+Example 2, for "I'm a yoga teacher, classes 5am-11am and 7pm-10pm IST, zoom link https://zoom.us/j/12345, 1500 RS per month":
+- business_name: "(the teacher's/studio's own name, or a short descriptive name if none was given)"
+- summon_phrase: "yogateacher" (or similar)
+- card_description: "A yoga teacher offering online classes across global time zones."
+- tone: "calm and supportive"
+- key_facts: ["Classes run 5am-11am and 7pm-10pm IST", "Zoom link: https://zoom.us/j/12345", "1500 RS per month"]
+- key_dos: []
+- key_donts: []
+- workflows: ["Customers can ask to join a class and receive the Zoom link"]
+
+The link, the timings and the price are all facts the owner actually gave - they go in key_facts VERBATIM, never as a bare "always provide X" instruction in key_dos with the fact itself left out.
+
+Ground every field ONLY in what the owner actually said - never invent a specific fact (a price, an hour, a policy, a link) they didn't mention, and never invent a workflow that isn't clearly implied."""
 
 
 async def _generate_spec(description: str) -> GeneratedVerticalSpec:
@@ -167,11 +193,23 @@ async def _generate_spec(description: str) -> GeneratedVerticalSpec:
 # payment handling belongs ONLY in the workflows: field below (which wires
 # an actual tool), never as a bare key_dos assertion with nothing backing
 # it.
+#
+# Confirmed live a third time: a yoga teacher's description gave an actual
+# working Zoom link and real class timings, but key_dos came back as
+# ["provide the Zoom link when users ask to join", "share the schedule
+# times"] with the link and timings themselves nowhere in the generated
+# spec at all - key_facts (added after this incident) is the real fix,
+# giving the model an explicit place to put the fact itself instead of
+# just an instruction to report it, but this keyword list stays as the
+# same mandatory backstop for whatever the model still puts in key_dos
+# instead of key_facts.
 _UNGROUNDABLE_DO_KEYWORDS = (
     'menu', 'price', 'pricing', 'cost', 'inventory', 'stock', 'catalog', 'catalogue',
     'process order', 'process the order', 'process takeaway', 'process pickup',
     'confirm order', 'confirm the order', 'complete order', 'complete payment',
     'process payment', 'mark order', 'order is processed', 'order processed',
+    'zoom link', 'the link', 'provide the link', 'share the link', 'send the link',
+    'schedule', 'timing', 'timings', 'the address', 'contact number', 'phone number',
 )
 
 
@@ -188,6 +226,12 @@ def _assemble_persona(summon_phrase: str, generated: 'GeneratedVerticalSpec') ->
         f"You are {summon_phrase}, the digital assistant for {generated.business_name}. "
         f"{generated.card_description} Speak in a {tone} tone.",
     ]
+    # Real, owner-stated facts - safe to state directly (unlike key_dos'
+    # own "always report X" instructions), since these ARE the actual data,
+    # not a promise to produce data that was never captured anywhere.
+    facts = [f.strip().rstrip('.') for f in generated.key_facts if f.strip()][:5]
+    if facts:
+        parts.append('Known facts: ' + '. '.join(facts) + '.')
     safe_dos = [do for do in generated.key_dos if not any(kw in do.lower() for kw in _UNGROUNDABLE_DO_KEYWORDS)]
     for do in safe_dos[:3]:
         parts.append(f"Always {do.strip().rstrip('.')}.")
