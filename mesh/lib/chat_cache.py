@@ -41,7 +41,7 @@ from mesh.lib.config import load_seed_config
 # Shared platform prompt, same pseudo agent_id convention as
 # skill_router.py/tool_resolution.py/vision.py - relevance filtering is the
 # same decision regardless of which agent's conversation this cache belongs to.
-_SHARED_AGENT_ID = '_chat_cache'
+_SHARED_AGENT_ID = 'chat_cache'
 _agent = AdiyanAgent(_SHARED_AGENT_ID)
 _SEED = load_seed_config(Path(__file__).parent)
 
@@ -83,23 +83,47 @@ def _window_minutes() -> float:
     return float(os.environ.get('CHAT_CACHE_WINDOW_MINUTES', str(DEFAULT_WINDOW_MINUTES)))
 
 
-def remember_turn(contact_name: str, user_text: str, reply_text: str) -> None:
+def _cache_key(contact_name: str, vertical_id: Optional[str]) -> str:
+    """Same composite-key scoping mesh/memory/mem0_backend.py's own
+    _scoped_user_id uses, for the same reason - confirmed live: a contact
+    who talked to a demo yoga-teacher vertical and asked for its Zoom link,
+    then separately messaged a completely different real vertical (an
+    executive-coaching assistant, via its own unrelated summon phrase),
+    got that Zoom link repeated back to them out of nowhere - this cache's
+    own get_recent_turns(), keyed on contact_name alone, handed the yoga
+    exchange to format_recent_turns() as "recent history" for a conversation
+    that had nothing to do with it, and the model treated it as legitimate
+    prior context. vertical_id=None (a genuinely cross-business flow) falls
+    back to the old, unscoped key rather than inventing a fake bucket."""
+    return f'{vertical_id}::{contact_name}' if vertical_id else contact_name
+
+
+def remember_turn(contact_name: str, user_text: str, reply_text: str, vertical_id: Optional[str] = None) -> None:
     """Best-effort, never raises - a failure here must never break the reply
     that already went out, same tolerance every other best-effort write in
-    this mesh gets (e.g. mem0_backend.remember())."""
+    this mesh gets (e.g. mem0_backend.remember()).
+
+    vertical_id must match whatever get_recent_turns()/format_recent_turns()
+    is later called with for this same contact, or this turn will never be
+    found - see _cache_key's own docstring for why this exists."""
+    key = _cache_key(contact_name, vertical_id)
     try:
         with _lock:
-            turns = _turns_by_contact.setdefault(contact_name, deque(maxlen=_HARD_CAP_TURNS))
+            turns = _turns_by_contact.setdefault(key, deque(maxlen=_HARD_CAP_TURNS))
             turns.append({'user_text': user_text, 'reply_text': reply_text, 'timestamp': time.time()})
     except Exception:
         pass
 
 
-def get_recent_turns(contact_name: str) -> List[Dict[str, Any]]:
+def get_recent_turns(contact_name: str, vertical_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Oldest-first list of {'user_text', 'reply_text', 'timestamp'}, bounded
-    by whichever mode CHAT_CACHE_MODE currently selects."""
+    by whichever mode CHAT_CACHE_MODE currently selects.
+
+    vertical_id: see remember_turn's own docstring - must match the write
+    side for this contact, or nothing will come back."""
+    key = _cache_key(contact_name, vertical_id)
     with _lock:
-        turns = list(_turns_by_contact.get(contact_name, ()))
+        turns = list(_turns_by_contact.get(key, ()))
 
     if _mode() == 'time':
         cutoff = time.time() - (_window_minutes() * 60)
@@ -118,7 +142,9 @@ class _RelevantTurns(BaseModel):
     )
 
 
-async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str, Any]) -> Optional[str]:
+async def format_recent_turns(
+    contact_name: str, new_message: str, cfg: Dict[str, Any], vertical_id: Optional[str] = None,
+) -> Optional[str]:
     """Turns get_recent_turns()'s raw window into an LLM-ready context block,
     filtered down to only the turns actually relevant to new_message - not the
     whole window verbatim. Confirmed live: "I really enjoy trekking in the
@@ -141,7 +167,7 @@ async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str
     its end - this module is a shared library, not tied to one agent_id, same
     reasoning analyze.py's _decide_next_step/_compact take cfg as a parameter
     rather than fetching it themselves."""
-    turns = get_recent_turns(contact_name)
+    turns = get_recent_turns(contact_name, vertical_id)
     if not turns:
         return None
 
@@ -180,8 +206,8 @@ async def format_recent_turns(contact_name: str, new_message: str, cfg: Dict[str
     )
 
 
-def clear(contact_name: str) -> None:
+def clear(contact_name: str, vertical_id: Optional[str] = None) -> None:
     """Not currently called anywhere - here for symmetry/testing, same as
     any cache needs a way to be emptied."""
     with _lock:
-        _turns_by_contact.pop(contact_name, None)
+        _turns_by_contact.pop(_cache_key(contact_name, vertical_id), None)

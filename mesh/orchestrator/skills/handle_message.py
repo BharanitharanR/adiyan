@@ -1122,7 +1122,7 @@ async def run(
             # chat_cache.format_recent_turns()'s own docstring for the
             # relevance-filtering (not full-window) behavior.
             history = await chat_cache.format_recent_turns(
-                contact_name or chat_id, text, cfg['filter_chat_history'],
+                contact_name or chat_id, text, cfg['filter_chat_history'], vertical_id=vertical_id,
             )
 
             # Long-term memory, fetched unconditionally - the same class of
@@ -1317,7 +1317,7 @@ async def run(
         # separate from mem0's long-term semantic store below - never raises,
         # so no try/except needed around it. Same "regardless of `delivered`"
         # reasoning as the mem0 write just below applies here too.
-        chat_cache.remember_turn(contact_name or chat_id, text, reply)
+        chat_cache.remember_turn(contact_name or chat_id, text, reply, vertical_id=vertical_id)
 
         # Long-term: best-effort, after delivery - see
         # mesh/memory/mem0_backend.py's own docstring for what actually
