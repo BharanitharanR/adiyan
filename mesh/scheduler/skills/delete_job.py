@@ -15,12 +15,18 @@ from mesh.scheduler.constants import AGENT_ID, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
 
 
-async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None) -> Dict[str, Any]:
+async def run(
+    job_id: Optional[str] = None, name_or_phrase: Optional[str] = None,
+    requester_chat_id: Optional[str] = None,
+) -> Dict[str, Any]:
     if not job_id and not name_or_phrase:
         raise ValueError('delete_job needs either job_id or name_or_phrase')
 
     conn = db.connect(state_db_path(AGENT_ID))
-    job = await resolve_job(conn, job_id, name_or_phrase)
+    # requester_chat_id scopes name/phrase lookup to the caller's own jobs -
+    # a Verticals customer saying "cancel my reminder" must never be able
+    # to delete another customer's (or the owner's) similarly-named job.
+    job = await resolve_job(conn, job_id, name_or_phrase, requester_chat_id=requester_chat_id)
 
     db.delete_job(conn, job['id'])
     # A service token - the caller's own permission to delete_job was

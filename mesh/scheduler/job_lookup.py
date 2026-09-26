@@ -21,14 +21,22 @@ async def resolve_job(
     conn: Collection,
     job_id: Optional[str],
     name_or_phrase: Optional[str],
+    requester_chat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     if job_id:
+        # An exact id is already fully determined (cron_trigger's own fire
+        # call, or a caller re-using an id it was handed earlier) - no
+        # requester scoping needed, same as before this field existed.
         job = db.get_job(conn, job_id)
         if job is None:
             raise JobNotFoundError(f'No job with id {job_id}')
         return job
     embedding = await _embed(name_or_phrase)
-    job = db.find_job_by_name(conn, embedding)
+    # requester_chat_id scopes name/phrase lookup to the caller's own jobs -
+    # see db.find_job_by_name's own docstring for why a customer's "run my
+    # morning routine" must never resolve to someone else's job of the
+    # same name.
+    job = db.find_job_by_name(conn, embedding, requester_chat_id=requester_chat_id)
     if job is None:
         raise JobNotFoundError(f"No routine matches '{name_or_phrase}'")
     return job

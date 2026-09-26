@@ -175,6 +175,26 @@ class SchedulerAgentExecutor(AgentExecutor):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
 
+        if skill_id in ('schedule_job', 'run_routine', 'delete_job', 'list_jobs'):
+            # Always the token's own claims, never something a caller
+            # supplies - vertical_id/requester_chat_id aren't part of any
+            # extraction schema above, so a free-text caller has no way to
+            # populate them anyway; this is what actually lets Verticals
+            # customers reach Scheduler at all (previously every job was
+            # implicitly the platform owner's own) while keeping one
+            # customer's jobs invisible to and undeletable by another - see
+            # mesh/scheduler/db.py's own scoping docstrings for the full
+            # reasoning. sub is None for a caller with no verified identity
+            # at all (shouldn't happen given the permission check just
+            # above, but this must never silently invent one). Only
+            # schedule_job takes vertical_id - the other three only ever
+            # need requester_chat_id to scope lookup/listing, and don't
+            # accept the other keyword at all.
+            claims = claims or {}
+            params['requester_chat_id'] = claims.get('sub')
+            if skill_id == 'schedule_job':
+                params['vertical_id'] = claims.get('vertical_id')
+
         try:
             result = await self._dispatch(skill_id, params)
         except (schedule_job.TargetNotResolvableError, schedule_job.ScheduleTooFrequentError, JobNotFoundError) as e:

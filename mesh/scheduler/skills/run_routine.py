@@ -15,6 +15,7 @@ Journal Agent's own AgentSkill, exactly the mechanism a real registry would
 generalize to later - just hardcoded to one candidate agent today, since the
 registry idea is deliberately parked (see docs/AGENTS.md).
 """
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -27,6 +28,7 @@ from mesh.journal.skills_catalog import get_skills as get_journal_skills
 from mesh.lib import config_sdk, permissions
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_runtime_config
+from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.skill_router import classify
@@ -34,6 +36,8 @@ from mesh.scheduler import db
 from mesh.scheduler.constants import AGENT_ID, AGENT_URL, CRON_TRIGGER_URL
 from mesh.scheduler.job_lookup import resolve_job
 from mesh.scheduler.skills.schedule_job import AGENT_CODE_DIR, _seeded
+
+logger = logging.getLogger(AGENT_ID)
 
 # One instance, module-level - AGENT_ID never changes at runtime, and
 # every method mints its own token internally against 'scheduler_service'
@@ -106,12 +110,15 @@ async def _compose_message(job: Dict[str, Any], cfg: Dict[str, Any]) -> Optional
     return await _compose_generic(job['description'], cfg['compose_message'])
 
 
-async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None) -> Dict[str, Any]:
+async def run(
+    job_id: Optional[str] = None, name_or_phrase: Optional[str] = None,
+    requester_chat_id: Optional[str] = None,
+) -> Dict[str, Any]:
     if not job_id and not name_or_phrase:
         raise ValueError('run_routine needs either job_id or name_or_phrase')
 
     conn = db.connect(state_db_path(AGENT_ID))
-    job = await resolve_job(conn, job_id, name_or_phrase)
+    job = await resolve_job(conn, job_id, name_or_phrase, requester_chat_id=requester_chat_id)
 
     if job['target'] != 'self':
         # Every job schedule_job creates today has target='self' - this is
@@ -125,16 +132,25 @@ async def run(job_id: Optional[str] = None, name_or_phrase: Optional[str] = None
 
     sent = False
     if message_text is not None:
-        # agent.notify_owner() never raises - a failure here (owner's phone
-        # unresolvable, WhatsApp not connected) now falls through to the
-        # same silent 'skipped' outcome as message_text being None below,
-        # rather than the RuntimeError this used to raise. That's a
-        # deliberate change, not an oversight: never surfacing a raw
-        # failure over WhatsApp already applies everywhere else in this
-        # mesh (see mesh/lib/utilities/whatsapp/notify_owner.py's own
-        # docstring) - a job that couldn't send this time re-registers
-        # below and gets another chance next time regardless.
-        sent = await _agent.notify_owner(message_text)
+        # A Verticals customer's own job (vertical_id set at creation time)
+        # delivers to THEM, at their own already-known chat_id - never to
+        # the platform owner, who has nothing to do with this business's
+        # customer. A legacy/owner job (vertical_id None, everything
+        # created before Scheduler was reachable from a vertical) keeps
+        # the original notify_owner() behavior exactly as it always was.
+        # Neither call ever raises - see notify_owner's own docstring for
+        # why a delivery failure here falls through to the same silent
+        # 'skipped' outcome as message_text being None below, rather than
+        # surfacing a raw error: the job re-registers below regardless and
+        # gets another chance next time.
+        if job.get('vertical_id') and job.get('requester_chat_id'):
+            try:
+                await _agent.send_message_to(job['requester_chat_id'], message_text)
+                sent = True
+            except Exception as e:
+                logger.warning(f"Failed to deliver routine {job['id']!r} to {job['requester_chat_id']!r}: {describe_exception(e)}")
+        else:
+            sent = await _agent.notify_owner(message_text)
     # message_text is None: _compose_generic couldn't produce anything
     # grounded in the job's actual description (see
     # _looks_like_unfilled_template) - staying silent here rather than

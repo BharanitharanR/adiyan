@@ -127,7 +127,14 @@ async def run(
     target: str,
     expects_response: bool = False,
     response_window_minutes: Optional[int] = None,
+    vertical_id: Optional[str] = None,
+    requester_chat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    # 'self' still means "the person actually talking to me" - unchanged
+    # semantics, just a different person depending on context: the
+    # platform owner when vertical_id is None, or a Verticals business's
+    # own customer when it's set. See run_routine.py's own delivery branch
+    # for where that distinction actually takes effect.
     if target != 'self':
         raise TargetNotResolvableError(target)
 
@@ -141,7 +148,7 @@ async def run(
     _reject_if_subhourly(cron_expression)
     next_run_at = _next_run_at(cron_expression)
 
-    existing = db.find_similar_job(conn, embedding, cron_expression)
+    existing = db.find_similar_job(conn, embedding, cron_expression, requester_chat_id=requester_chat_id)
     if existing is not None:
         return {
             'job_id': existing['id'],
@@ -156,6 +163,7 @@ async def run(
         resolved_schedule=cron_expression, next_run_at=next_run_at,
         embedding=embedding, expects_response=expects_response,
         response_window_minutes=response_window_minutes,
+        vertical_id=vertical_id, requester_chat_id=requester_chat_id,
     )
 
     # Service token - see delete_job.py's identical comment: the caller's

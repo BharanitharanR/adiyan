@@ -13,9 +13,14 @@ from mesh.scheduler.constants import AGENT_ID
 _INTERNAL_FIELDS = {'embedding'}
 
 
-def run(target: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
+def run(target: Optional[str] = None, status: Optional[str] = None, requester_chat_id: Optional[str] = None) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = [{k: v for k, v in job.items() if k not in _INTERNAL_FIELDS} for job in db.list_all(conn)]
+    if requester_chat_id is not None:
+        # A Verticals customer (or the owner) only ever sees their own
+        # jobs - without this, "list my reminders" would return every
+        # job on the whole deployment, across every business and customer.
+        jobs = [j for j in jobs if j.get('requester_chat_id') == requester_chat_id]
     if target:
         jobs = [j for j in jobs if j['target'] == target]
         # No fallback to a hardcoded 'self' here - zero matches for a real,

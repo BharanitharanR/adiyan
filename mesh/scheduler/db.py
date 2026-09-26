@@ -69,7 +69,10 @@ def _cosine(a: List[float], b: List[float]) -> float:
     return float(np.dot(a_arr, b_arr) / denom) if denom else 0.0
 
 
-def find_similar_job(conn: Collection, embedding: List[float], resolved_schedule: str) -> Optional[Dict[str, Any]]:
+def find_similar_job(
+    conn: Collection, embedding: List[float], resolved_schedule: str,
+    requester_chat_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Returns the closest existing job at/above SIMILARITY_FLOOR that also
     runs on the exact same schedule, or None.
 
@@ -84,9 +87,16 @@ def find_similar_job(conn: Collection, embedding: List[float], resolved_schedule
     floor is what actually captures "this is a repeat of an existing job,"
     not just "these two descriptions are topically similar." The Mongo
     query is the cheap early filter on schedule; the cosine comparison only
-    runs over that already-narrowed set."""
+    runs over that already-narrowed set.
+
+    requester_chat_id scopes the candidate set to the SAME person's own
+    jobs - without this, two different Verticals customers asking for the
+    exact same phrased, exact same timed reminder would dedupe onto a
+    SINGLE job, and only the first one to ask would ever actually get
+    notified. None matches the legacy owner-only jobs that predate this
+    field (never mixed with a real customer's own jobs)."""
     best_doc, best_score = None, 0.0
-    for doc in conn.find({'resolved_schedule': resolved_schedule}):
+    for doc in conn.find({'resolved_schedule': resolved_schedule, 'requester_chat_id': requester_chat_id}):
         score = _cosine(embedding, doc['embedding'])
         if score > best_score:
             best_doc, best_score = doc, score
@@ -95,7 +105,9 @@ def find_similar_job(conn: Collection, embedding: List[float], resolved_schedule
     return None
 
 
-def find_job_by_name(conn: Collection, embedding: List[float]) -> Optional[Dict[str, Any]]:
+def find_job_by_name(
+    conn: Collection, embedding: List[float], requester_chat_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Returns the closest existing job at/above SIMILARITY_FLOOR, searched
     across ALL jobs regardless of schedule.
 
@@ -104,9 +116,13 @@ def find_job_by_name(conn: Collection, embedding: List[float]) -> Optional[Dict[
     schedule in advance, so there's nothing to pre-filter on. That's the
     opposite situation from find_similar_job()'s dedup check, which already
     has a target resolved_schedule in hand and uses it to narrow the
-    candidate set before comparing embeddings."""
+    candidate set before comparing embeddings.
+
+    requester_chat_id: same scoping reasoning as find_similar_job - "run my
+    morning routine" must only ever be able to match a job THIS person
+    created, never another customer's (or the owner's) similarly-named one."""
     best_doc, best_score = None, 0.0
-    for doc in conn.find({}):
+    for doc in conn.find({'requester_chat_id': requester_chat_id}):
         score = _cosine(embedding, doc['embedding'])
         if score > best_score:
             best_doc, best_score = doc, score
@@ -125,7 +141,18 @@ def create_job(
     embedding: List[float],
     expects_response: bool = False,
     response_window_minutes: Optional[int] = None,
+    vertical_id: Optional[str] = None,
+    requester_chat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    # vertical_id/requester_chat_id default to None - a job created before
+    # Verticals customers could reach Scheduler at all (the owner's own
+    # habit/reflection routines) - run_routine.py reads a None vertical_id
+    # as "deliver via notify_owner, exactly as it always has."
+    # requester_chat_id is who the job actually belongs to for dedup/lookup
+    # scoping (see find_similar_job/find_job_by_name) - for an owner job
+    # this is the owner's own chat_id, not None, so two DIFFERENT people
+    # never collide even when vertical_id happens to match (or is None for
+    # both).
     job_id = str(uuid.uuid4())
     conn.insert_one({
         '_id': job_id,
@@ -138,6 +165,8 @@ def create_job(
         'response_window_minutes': response_window_minutes,
         'embedding': list(embedding),
         'created_at': datetime.now(timezone.utc).isoformat(),
+        'vertical_id': vertical_id,
+        'requester_chat_id': requester_chat_id,
     })
     return get_job(conn, job_id)
 
