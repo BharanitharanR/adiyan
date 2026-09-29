@@ -32,6 +32,18 @@ logger = logging.getLogger('RulesEngine')
 
 REGISTER_PHRASE = 'register me'
 UNREGISTER_PHRASE = 'unregister me'
+# Confirmed live as a real gap: a customer who wants to end their
+# subscription says "end my subscription" or "cancel my subscription", not
+# the literal "unregister me" - none of these ever matched. Still a fixed
+# phrase set, not classify() - see this module's own header comment for WHY
+# opt-out has to stay a phrase match, not an LLM judgment call: a
+# hallucinated "yes, this counts as unregistering" would silently drop a
+# real customer. Widening the set of exact phrases that count is safe under
+# that same reasoning; asking a model to decide isn't.
+_UNREGISTER_SYNONYMS = (
+    UNREGISTER_PHRASE, 'end my subscription', 'end subscription',
+    'cancel my subscription', 'cancel subscription', 'unsubscribe me',
+)
 
 # The thumb rule (2026-09-10): Adiyan responds to a message ONLY if that
 # message contains the summon phrase - every sender (owner and client
@@ -134,6 +146,24 @@ def _is_demo_vertical(vertical_id: Optional[str]) -> bool:
     return bool(vertical_id) and vertical_id.startswith(_DEMO_VERTICAL_PREFIX)
 
 
+async def _is_open_enrollment(vertical_id: Optional[str]) -> bool:
+    """True if this REAL (non-demo) vertical's own owner has explicitly
+    opted it into the same zero-friction first-message auto-registration
+    demo verticals already get - a business deliberately built to be
+    tried by strangers with no signup step (e.g. one advertised on a
+    public marketplace page), as opposed to every other real vertical's
+    default, which still requires an owner-added or self-registered
+    client before it will say anything at all. get_vertical_own_constant,
+    not get_constant - a vertical that never set this must never be
+    treated as if it explicitly opted in, same reasoning
+    _resolve_summoned_vertical()'s own summon_phrase lookup already
+    documents for the identical pitfall."""
+    if not vertical_id or _is_demo_vertical(vertical_id):
+        return False  # demo verticals already get this via _is_demo_vertical
+    value = await config_sdk.get_vertical_own_constant(AGENT_ID, vertical_id, 'open_enrollment')
+    return bool(value)
+
+
 async def _fallback_to_active_session(
     conn: db.Collection, identity_key: str,
 ) -> Tuple[bool, Optional[str]]:
@@ -167,8 +197,26 @@ def strip_summon_phrase(text: str, phrase: str = DEFAULT_SUMMON_PHRASE) -> str:
 def strip_adiyan_mention(text: str) -> str:
     return strip_summon_phrase(text, DEFAULT_SUMMON_PHRASE)
 
-REGISTERED_REPLY = "You're registered! Ask away."
+REGISTERED_REPLY = (
+    "You're registered! Ask away.\n\n"
+    "Just so you know: this WhatsApp number is run by its owner, who can see "
+    "the messages sent here."
+)
 UNREGISTERED_REPLY = 'You\'ve been unregistered. Send "register me" any time to come back.'
+
+# Shown exactly once, the moment an identity is auto-registered with no
+# explicit "register me" from them (a demo vertical, or a real vertical
+# opted into open_enrollment - see _is_open_enrollment()'s own docstring).
+# The explicit-registration path above gets this folded into
+# REGISTERED_REPLY itself; this path never returns its own reply at all
+# (it falls straight through to normal routing), so the caller
+# (mesh/orchestrator/skills/handle_message.py's run()) has to prepend this
+# to whatever the real answer ends up being - see check()'s own return
+# shape for how that's threaded through.
+AUTO_REGISTERED_NOTICE = (
+    "Just so you know: this WhatsApp number is run by its owner, who can "
+    "see the messages sent here.\n\n"
+)
 
 # Owner-only, NL-classified (unlike register/unregister above) - there's no
 # fixed phrase for "add a client on someone else's behalf" the way there is
@@ -204,7 +252,7 @@ def _detect_command(text: str) -> Optional[str]:
     'unregister me', so checking register first would misfire on every
     unregister request too."""
     msg_lower = text.lower()
-    if re.search(r'\b' + re.escape(UNREGISTER_PHRASE) + r'\b', msg_lower):
+    if any(re.search(r'\b' + re.escape(phrase) + r'\b', msg_lower) for phrase in _UNREGISTER_SYNONYMS):
         return 'unregister'
     if re.search(r'\b' + re.escape(REGISTER_PHRASE) + r'\b', msg_lower):
         return 'register'
@@ -284,8 +332,21 @@ async def check(
     from_number: Optional[str],
     cfg: Dict[str, Any],
     is_self_chat: bool = False,
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Returns (reply, tier, vertical_id). reply is set if the rules engine
+) -> Tuple[Optional[str], Optional[str], Optional[str], bool]:
+    """Returns (reply, tier, vertical_id, just_auto_registered).
+
+    just_auto_registered is True exactly once per identity: the specific
+    call where a demo-vertical or open-enrollment auto-registration just
+    happened (see the two branches below) - never for an owner, never for
+    an already-whitelisted client, never for the explicit "register me"
+    command (that path returns its own full reply, REGISTERED_REPLY,
+    which already carries the same disclosure baked in). The caller
+    (handle_message.py's run()) uses this one flag to prepend
+    AUTO_REGISTERED_NOTICE to whatever the real answer ends up being,
+    since this function itself returns no reply at all for that path - it
+    falls straight through to normal routing.
+
+    Returns (reply, tier, vertical_id). reply is set if the rules engine
     has already handled this message (registration, unregistration, or an
     add-named-contact admin command) - the caller should send that reply and
     stop, not route further. reply is None if the message should proceed to
@@ -339,6 +400,7 @@ async def check(
     # can be addressed in different JID forms depending on which field you
     # read, so comparing raw chat_id values directly is unreliable.
     identity_key = db.resolve_identity_key(chat_id)
+    just_auto_registered = False
 
     # The thumb rule: no summon phrase in the message, no response - for
     # anyone, in any chat (see this module's own header comment and the
@@ -351,7 +413,7 @@ async def check(
     if await is_owner(from_number):
         admin_reply = await _try_add_named_contact(conn, text, cfg)
         if admin_reply is not None:
-            return admin_reply, 'owner', vertical_id
+            return admin_reply, 'owner', vertical_id, False
 
         # An owner-authored message only ever triggers Adiyan in your own
         # self-chat or an already-registered client's chat - never in a
@@ -361,30 +423,57 @@ async def check(
         # message.
         eligible_chat = is_self_chat or db.is_whitelisted(conn, identity_key)
         if not eligible_chat:
-            return None, None, None
+            return None, None, None, False
         if not summoned:
             summoned, vertical_id = await _fallback_to_active_session(conn, identity_key)
             if not summoned:
-                return None, None, None
+                return None, None, None, False
         elif _is_demo_vertical(vertical_id):
             db.record_summon(conn, identity_key, vertical_id)
-        return None, 'owner', vertical_id
+        return None, 'owner', vertical_id, False
 
     command = _detect_command(text)
     whitelisted = db.is_whitelisted(conn, identity_key)
 
     if command == 'register':
         db.add_client(conn, identity_key, contact_name)
-        return REGISTERED_REPLY, permissions.default_client_tier(), None
+        return REGISTERED_REPLY, permissions.default_client_tier(), None, False
     if command == 'unregister':
         if whitelisted:
             db.remove_client(conn, identity_key)
-            return UNREGISTERED_REPLY, None, None
+            return UNREGISTERED_REPLY, None, None, False
         else:
-            return None, None, None
+            return None, None, None, False
+    if not whitelisted and summoned and _is_demo_vertical(vertical_id):
+        # A live-portal-demo visitor was promised "no signup needed" - the
+        # marketing site's own copy says exactly that (see index.html's
+        # demo-note and FAQ #04). Confirmed live as a real bug: a genuine
+        # first-time visitor's very first message - the demo's own summon
+        # phrase, typed right after building it - was silently dropped
+        # here, because they'd never sent "register me", something the
+        # site never tells them to do and the whole demo pitch assumes
+        # doesn't exist. Every one of tonight's own test messages used an
+        # already-whitelisted number, which is why this never surfaced
+        # earlier. Explicit registration still gates ongoing, standing
+        # access to a REAL business - this only auto-grants it for a
+        # vertical that's inherently scoped (1 hour, cron-expired) and
+        # opt-in the instant they typed its own phrase.
+        db.add_client(conn, identity_key, contact_name)
+        whitelisted = True
+        just_auto_registered = True
+    elif not whitelisted and summoned and await _is_open_enrollment(vertical_id):
+        # Same zero-friction grant as the demo case above, deliberately
+        # opt-in per real vertical (see _is_open_enrollment()'s own
+        # docstring) - a business explicitly built to be tried by strangers
+        # off a public link (e.g. a marketplace "try it" button) with no
+        # signup step, unlike every other real vertical's default of
+        # requiring an owner-added or self-registered client first.
+        db.add_client(conn, identity_key, contact_name)
+        whitelisted = True
+        just_auto_registered = True
     if not whitelisted:
         # Silent, not a rejection reply - see check()'s docstring for why.
-        return None, None, None
+        return None, None, None, False
 
     # Registered client, real message: same thumb rule as the owner branch.
     # Without this, every message a client sent (and every watermark-less
@@ -393,9 +482,9 @@ async def check(
     if not summoned:
         summoned, vertical_id = await _fallback_to_active_session(conn, identity_key)
         if not summoned:
-            return None, None, None
+            return None, None, None, False
     elif _is_demo_vertical(vertical_id):
         db.record_summon(conn, identity_key, vertical_id)
 
     tier = db.get_metadata(conn, identity_key).get('permission_type') or permissions.default_client_tier()
-    return None, tier, vertical_id
+    return None, tier, vertical_id, just_auto_registered

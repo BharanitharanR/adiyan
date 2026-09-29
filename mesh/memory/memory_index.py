@@ -41,6 +41,18 @@ from mesh.memory.constants import AGENT_ID
 
 logger = logging.getLogger('MemoryIndex')
 
+
+def book_display_name(source_filename: str) -> str:
+    """The human-readable title a source_filename actually represents - the
+    <username>/ prefix and extension stripped, underscores/hyphens back to
+    spaces. Module-level (not private to find_book_by_reference below) so
+    resolve_book.py can build the same display names for its own LLM-based
+    disambiguation over the candidates find_book_by_reference() didn't
+    already resolve outright."""
+    basename = source_filename.split('/', 1)[-1]
+    basename = re.sub(r'\.[A-Za-z0-9]+$', '', basename)
+    return basename.replace('_', ' ').replace('-', ' ').strip().lower()
+
 DOCUMENTS_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS kb_documents (
     source_filename TEXT PRIMARY KEY,
@@ -423,10 +435,21 @@ class MemoryIndex:
         # otherwise leave stale old chunks sitting alongside the new ones
         # forever, with colliding chunk_index values confusing
         # get_document_text()'s ordering.
-        self._qdrant_client.delete(
-            collection_name=KB_COLLECTION_NAME,
-            points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
-        )
+        #
+        # Guarded on collection_exists(), same fix ingest_document_by_page()
+        # already applies to KB_PAGES_COLLECTION_NAME below, for the same
+        # reason: delete() against a genuinely missing collection 404s
+        # instead of being a harmless no-op. This one used to be
+        # unguarded on the assumption KB_COLLECTION_NAME always has data
+        # from earlier sessions by the time this runs - confirmed live
+        # that assumption breaks the very first ingest after Qdrant's
+        # storage is wiped/restored (no prior collection at all), aborting
+        # ingestion before .insert() below ever got a chance to create it.
+        if self._qdrant_client.collection_exists(KB_COLLECTION_NAME):
+            self._qdrant_client.delete(
+                collection_name=KB_COLLECTION_NAME,
+                points_selector=Filter(must=[FieldCondition(key='source_filename', match=MatchValue(value=source_key))]),
+            )
 
         chunks = self._split_text(markdown, safe_name)
         for i, chunk in enumerate(chunks):
@@ -520,8 +543,21 @@ class MemoryIndex:
                 finalized, carry = combined, ''
             else:
                 finalized, carry = _split_trailing_fragment(combined)
+            # Confirmed live as a real, silent data-loss bug: a genuinely
+            # blank/near-blank page (Don Quixote's own page 3, right after
+            # a short contents page) fell back to a bare ' ' here - and the
+            # node parser this index's insert() runs text through produces
+            # ZERO chunks for whitespace-only input, so NOTHING ever got
+            # written to Qdrant for that page_number. No exception, no
+            # warning - just a page that silently doesn't exist, which
+            # read_next_page.py's own "page not found = book finished"
+            # check then misread as the entire book having ended, deep
+            # into a still-unread book. A real short sentence (not just
+            # whitespace) reliably survives sentence-splitting into at
+            # least one node, closing the gap at the source instead of
+            # only handling it defensively downstream.
             self.pages_index.insert(Document(
-                text=finalized or ' ',  # a blank page still needs a non-empty embed input
+                text=finalized or '(This page is blank.)',
                 metadata={'source_filename': source_key, 'page_number': page_no},
             ))
 
@@ -549,7 +585,7 @@ class MemoryIndex:
         node_content = points[0].payload.get('_node_content')
         return json.loads(node_content).get('text', '') if node_content else None
 
-    def list_page_ingested_books(self) -> List[str]:
+    def list_page_ingested_books(self, prefixes: Optional[List[str]] = None) -> List[str]:
         """Every distinct source_filename in KB_PAGES_COLLECTION_NAME - the
         page-ingested books AdiyanReader can actually read (ingest_book(),
         not ingest_document()). Deliberately separate from list_documents()
@@ -559,6 +595,17 @@ class MemoryIndex:
         find_source_document() has zero visibility into it - resolving a
         "read me this book" reference has to search THIS collection
         instead, not the regular knowledge-base document list.
+
+        prefixes: if given, only source_filenames whose <username>/ prefix
+        (safe-filenamed the same way ingest_document_by_page() safe-
+        filenames a username) matches one of these are returned - lets
+        list_books.py scope a listing to one business vertical's own
+        shared library, or one person's own uploads, without a second,
+        parallel enumeration method. None (the default, unchanged from
+        before this parameter existed) returns every book platform-wide -
+        find_book_by_reference() below deliberately keeps calling it that
+        way, since resolving "read me this book" still has to consider
+        every book on file, not just one vertical's own.
 
         Scrolls the whole collection client-side and dedupes source_filename
         values - no dedicated per-document index exists here (each point is
@@ -581,54 +628,57 @@ class MemoryIndex:
                     seen.add(source_filename)
             if offset is None:
                 break
+        if prefixes:
+            safe_prefixes = tuple(f'{_safe_filename(p)}/' for p in prefixes if p)
+            seen = {s for s in seen if s.startswith(safe_prefixes)}
         return sorted(seen)
 
-    def find_book_by_reference(self, query: str) -> Optional[str]:
-        """Fuzzy-matches a free-text book reference (a title, a partial
-        title) against the real page-ingested books on file, returning the
-        exact source_filename or None if nothing matches well enough - the
-        page-ingested equivalent of find_source_document(), which can't see
-        these books at all (see list_page_ingested_books()'s own docstring).
+    def find_book_by_reference(self, query: str, prefixes: Optional[List[str]] = None) -> Optional[str]:
+        """Exact/substring match ONLY - a real book title mentioned in full
+        or as a clear, unambiguous substring of exactly one candidate's own
+        display name. None if the query isn't a substring match against
+        anything (including "no candidates at all") - resolve_book.py is
+        the one that decides what to try next on a miss (today: an LLM pick
+        constrained to this same candidate list - see its own docstring for
+        why that replaced this method's old difflib fuzzy fallback).
 
-        Plain string matching (difflib), not a semantic/LLM lookup - a book
-        title is short and the candidate list is small, so a fuzzy string
-        match against each book's own display name (the safe_filename with
-        the <username>/ prefix and extension stripped, underscores back to
-        spaces) is enough, and keeps this a real, inspectable lookup against
-        actual data rather than another place an LLM could invent a key."""
-        import difflib
+        prefixes: same scoping as list_page_ingested_books() - None (the
+        default) searches every book platform-wide; a real list restricts
+        the match to just those owners' books. Confirmed live as a real
+        cross-vertical leak without this: a customer's "read me pride and
+        prehistory" matched into a completely unrelated person's own
+        uploaded copy of a similarly-titled book - resolve_book.py always
+        passes the caller's own vertical_id/requester_id here, the same
+        scoping list_documents()/list_books() already enforce, so a
+        business's customers can only ever be handed back that business's
+        own (or their own personal) books, never a stranger's.
 
-        candidates = self.list_page_ingested_books()
+        Deliberately conservative: with 2+ candidates whose display names
+        both contain the query (or vice versa), the FIRST one found (sorted
+        order, see list_page_ingested_books()) wins silently, same
+        long-standing behavior this method has always had for that rare
+        case - a genuine ambiguity between several real substring matches is
+        uncommon enough not to warrant its own resolution path, unlike the
+        single-best-guess problem the old fuzzy fallback had."""
+        candidates = self.list_page_ingested_books(prefixes=prefixes)
         if not candidates:
             return None
 
         query_normalized = query.strip().lower()
         if not query_normalized:
             # Confirmed live: an empty/blank query is a substring of every
-            # display name, so the exact/substring branch below would
-            # "match" whatever book happens to come first in the whole
-            # shared library and confidently start reading it - never a
+            # display name, so matching it here would silently pick
+            # whatever book happens to come first in the whole shared
+            # library and confidently start reading it - never a
             # deliberate choice. No reference at all means no match, full
             # stop, not "guess one."
             return None
 
-        def _display_name(source_filename: str) -> str:
-            basename = source_filename.split('/', 1)[-1]
-            basename = re.sub(r'\.[A-Za-z0-9]+$', '', basename)
-            return basename.replace('_', ' ').replace('-', ' ').strip().lower()
-
-        display_to_source = {_display_name(c): c for c in candidates}
-
-        # Exact/substring match first - a real book title mentioned in full
-        # or as a clear substring shouldn't be left to difflib's fuzzier
-        # scoring, which can be swayed by an unrelated but similarly-shaped
-        # title.
+        display_to_source = {book_display_name(c): c for c in candidates}
         for display_name, source_filename in display_to_source.items():
             if query_normalized in display_name or display_name in query_normalized:
                 return source_filename
-
-        matches = difflib.get_close_matches(query_normalized, display_to_source.keys(), n=1, cutoff=0.4)
-        return display_to_source[matches[0]] if matches else None
+        return None
 
     def retrieve_knowledge_base(
         self, query: str, top_k: int = KB_DEFAULT_TOP_K,
@@ -710,13 +760,14 @@ class MemoryIndex:
 
     def find_source_document(
         self, query: str, requester_id: Optional[str] = None, is_owner: bool = False,
+        min_score: float = SOURCE_MATCH_MIN_SCORE,
     ) -> Optional[str]:
         """The source_filename of the single best-matching knowledge-base
         chunk for query, or None if the knowledge base has nothing at all,
-        OR if the best match's own similarity score falls below
-        SOURCE_MATCH_MIN_SCORE - a top-1 retriever always returns *something*
-        as long as the knowledge base isn't empty, even when nothing in it is
-        actually relevant (confirmed live: a Vizag-trip question against a
+        OR if the best match's own similarity score falls below min_score -
+        a top-1 retriever always returns *something* as long as the
+        knowledge base isn't empty, even when nothing in it is actually
+        relevant (confirmed live: a Vizag-trip question against a
         knowledge base containing only an unrelated Atomic Habits PDF still
         got "matched" to it, and Analysis Agent's ReAct loop went on to
         answer from that instead of recognizing nothing relevant existed).
@@ -727,14 +778,26 @@ class MemoryIndex:
         Scoped the same way - this backs both resolve_document (Analysis
         Agent's search_documents tool) and share_knowledge_document, so an
         unscoped match here would leak either a filename or the raw file
-        itself to the wrong requester."""
+        itself to the wrong requester.
+
+        min_score defaults to SOURCE_MATCH_MIN_SCORE (resolve_document's own
+        stakes: a wrong match here becomes invisible, unverified grounding
+        for a text answer). share_knowledge_document calls this with a
+        lower value on purpose - sending back the actual file is lower-
+        stakes than treating its text as evidence, since a wrong file is
+        immediately, visibly wrong to whoever receives it, not a silent
+        factual error. Confirmed live: a real payment QR code image scored
+        0.49 against the query "payment QR code" - a genuine best (and
+        only sensible) match that the shared 0.55 threshold was rejecting
+        outright, forcing an honest "can't find it" reply for a document
+        that was right there and correctly ranked first."""
         filters = None if is_owner else _scope_filters(requester_id)
         retriever = self.kb_index.as_retriever(similarity_top_k=1, filters=filters)
         nodes = retriever.retrieve(query)
         if not nodes:
             return None
         best = nodes[0]
-        if best.score is not None and best.score < SOURCE_MATCH_MIN_SCORE:
+        if best.score is not None and best.score < min_score:
             return None
         return best.node.metadata.get('source_filename')
 

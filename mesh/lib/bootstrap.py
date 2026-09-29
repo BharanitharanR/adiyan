@@ -57,7 +57,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore
 from a2a.types import AgentCard, AgentSkill
 
-from mesh.lib import config_sdk, customer_record_hook, memory_hook, permissions, persona_hook, registry_client
+from mesh.lib import agent_activity, config_sdk, customer_record_hook, memory_hook, permissions, persona_hook, registry_client
 
 logger = logging.getLogger('bootstrap')
 
@@ -91,6 +91,11 @@ class _PlatformWiredExecutor(AgentExecutor):
         self._agent_id = agent_id
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # A request having arrived at all is the activity signal - not
+        # whether it goes on to succeed - so this runs first and
+        # unconditionally, feeding mesh/tools/offload_idle_agents.py's
+        # idle-detection (see mesh/lib/agent_activity.py's own docstring).
+        await agent_activity.record_activity(self._agent_id)
         # Same token every agent's own permission check already verifies
         # (context.metadata['token']) - read a second time here, not
         # threaded through, since this wrapper runs before the inner

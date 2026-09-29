@@ -40,12 +40,14 @@ import httpx
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from mesh.analysis.constants import AGENT_ID, MEMORY_AGENT_URL
-from mesh.lib import config_sdk, permissions, tool_resolution
+from mesh.analysis.constants import AGENT_ID, BROWSER_MCP_URL, MEMORY_AGENT_URL
+from mesh.lib import config_sdk, customer_needs, permissions, tool_resolution
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
 from mesh.lib.agent_sdk import AdiyanAgent
+from mesh.lib.mcp_client import call_tool
 from mesh.lib.config import load_runtime_config, load_seed_config
 from mesh.lib.errors import describe_exception
+from mesh.lib.identity import resolve_identity_key
 from mesh.lib.registry_client import list_agents
 
 AGENT_CODE_DIR = Path(__file__).parent.parent
@@ -203,6 +205,20 @@ def _build_trigger_workflow_tool(
             return f'trigger_workflow failed: {describe_exception(e)}'
         if not data:
             return await _get_message('msg_workflow_bad_response')
+
+        # Persist the completion so it's still answerable after this reply
+        # is sent - see mesh/lib/customer_needs.py's own docstring on why
+        # this write didn't exist before: this n8n result was otherwise
+        # never stored anywhere, only ever spoken once in this turn's
+        # reply. vertical_id/requester_id can be falsy for a platform-
+        # default or machine-originated call, and identity_key uses the
+        # same resolve_identity_key() every other identity write in this
+        # codebase goes through, not the raw requester_id, so this lines up
+        # with the exact customer customer_record.py would file under.
+        if vertical_id and requester_id:
+            identity_key = resolve_identity_key(requester_id)
+            await customer_needs.record_need(vertical_id, identity_key, workflow_name, request, data)
+
         return 'Workflow completed: ' + ', '.join(f'{k}={v}' for k, v in data.items())
 
     return tool(trigger_workflow, description=description)
@@ -329,6 +345,40 @@ def _make_tools(
         return '\n'.join(docs)
 
     @tool
+    async def list_books() -> str:
+        """List the book titles available to be read aloud - use this
+        whenever someone asks what books are available, what's in the
+        library, or to recommend/share something from the catalog, rather
+        than guessing at a title or answering that nothing is available
+        without actually checking. Scoped to this business's own library -
+        never another vertical's or a stranger's personal uploads. An
+        empty list is a real, honest answer (the library genuinely has
+        nothing yet), not a sign to search elsewhere."""
+        token = permissions.mint_token('analysis', 'service')
+        try:
+            result = await call_agent(MEMORY_AGENT_URL, 'list_books', {
+                'vertical_id': vertical_id, 'requester_id': requester_id, 'is_owner': is_owner,
+            }, token=token)
+        except Exception as e:
+            return f'list_books failed: {describe_exception(e)}'
+        books = result.get('books', [])
+        if not books:
+            return 'The library has no books yet.'
+        return '\n'.join(books)
+
+    @tool
+    async def share_document(query: str) -> str:
+        """Share an actual FILE with the customer - a payment QR code
+        image, a menu PDF, a price list - when they've asked for something
+        that exists as a real uploaded document or image, not a question
+        you can just answer in text. Describe what they want in plain
+        language, e.g. "payment QR code" or "the full menu PDF". If
+        nothing matching is on file, say so honestly - never claim a
+        document exists or was sent when it wasn't. This call is
+        intercepted before it reaches here - see run()'s own handling."""
+        return ''  # never executed - the loop intercepts this call directly
+
+    @tool
     async def recall_memory(query: str) -> str:
         """Recall what's known about the specific person asking,everything from their past
         conversations they've mentioned before."""
@@ -337,7 +387,7 @@ def _make_tools(
         token = permissions.mint_token('analysis', 'service')
         try:
             result = await call_agent(MEMORY_AGENT_URL, 'recall_contact_memory', {
-                'contact_name': contact_name, 'query': query, 'top_k': 5,
+                'contact_name': contact_name, 'query': query, 'top_k': 5, 'vertical_id': vertical_id,
             }, token=token)
         except Exception as e:
             return f'recall_memory failed: {describe_exception(e)}'
@@ -345,6 +395,29 @@ def _make_tools(
         if not snippets:
             return await _get_message('msg_nothing_in_memory')
         return '\n'.join(f'- {s}' for s in snippets)
+
+    @tool
+    async def browse_web(task: str) -> str:
+        """Look something up on the live internet - current prices,
+        today's news, a fact that changes over time, anything not covered
+        by the knowledge base or memory. Only reach for this when
+        search_documents/recall_memory genuinely can't answer - it's slower
+        and, unlike a document, its content isn't something this business
+        vetted itself. Give a complete, specific instruction (e.g. "search
+        for today's USD to INR exchange rate and report the number"), not a
+        bare topic - describe exactly what to find and what to do with it.
+        strict_grounding still applies to whatever comes back: report only
+        what was actually found, and say so honestly if nothing was."""
+        token = permissions.mint_token('analysis', 'service')
+        try:
+            result = await call_tool(BROWSER_MCP_URL, 'browse', {'task': task}, token=token)
+        except Exception as e:
+            return f'browse_web failed: {describe_exception(e)}'
+        if not result.get('success') or not result.get('result'):
+            return 'browse_web found nothing conclusive for that task.'
+        urls = result.get('urls_visited') or []
+        source_note = f" (source: {urls[-1]})" if urls else ''
+        return f"{result['result']}{source_note}"
 
     @tool
     async def discover_agents() -> str:
@@ -416,8 +489,8 @@ def _make_tools(
     trigger_workflow = _build_trigger_workflow_tool(vertical_id, requester_id, workflow_registry or [])
 
     tools = [
-        search_documents, read_document, search_within_document, list_documents,
-        recall_memory, discover_agents, consult_agent, resolve_and_execute, trigger_workflow, finish,
+        search_documents, read_document, search_within_document, list_documents, list_books, share_document,
+        recall_memory, browse_web, discover_agents, consult_agent, resolve_and_execute, trigger_workflow, finish,
     ]
     return tools, {t.name: t for t in tools}
 
@@ -428,7 +501,13 @@ async def _decide_next_step(instruction: str, scratchpad: Scratchpad, tools, cfg
         "places - including an ordinary general-knowledge question (diet/"
         "nutrition advice, packing tips, how something works) - say so plainly "
         "rather than answering from your own general knowledge; strict grounding "
-        "is on, so only tool-verified evidence counts as a basis for an answer."
+        "is on, so only tool-verified evidence counts as a basis for an answer. "
+        "This applies even if your own business persona instructs you to "
+        "'always provide' or 'always give' some specific fact (a menu, prices, "
+        "inventory, a policy) - a persona instruction to always report something "
+        "is never itself a source for that thing. If no tool actually returned "
+        "it, you don't have it, and you say so honestly instead of inventing a "
+        "plausible-looking answer to satisfy the persona."
         if strict else
         "This does NOT mean refusing to answer a general-knowledge question "
         "(diet/nutrition advice, packing tips, how something works) just "
@@ -498,7 +577,13 @@ async def _final_answer(instruction: str, scratchpad: Scratchpad, cfg: Dict[str,
         "general-knowledge question (diet/nutrition advice, packing tips, how "
         "something works) - say so plainly rather than answering from your own "
         "general knowledge; strict grounding is on, so only what is actually in "
-        "the scratchpad above counts as a basis for an answer."
+        "the scratchpad above counts as a basis for an answer. This applies even "
+        "if your own business persona instructs you to 'always provide' or "
+        "'always give' some specific fact (a menu, prices, inventory, a policy) "
+        "- a persona instruction to always report something is never itself a "
+        "source for that thing. If it isn't in the scratchpad, you don't have "
+        "it, and you say so honestly instead of inventing a plausible-looking "
+        "answer to satisfy the persona."
         if strict else
         'But for an ordinary general-knowledge question (diet/nutrition '
         'advice, packing tips, how something works), answer it using what you '
@@ -605,6 +690,41 @@ def _extract_answer_from_raw_content(content: str) -> str:
     args = parsed.get('arguments') or parsed.get('args') or {}
     answer = args.get('answer') if isinstance(args, dict) else None
     return answer if isinstance(answer, str) and answer else content
+
+
+async def _try_share_document(query: str, requester_id: Optional[str], is_owner: bool) -> Optional[Dict[str, Any]]:
+    """Calls Memory Agent's share_knowledge_document skill directly (a
+    structured DataPart call, same pattern as search_documents/read_document
+    below) and, if it found a real file, returns a ready-to-deliver
+    {found, result, filename, mimetype, content_b64} package - short-
+    circuiting the rest of the ReAct loop the same way finish() does, since
+    handing back an actual file already fulfills the request.
+
+    Returns None (nothing matched, or Memory Agent unreachable) so the
+    caller falls through to an ordinary text observation instead - a raw
+    file's base64 bytes must never enter the loop's own text-based
+    scratchpad/compaction pipeline the way every other tool's plain-text
+    observation does. Built for sharing a real uploaded file on request -
+    a payment QR code image, a menu PDF - not for answering a question
+    about what a document says (that's search_within_document's job)."""
+    token = permissions.mint_token('analysis', 'service')
+    try:
+        result = await call_agent(MEMORY_AGENT_URL, 'share_knowledge_document', {
+            'query': query, 'requester_id': requester_id, 'is_owner': is_owner,
+        }, token=token)
+    except Exception as e:
+        logger.warning(f'share_document failed: {describe_exception(e)}')
+        return None
+    if not result.get('found'):
+        return None
+    filename = result.get('filename') or 'shared_file'
+    return {
+        'found': True,
+        'result': f'Sharing {filename}.',
+        'filename': filename,
+        'mimetype': result.get('mimetype', 'application/octet-stream'),
+        'content_b64': result.get('content_b64'),
+    }
 
 
 def _package_result(text: str, source_filename: Optional[str]) -> Dict[str, Any]:
@@ -716,14 +836,24 @@ async def run(
         if call['name'] == 'finish':
             return _package_result(call['args'].get('answer', ''), source_filename)
 
-        tool_obj = tools_by_name.get(call['name'])
-        if tool_obj is None:
-            observation = await _get_message('msg_unknown_tool', tool_name=call['name'])
+        if call['name'] == 'share_document':
+            # Intercepted here, never reaching share_document's own tool
+            # body - see _try_share_document's own docstring for why a raw
+            # file's base64 bytes can't just be treated as a normal text
+            # observation the way every other tool's result is.
+            file_result = await _try_share_document(call['args'].get('query', ''), requester_id, is_owner)
+            if file_result is not None:
+                return file_result
+            observation = await _get_message('msg_no_matching_document')
         else:
-            try:
-                observation = await tool_obj.ainvoke(call['args'])
-            except Exception as e:
-                observation = f"Tool call failed: {e}"
+            tool_obj = tools_by_name.get(call['name'])
+            if tool_obj is None:
+                observation = await _get_message('msg_unknown_tool', tool_name=call['name'])
+            else:
+                try:
+                    observation = await tool_obj.ainvoke(call['args'])
+                except Exception as e:
+                    observation = f"Tool call failed: {e}"
 
         list_documents_kb_empty_msg = await _get_message('msg_kb_empty') if call['name'] == 'list_documents' else None
         if call['name'] == 'list_documents' and not str(observation).startswith('list_documents failed:') \

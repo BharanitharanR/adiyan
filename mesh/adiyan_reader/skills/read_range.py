@@ -51,7 +51,10 @@ from mesh.lib.paths import state_db_path
 _agent = AdiyanAgent(AGENT_ID)
 
 
-async def run(phone_number: str, start_page: Optional[int] = None, end_page: Optional[int] = None) -> Dict[str, Any]:
+async def run(
+    phone_number: str, start_page: Optional[int] = None, end_page: Optional[int] = None,
+    page_count: Optional[int] = None,
+) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = db.get_active_reading_jobs_by_phone(conn, phone_number)
     if not jobs:
@@ -70,6 +73,8 @@ async def run(phone_number: str, start_page: Optional[int] = None, end_page: Opt
         return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': 'start_page must be 1 or greater.'}
     if start_page is not None and end_page is not None and end_page < start_page:
         return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': 'end_page must not be before start_page.'}
+    if page_count is not None and page_count < 1:
+        return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': 'page_count must be 1 or greater.'}
 
     # Same lock read_next_page.run() acquires, and the same reason - a
     # burst read can take minutes end to end (many pages, each with its own
@@ -84,20 +89,35 @@ async def run(phone_number: str, start_page: Optional[int] = None, end_page: Opt
         pages_sent: List[int] = []
         finished_book = False
 
-        while end_page is None or page <= end_page:
-            page_text = await read_next_page._synthesize_and_send_page(job, chat_id, page)
-            if page_text is None:
+        # page_count stops on PAGES ACTUALLY DELIVERED, not on a fixed
+        # page-number ceiling - "the next 5 pages" has to mean 5 real pages
+        # in the listener's ears, even if an ingestion gap sits somewhere
+        # in between (see _find_readable_page's own docstring for that
+        # confirmed-live incident). A numeric end_page derived up front
+        # (current_page + page_count) would let a skipped gap quietly eat
+        # into the count instead - the caller asked for 5 pages of content,
+        # not "whatever's within these 5 page-numbers."
+        while (end_page is None or page <= end_page) and (page_count is None or len(pages_sent) < page_count):
+            # _find_readable_page, not a bare _synthesize_and_send_page
+            # call - see that helper's own docstring for the confirmed-live
+            # incident (an isolated ingestion gap, not the real end of the
+            # book) this closes: a single missing page used to be trusted
+            # as "the book is over" and silently ended a burst read - and
+            # deactivated the whole reading job - partway through a book
+            # that had hundreds of real pages left.
+            actual_page, page_text = await read_next_page._find_readable_page(job, chat_id, page)
+            if actual_page is None:
                 finished_book = True
                 break
-            pages_sent.append(page)
+            pages_sent.append(actual_page)
             # Persisted the moment this page is actually sent, not batched
             # until the whole burst finishes - see this module's own
             # docstring on why (a mid-burst failure must not discard pages
             # already delivered). Only ever moves forward, same invariant
             # the old post-loop write enforced.
-            if page > job['current_page']:
-                db.advance_page(conn, reading_job_id, page)
-            page += 1
+            if actual_page > job['current_page']:
+                db.advance_page(conn, reading_job_id, actual_page)
+            page = actual_page + 1
 
         if not pages_sent:
             if finished_book:

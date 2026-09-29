@@ -54,6 +54,7 @@ from pymongo import MongoClient
 
 from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
+from mesh.tools import offload_idle_agents, rotate_openwa
 
 SERVER_NAME = 'cron_trigger'
 HOST = '127.0.0.1'
@@ -157,11 +158,63 @@ def remove_trigger(job_id: str, ctx: Context) -> Dict[str, Any]:
         return {'removed': False, 'job_id': job_id, 'reason': 'no such registration'}
 
 
+# Two pieces of Adiyan's own housekeeping, deliberately registered as plain
+# APScheduler jobs on this process's own _scheduler rather than as an OS-level
+# cron/launchd entry - by design, nothing about Adiyan's own scheduling
+# should depend on a host-specific mechanism (this same reasoning is why
+# register_trigger above already uses APScheduler+Mongo, not `at`/cron(1)).
+# cron_trigger is the natural home: it's the one process in this mesh that
+# exists purely to hold durable, recurring schedules, and (unlike every
+# agent mesh/tools/offload_idle_agents.py might stop) it is never itself an
+# offload candidate.
+#
+# id=... is fixed so replace_existing=True makes re-registering on every
+# process startup an idempotent no-op, not a growing pile of duplicate jobs
+# in the shared MongoDBJobStore.
+#
+# Both underlying functions are synchronous (subprocess + sync pymongo/
+# httpx) - run via asyncio.to_thread so a slow restart/health-poll inside
+# either one never blocks this process's own event loop, which is also
+# serving the MCP tool calls and every other registered trigger's fire.
+_HOUSEKEEPING_INTERVAL_SECONDS = 5 * 60
+
+
+async def _run_offload_scan() -> None:
+    try:
+        await asyncio.to_thread(offload_idle_agents.main)
+    except Exception as e:
+        logger.error(f'Idle-agent offload scan failed: {e}')
+
+
+async def _run_openwa_rotation() -> None:
+    try:
+        await asyncio.to_thread(rotate_openwa.main)
+    except Exception as e:
+        logger.error(f'Scheduled OpenWA rotation failed: {e}')
+
+
 async def main() -> None:
     # Started inside the same running loop mcp's async server uses, not
     # before it - AsyncIOScheduler binds to whichever loop is running when
     # .start() is called.
     _scheduler.start()
+    # agent_offload_scan (scale-to-zero) turned OFF 2026-09-28: confirmed
+    # live that an idled agent's cold-start latency, stacked on top of an
+    # already-slow outbound call (Gutendex/Project Gutenberg), was enough to
+    # blow through fetch_public_domain_book.py's own request timeout and
+    # falsely report a real, on-Gutenberg book as unavailable. Not just
+    # skipped here - explicitly removed below too, since this job's
+    # MongoDBJobStore persists across restarts and would otherwise keep
+    # firing on its existing schedule even with the add_job() call gone.
+    # Re-enable by restoring the add_job() call this comment replaced.
+    try:
+        _scheduler.remove_job('agent_offload_scan')
+    except JobLookupError:
+        pass
+    _scheduler.add_job(
+        _run_openwa_rotation, trigger='cron', hour=4, minute=0,
+        id='openwa_daily_rotation', replace_existing=True,
+    )
     await mcp.run_streamable_http_async()
 
 

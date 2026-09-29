@@ -149,6 +149,32 @@ COMPONENTS=(
     "memory|8423|mesh.memory.server"
     "journal|8422|mesh.journal.server"
     "adiyan_reader|8429|mesh.adiyan_reader.server"
+    # AdiyanReader's optional Chatterbox Turbo TTS path (mesh/adiyan_reader/
+    # tts.py's own VOICEBOX_URL comment) - github.com/jamiepine/voicebox,
+    # run natively (its own venv under voicebox/.venv, NOT Docker/Tauri) as
+    # a plain FastAPI app, the same way every other component here runs.
+    # Its own venv, not $PYTHON_BIN: voicebox's dependencies (torch,
+    # chatterbox-tts, hume-tada, Qwen3-TTS) are heavy and installed via a
+    # multi-step, --no-deps-pinned sequence (see voicebox/Dockerfile's own
+    # Stage 2) that has no business sharing this mesh's own venv. Only
+    # matters while synthesize_speech's own 'engine' stage config is set to
+    # 'chatterbox_turbo' - orchestrator/adiyan_reader work fine without this
+    # component running at all when it's left on 'orpheus' (the default).
+    # `python -m backend.main`, not `uvicorn backend.main:app --app-dir ...`
+    # - confirmed live that --app-dir only adds to PYTHONPATH for module
+    # resolution, it does NOT change the process's own cwd, so every
+    # relative data path voicebox's own config.py builds (Path("data")) still
+    # resolved against wherever start_all.sh's cwd was ($REPO_ROOT) instead
+    # of voicebox/'s own data/ directory - silently starting against a
+    # brand-new, empty database instead of the one holding every profile
+    # (including ABJ's own cloned narrator voice) actually created there.
+    # `-m backend.main` runs its own `if __name__ == "__main__"` block
+    # (backend/main.py), which takes an explicit --data-dir argument and
+    # calls uvicorn.run() itself - PYTHONPATH (not --app-dir, which only
+    # `uvicorn` itself understands) is what makes `backend` importable as
+    # `-m` resolves it, since actually `cd`-ing isn't an option for this
+    # array's raw `nohup $cmd` launch shape.
+    "voicebox|17493|env PYTHONPATH=$REPO_ROOT/voicebox $REPO_ROOT/voicebox/.venv/bin/python -m backend.main --data-dir $REPO_ROOT/voicebox/data --host 127.0.0.1 --port 17493"
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"
@@ -170,6 +196,14 @@ COMPONENTS=(
     # actually bind 0.0.0.0/a Tailscale-reachable interface to be
     # discoverable cross-machine - see mesh/p2p/server.py's own docstring.
     "p2p|8462|mesh.p2p.server"
+    # Real web browsing (search, read, click, fill forms) for Analysis
+    # Agent's ReAct loop (mesh/analysis/skills/analyze.py's browse_web
+    # tool), via browser-use driving a fresh, short-lived Chromium per call
+    # against this deployment's own local Ollama - free end to end, no
+    # paid API. Deliberately NOT a persistent browser session reused
+    # across calls - see mesh/mcp/browser/server.py's own docstring for
+    # why that would repeat OpenWA's exact chronic degradation pattern.
+    "browser|8463|mesh.mcp.browser.server"
     # Superseded by p2p (above) as Inference Router's offload backend -
     # left running, unused in that path, rather than torn out, in case
     # anything still depends on its own A2A peer-exchange skills directly.
@@ -338,11 +372,12 @@ launch_component() {
         # launch site adds what's actually needed" split as mongo_mcp's
         # own npx prefix above.
         nohup mesh/tools/run_n8n.sh >> "$logfile" 2>&1 &
-    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ]; then
+    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ] || [ "$name" = "voicebox" ]; then
         # A raw binary/npm invocation, not a `python3 -m` module - mongod
         # logs to its own configured path (systemLog.path in
-        # mongod.conf) rather than this one; qdrant, openwa, ngrok, and
-        # neo4j (graph_db) do log here.
+        # mongod.conf) rather than this one; qdrant, openwa, ngrok,
+        # neo4j (graph_db), and voicebox (its own venv's uvicorn) do log
+        # here.
         nohup $cmd >> "$logfile" 2>&1 &
     else
         nohup "$PYTHON_BIN" -m "$cmd" >> "$logfile" 2>&1 &

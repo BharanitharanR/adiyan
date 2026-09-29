@@ -135,4 +135,42 @@ SKILLS = [
         input_modes=['text/plain'],
         output_modes=['application/json'],
     ),
+    AgentSkill(
+        id='message_customer',
+        name='Message Customer',
+        description=(
+            'Send a message directly to one already-registered customer, right now - not a reply '
+            'to anything they just sent, and not a recurring or automated send. The one real way a '
+            'business vertical can reach out to a customer first. Requires the customer\'s real '
+            'phone number, not just their name, and must be issued under that business\'s own wake '
+            'phrase so Adiyan knows who this is being sent on behalf of.'
+        ),
+        tags=['config', 'admin', 'vertical', 'customer'],
+        examples=[
+            'Message 9198765432 saying the 3BHK on main road just became available',
+            'Send 919876543210 a note that their order is ready for pickup',
+            "Tell 9198765432 we're closed tomorrow for a private event",
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+    AgentSkill(
+        id='list_customer_needs',
+        name='List Customer Needs',
+        description=(
+            'Look up what a business\'s automated workflows have actually done - every booking, order, '
+            'or cancellation a trigger_workflow completion produced, for the currently-summoned vertical. '
+            'Read-only. Optionally narrow to one customer\'s phone number, one day, or both; leave both '
+            'unset for everything on file. Must be issued under that business\'s own wake phrase.'
+        ),
+        tags=['config', 'admin', 'vertical', 'customer'],
+        examples=[
+            'What has been booked today?',
+            "Show me 9198765432's history with us",
+            'List every order from 2026-09-19',
+            'What happened with booking BKG-8809',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
 ]

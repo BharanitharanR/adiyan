@@ -23,6 +23,7 @@ import base64
 import logging
 from typing import Any, Dict, Optional
 
+from mesh.lib.errors import describe_exception
 from mesh.memory.constants import OLLAMA_URL, QDRANT_URL
 from mesh.memory.memory_index import get_memory_index
 
@@ -43,7 +44,23 @@ def run(
             content, filename, timestamp, username, mimetype=mimetype,
             owner_identity=owner_identity, visibility=visibility, do_ocr=do_ocr,
         )
-    except Exception as e:
+    except ValueError as e:
+        # A deliberate, user-actionable message memory_index.py itself
+        # raised (e.g. "scanned image with no OCR text") - genuinely worth
+        # reporting to the coach over WhatsApp, per this module's own
+        # docstring on why this is caught here rather than swallowed.
         logger.warning(f"Failed to ingest {filename!r}: {e}")
         return {'ingested': False, 'chunks': 0, 'available': True, 'error': str(e), 'source_filename': None}
+    except Exception as e:
+        # Anything else is an internal failure (storage, network, a bug) -
+        # never handed to handle_message.py as `error` text, which puts it
+        # straight into a WhatsApp reply verbatim. Confirmed live: a Qdrant
+        # 404 for a missing collection reached a real customer as raw JSON
+        # ("Unexpected Response: 404 (Not Found)... Collection ... doesn't
+        # exist!") - the same class of raw-error leak already fixed once
+        # for delivery failures elsewhere in this mesh, just not here yet.
+        # error=None here, same as the `memory_index is None` branch above,
+        # so the caller falls back to its own generic message.
+        logger.error(f"Failed to ingest {filename!r}: {describe_exception(e)}")
+        return {'ingested': False, 'chunks': 0, 'available': True, 'error': None, 'source_filename': None}
     return {'ingested': True, 'chunks': chunks, 'available': True, 'error': None, 'source_filename': source_filename}

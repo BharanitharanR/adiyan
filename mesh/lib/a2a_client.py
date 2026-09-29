@@ -33,7 +33,52 @@ from a2a.types import Role, SendMessageRequest, Task, TaskState
 DEFAULT_TIMEOUT_SECONDS = 3 * 60 * 60  # 3 hours
 
 
+def _is_connection_failure(exc: BaseException) -> bool:
+    """True if exc is (or was caused by) a plain failure to connect at
+    all - the signal that agent_url has nothing listening, as opposed to a
+    real application-level error from an agent that IS up and answered.
+
+    Confirmed live this matters: a bare `except httpx.ConnectError` here
+    never actually fired for a real offloaded-agent case - the A2A SDK's
+    own A2ACardResolver.get_agent_card() catches httpx.RequestError (the
+    parent class httpx.ConnectError belongs to) and re-raises it as its own
+    AgentCardResolutionError (a2a/client/card_resolver.py), and its
+    JSON-RPC transport does the same with A2AClientError
+    (a2a/client/transports/http_helpers.py) - both via `raise ... from e`,
+    so the original httpx exception survives only as __cause__, one or more
+    layers down, never as the exception actually raised to this function.
+    Walking the cause chain (rather than importing and enumerating every
+    A2A SDK wrapper class by name) means this keeps working even if the SDK
+    adds another wrapping layer later - it only cares what's really at the
+    bottom, not which class happened to be on top this time."""
+    seen = exc
+    while seen is not None:
+        if isinstance(seen, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        seen = seen.__cause__
+    return False
+
+
 async def _send_and_await(agent_url: str, message, timeout: float, token: Optional[str] = None) -> Task:
+    try:
+        return await _send_and_await_once(agent_url, message, timeout, token)
+    except Exception as e:
+        if not _is_connection_failure(e):
+            raise
+        # Nothing listening at agent_url - could be a genuinely dead
+        # component, or could be one mesh/tools/offload_idle_agents.py
+        # stopped for being unused (see mesh/lib/process_control.py's own
+        # docstring for the full scale-to-zero picture). Try to start it
+        # and retry exactly once before giving up - a caller three retries
+        # deep into its own logic should never have to know an agent it
+        # depends on might currently be offloaded.
+        from mesh.lib.process_control import ensure_running
+        if await ensure_running(agent_url):
+            return await _send_and_await_once(agent_url, message, timeout, token)
+        raise
+
+
+async def _send_and_await_once(agent_url: str, message, timeout: float, token: Optional[str] = None) -> Task:
     async with httpx.AsyncClient(timeout=timeout) as httpx_client:
         resolver = A2ACardResolver(httpx_client=httpx_client, base_url=agent_url)
         card = await resolver.get_agent_card()

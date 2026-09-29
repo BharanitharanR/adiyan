@@ -23,12 +23,13 @@ Requires: pip install "mcp[cli]" httpx starlette uvicorn
 """
 import base64
 import logging
+import re
 from typing import Any, Dict, Optional
 
 import uvicorn
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 
 from mesh.lib import permissions
 from mesh.lib.a2a_client import call_agent
@@ -36,7 +37,7 @@ from mesh.lib.paths import mcp_home, mcp_state_db_path
 from mesh.lib.tls import ensure_self_signed_cert
 from mesh.lib.utilities.whatsapp.openwa_receiver import OpenWAAdapter
 from mesh.lib.utilities.whatsapp.openwa_service import OpenWAService
-from mesh.mcp.whatsapp import dedup
+from mesh.mcp.whatsapp import dedup, verticals_demo
 
 SERVER_NAME = 'whatsapp'
 HOST = '127.0.0.1'
@@ -345,6 +346,78 @@ async def handle_webhook(request: Request) -> JSONResponse:
         # here rather than reintroducing the same bug.
         logger.error(f'Failed to forward message to Orchestrator: {e}')
         return JSONResponse({'status': 'forward_failed', 'error': str(e)})
+
+
+# --- Verticals marketing-site live demo (mesh/mcp/whatsapp/verticals_demo.py) ---
+# Public, unauthenticated, CORS-open (the site is a different origin,
+# https://bharanitharanr.github.io) - see that module's own docstring for
+# why this is safe to expose. Lives on this same already-tunneled server
+# (this port is already forwarded through the ngrok tunnel WEBHOOK_PATH
+# uses) rather than standing up a second public endpoint.
+# ngrok-skip-browser-warning: the site's own fetch() calls send this to
+# bypass ngrok's free-tier interstitial (ERR_NGROK_6024) - confirmed live
+# it otherwise serves an HTML "you're about to visit..." page in place of
+# the real JSON response to a real browser. Declaring it here is required,
+# not optional: a browser's own CORS preflight rejects the real request
+# outright if a custom header it sends isn't explicitly allowed here,
+# regardless of whether the server would have accepted it.
+_DEMO_CORS_HEADERS = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, ngrok-skip-browser-warning'}
+
+
+@mcp.custom_route('/verticals/register', methods=['POST', 'OPTIONS'])
+async def handle_verticals_register(request: Request) -> Response:
+    """Starts the (slow) registration as a background job and returns its
+    id immediately - see verticals_demo.py's own "async job wrapper"
+    section for why this had to stop being one long-held request.
+    Sub-second by construction: everything here is in-memory, no LLM/n8n
+    call happens on this code path at all."""
+    if request.method == 'OPTIONS':
+        return Response(status_code=204, headers=_DEMO_CORS_HEADERS)
+
+    client_ip = request.client.host if request.client else 'unknown'
+    if not verticals_demo.check_rate_limit(client_ip):
+        return JSONResponse(
+            {'ok': False, 'error': 'Too many demo requests from this connection - try again in a bit.'},
+            status_code=429, headers=_DEMO_CORS_HEADERS,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({'ok': False, 'error': 'Malformed request.'}, status_code=400, headers=_DEMO_CORS_HEADERS)
+
+    description = body.get('description') if isinstance(body, dict) else None
+    job_id = verticals_demo.start_registration_job(description or '')
+    return JSONResponse({'ok': True, 'job_id': job_id}, headers=_DEMO_CORS_HEADERS)
+
+
+@mcp.custom_route('/verticals/status/{job_id}', methods=['GET', 'OPTIONS'])
+async def handle_verticals_status(request: Request) -> Response:
+    """Polled every few seconds by the site while a job is 'pending' -
+    each call is a fast in-memory dict lookup, safe to retry freely on a
+    flaky connection without disturbing the job actually running in the
+    background."""
+    if request.method == 'OPTIONS':
+        return Response(status_code=204, headers=_DEMO_CORS_HEADERS)
+    job_id = request.path_params['job_id']
+    return JSONResponse(verticals_demo.get_job(job_id), headers=_DEMO_CORS_HEADERS)
+
+
+@mcp.custom_route('/verticals/pdf/{vertical_id}', methods=['GET', 'OPTIONS'])
+async def handle_verticals_pdf(request: Request) -> Response:
+    if request.method == 'OPTIONS':
+        return Response(status_code=204, headers=_DEMO_CORS_HEADERS)
+    vertical_id = request.path_params['vertical_id']
+    # Confined to the demo PDF directory by construction, never a raw
+    # caller-supplied path - vertical_id is matched against a fixed glob
+    # this server itself created, not opened directly, so a path-traversal
+    # attempt (e.g. '../../etc/passwd') simply matches nothing and 404s.
+    if not re.fullmatch(r'demo-[a-z0-9-]+', vertical_id):
+        return JSONResponse({'error': 'Not found.'}, status_code=404, headers=_DEMO_CORS_HEADERS)
+    path = verticals_demo._PDF_DIR / f'{vertical_id}.pdf'
+    if not path.is_file():
+        return JSONResponse({'error': 'Not found.'}, status_code=404, headers=_DEMO_CORS_HEADERS)
+    return FileResponse(path, media_type='application/pdf', filename=f'{vertical_id}.pdf', headers=_DEMO_CORS_HEADERS)
 
 
 if __name__ == '__main__':

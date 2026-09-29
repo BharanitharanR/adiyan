@@ -7,6 +7,10 @@
     "business_persona_context": {
       "value": "",
       "description": "Free-text instructions for how Adiyan should sound to this business's customers - tone, brand voice, fallback phrasing. Empty on the platform layer (no persona) by default; a real value only ever comes from a vertical override, written by mesh/config_agent/skills/apply_vertical_spec.py from an uploaded vertical-spec YAML. Applied only when the sender is not the owner - see humanize()'s own docstring."
+    },
+    "open_enrollment": {
+      "value": false,
+      "description": "False (the platform default) on every vertical unless its own spec explicitly sets it true - a real vertical then auto-registers a first-time stranger's very first summoned message with zero signup step, the same zero-friction grant demo verticals already get unconditionally (see rules_engine.py's _is_open_enrollment()). Seeded here as a real boolean, not left unset, so a vertical spec's own true/false value coerces correctly instead of landing as an always-truthy string - see mesh/config_agent/skills/update_config.py's _coerce() for why matching an existing typed default matters."
     }
   }
 }

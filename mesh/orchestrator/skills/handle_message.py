@@ -220,8 +220,342 @@ def _word_matches_spoken_summon(
     return fuzz.ratio('adiyan', romanized) >= threshold
 
 
+# Own classify pool, checked BEFORE _BOOK_READING_SKILLS in the elif chain
+# below - "stop reading Crime and Punishment" must never be classified
+# against start_book_reading's own description just because both mention a
+# book and the word "reading".
+_STOP_READING_SKILLS = [
+    AgentSkill(
+        id='stop_book_reading',
+        name='Stop Book Reading',
+        description=(
+            'The caller wants to stop AdiyanReader\'s nightly voice-note readings - for a '
+            'specific book if they name one, or their one active book if they only have '
+            'one. May instead ask to stop only the next-morning comprehension questions '
+            'while the nightly reading itself keeps going. Only matches an explicit '
+            'stop/cancel/unsubscribe request, never a question about how the schedule '
+            'works or a request to start/pause mid-page.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Stop reading me the power of now',
+            'Stop sending me audio',
+            'Please stop the book',
+            'Unsubscribe me from the nightly reading',
+            'Stop asking me questions but keep reading the book',
+            'No more comprehension questions for Crime and Punishment',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+class _StopReadingRequest(BaseModel):
+    book_reference: Optional[str] = Field(
+        default=None,
+        description=(
+            "How the caller referred to the book to stop, if they named one - a title, "
+            "partial title, or description. Leave unset if they didn't name a specific "
+            "book (e.g. a bare 'stop reading me' with only one book active)."
+        ),
+    )
+    questions_only: bool = Field(
+        default=False,
+        description=(
+            "True only if the caller explicitly asked to stop just the comprehension "
+            "questions/quiz while the nightly reading itself keeps going - e.g. 'stop "
+            "asking me questions but keep reading'. False for a plain 'stop reading'/"
+            "'stop the book'/'stop sending audio', which stops both."
+        ),
+    )
+    all_books: bool = Field(
+        default=False,
+        description=(
+            "True if the caller said 'all'/'both'/'all of them'/'everything' - answering a "
+            "previous 'more than one active book - which one?' question by asking for every "
+            "book, not one specific one. Only ever true when the message is actually replying "
+            "to that kind of question; false otherwise."
+        ),
+    )
+
+
+# Checked BEFORE _BOOK_READING_SKILLS in the elif chain below, same
+# reasoning _STOP_READING_SKILLS' own comment already documents for itself -
+# "start all over again" must never be classified against start_book_reading
+# and taken as a literal title. Confirmed live as a real bug, not a
+# hypothetical one: a genuine subscriber said exactly "start all over again"
+# and got "I couldn't find 'start all over again' among your uploaded books,
+# or on Project Gutenberg" back - there was no restart intent to classify
+# against at all before this skill existed.
+_RESTART_READING_SKILLS = [
+    AgentSkill(
+        id='restart_book_reading',
+        name='Restart Book Reading',
+        description=(
+            'The caller wants to restart the book they\'re currently being read, from page 1 - '
+            'for a specific book if they name one, or their one active book if they only have '
+            'one. Only matches an explicit restart/start-over request for an ALREADY-ACTIVE '
+            'book, never a request to start reading a brand-new book for the first time (that\'s '
+            'start_book_reading) or a question about how the schedule works.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Start all over again',
+            'Start over',
+            'Restart the book',
+            'Can we start from the beginning again',
+            'Begin the book again from page one',
+            'Restart Crime and Punishment from the start',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+class _RestartReadingRequest(BaseModel):
+    book_reference: Optional[str] = Field(
+        default=None,
+        description=(
+            "How the caller referred to the book to restart, if they named one - a title, "
+            "partial title, or description. Leave unset if they didn't name a specific book "
+            "(e.g. a bare 'start all over again' with only one book active)."
+        ),
+    )
+    all_books: bool = Field(
+        default=False,
+        description=(
+            "True if the caller said 'all'/'both'/'all of them' - answering a previous "
+            "'more than one active book - which one?' question by asking to restart every "
+            "book, not one specific one. Only ever true when replying to that kind of question."
+        ),
+    )
+
+
+# Checked BEFORE _BOOK_READING_SKILLS too, same reasoning as
+# _RESTART_READING_SKILLS' own comment - "read that again" or "slower" must
+# never be classified as a request to start reading a book literally titled
+# that.
+_REREAD_SKILLS = [
+    AgentSkill(
+        id='reread_page',
+        name='Reread Current Page',
+        description=(
+            'The caller wants to hear the page they were JUST read again - not the next '
+            'page, the same one - optionally with more clarity/slower, or both. Only matches '
+            'an explicit request to repeat/reread the current page, never a request for the '
+            'next page (read_now) or to start/restart a book.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Read that again',
+            'Can you reread that page',
+            'Say that again more clearly',
+            'Read it slower',
+            'Read that again, slower',
+            'I didn\'t catch that, read it again',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+class _RereadPageRequest(BaseModel):
+    book_reference: Optional[str] = Field(
+        default=None,
+        description=(
+            "How the caller referred to the book to reread, if they named one. Leave unset "
+            "if they didn't name a specific book (e.g. a bare 'read that again' with only "
+            "one book active)."
+        ),
+    )
+    clearer: bool = Field(
+        default=False,
+        description="True if the caller asked for more clarity - 'more clearly', 'I couldn't understand it', 'say that again properly'.",
+    )
+    slower: bool = Field(
+        default=False,
+        description="True if the caller asked for a slower pace - 'slower', 'read it slowly', 'can you slow down'. This becomes a lasting preference for every future page, not just this reread.",
+    )
+    all_books: bool = Field(
+        default=False,
+        description=(
+            "True if the caller said 'all'/'both'/'all of them' - answering a previous "
+            "'more than one active book - which one?' question by asking to reread every "
+            "book's current page, not one specific one. Only ever true when replying to that "
+            "kind of question."
+        ),
+    )
+
+
+# Own classify pool, no extraction step needed - who/which book is already
+# resolved from the sender's own phone number (adiyan_reader's own
+# get_active_reading_jobs_by_phone), never guessed from the text.
+_VOICE_SAMPLES_SKILLS = [
+    AgentSkill(
+        id='request_voice_samples',
+        name='Request Voice Samples',
+        description=(
+            'The caller wants to hear samples of the different narrator voices available, to '
+            'pick one - not a request to change their voice to a specific one already named '
+            '(that\'s change_voice), and not a question about how many voices exist.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Can I hear different voices',
+            'What voices do you have',
+            'Let me choose a voice',
+            'Play me some voice samples',
+            'I want to pick a different narrator',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+async def _resolve_voice_samples_request(text: str, cfg: Dict[str, Any]) -> bool:
+    """True only for an explicit request to hear voice samples - same
+    degrade-on-failure contract every other classify-based resolver in this
+    module follows."""
+    try:
+        choice = await classify(text, _VOICE_SAMPLES_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Voice-samples intent classification failed: {describe_exception(e)}')
+        return False
+    return choice.skill_id == 'request_voice_samples'
+
+
+async def _send_voice_samples(chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows. The real
+    samples are sent directly by adiyan_reader's own voice_samples.py as it
+    generates each one - this reply is just the closing "now pick one"
+    nudge, reusing that skill's own result_summary."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'voice_samples', {
+            'phone_number': from_number or chat_id,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'voice_samples failed for {chat_id}: {describe_exception(e)}')
+        return None
+
+    return result.get('result_summary') or "Couldn't generate voice samples right now - try again in a moment."
+
+
+_CHANGE_VOICE_SKILLS = [
+    AgentSkill(
+        id='change_voice',
+        name='Change Narrator Voice',
+        description=(
+            'The caller wants to switch to a SPECIFIC narrator voice they already named, for a '
+            'book if they name one or their one active book if they only have one - e.g. after '
+            'hearing voice samples and picking a favourite. Only matches when a specific voice '
+            'name is actually given, never a request to hear samples first (that\'s '
+            'request_voice_samples).'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'I like Leah',
+            'Use Tara\'s voice',
+            'Switch to Jess',
+            'Change my voice to Zac',
+            'I want Mia to read to me',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+class _ChangeVoiceRequest(BaseModel):
+    voice: str = Field(description="The narrator voice name the caller picked, exactly as they said it (e.g. 'Leah', 'tara'). Never invent or guess a name they didn't say.")
+    book_reference: Optional[str] = Field(
+        default=None,
+        description=(
+            "How the caller referred to the book to change the voice for, if they named one. "
+            "Leave unset if they didn't name a specific book (e.g. a bare 'I like Leah' with "
+            "only one book active)."
+        ),
+    )
+    all_books: bool = Field(
+        default=False,
+        description=(
+            "True if the caller said 'all'/'both'/'all of them' - answering a previous "
+            "'more than one active book - which one?' question by asking to change the voice "
+            "on every book, not one specific one. Only ever true when replying to that kind "
+            "of question."
+        ),
+    )
+
+
+async def _resolve_change_voice_request(text: str, cfg: Dict[str, Any]) -> Optional[_ChangeVoiceRequest]:
+    """None if this message isn't actually a "use this voice" request -
+    same degrade-on-failure contract every other classify-based resolver in
+    this module follows."""
+    try:
+        choice = await classify(text, _CHANGE_VOICE_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Change-voice intent classification failed: {describe_exception(e)}')
+        return None
+    if choice.skill_id != 'change_voice':
+        return None
+    try:
+        return await extract(text, 'change_voice', _ChangeVoiceRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Change-voice parameter extraction failed: {describe_exception(e)}')
+        return None
+
+
+async def _change_voice(
+    request: _ChangeVoiceRequest, chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'change_voice', {
+            'phone_number': from_number or chat_id,
+            'voice': request.voice,
+            'book_reference': request.book_reference,
+            'all_books': request.all_books,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'change_voice failed for {chat_id}: {describe_exception(e)}')
+        return None
+
+    status = result.get('status')
+    if status == 'no_active_job':
+        return "You don't have any book being read to you right now - nothing to change the voice on."
+    if status in ('ambiguous', 'not_found'):
+        books = ', '.join(result.get('active_books', []))
+        if status == 'not_found':
+            return f"\"{request.book_reference}\" isn't among your active books - you've got: {books}. Which one did you mean?"
+        return f"You've got more than one book going - {books}. Which one should I change the voice for?"
+    if status == 'invalid_voice':
+        return result.get('result_summary') or f"\"{request.voice}\" isn't one of the available voices."
+    return result.get('result_summary') or f"Switched to {request.voice} voice."
+
+
 class _BookReadingRequest(BaseModel):
     book_reference: str = Field(description="How the caller referred to the book - a title, a partial title, or a description like 'the book I uploaded yesterday'. Copy their own wording, don't invent or complete a title they didn't say.")
+
+
+class _ReadRangeRequest(BaseModel):
+    start_page: Optional[int] = Field(default=None, description="The first page number the caller named, if any - e.g. 5 for 'read page 5 to 10'. Leave unset for a bare 'read all'/'read the rest', or for a relative count like 'the next 5 pages' (that's page_count below, not this).")
+    end_page: Optional[int] = Field(default=None, description="The last page number the caller named, if any - e.g. 10 for 'read page 5 to 10'. Leave unset for 'read all', an open-ended 'read from page 5 onward', or a relative count (page_count below).")
+    page_count: Optional[int] = Field(default=None, description="How many pages the caller asked for, counting from wherever they currently are (or from start_page, if that was also given) - e.g. 5 for 'read me the next 5 pages' or 'send 5 more pages'. Leave unset if they gave explicit page numbers instead (start_page/end_page), or asked for 'all'/'the rest'.")
 
 
 class _UploadOcrPreference(BaseModel):
@@ -234,6 +568,20 @@ class _UploadOcrPreference(BaseModel):
             "needed, or that it's just text. False by default, and False if "
             "the caption says nothing about this at all - never assume a "
             "document is scan-free just because nothing was said."
+        ),
+    )
+
+
+class _UploadVisibilityPreference(BaseModel):
+    global_visibility: bool = Field(
+        default=False,
+        description=(
+            "True only if the caller's caption explicitly says this document should be "
+            "available to every customer / globally / for everyone - e.g. 'make this "
+            "available for every customer', 'this is for all clients', 'set it to global'. "
+            "False by default, and False if the caption says nothing about this at all - "
+            "never assume a document should be shared with every customer just because "
+            "nothing was said."
         ),
     )
 
@@ -279,6 +627,239 @@ async def _observe_customer(
             await customer_record.append_customer_note(vertical_id, identity_key, observation.note)
     except Exception as e:
         logger.warning(f'Customer observation failed for {identity_key!r} in vertical {vertical_id!r}: {e}')
+
+
+async def _resolve_stop_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[_StopReadingRequest]:
+    """None if this message isn't actually a "stop reading" request - same
+    degrade-on-failure contract every other classify-based resolver in this
+    module follows (falls through to normal routing, never an error surfaced
+    to the sender)."""
+    try:
+        choice = await classify(text, _STOP_READING_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Stop-reading intent classification failed: {describe_exception(e)}')
+        return None
+    if choice.skill_id != 'stop_book_reading':
+        return None
+    try:
+        return await extract(text, 'stop_book_reading', _StopReadingRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Stop-reading parameter extraction failed: {describe_exception(e)}')
+        return None
+
+
+async def _stop_book_reading(
+    request: _StopReadingRequest, chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows. Passes
+    the caller's own book wording through unresolved (adiyan_reader's
+    stop_reading.py matches it against THAT phone's own active jobs itself,
+    never a filename guessed here) and lets that skill's own status values
+    (no_active_job / ambiguous / not_found / questions_stopped / stopped)
+    drive the reply."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'stop_reading', {
+            'phone_number': from_number or chat_id,
+            'book_reference': request.book_reference,
+            'questions_only': request.questions_only,
+            'all_books': request.all_books,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'stop_reading failed for {chat_id}: {e}')
+        return None
+
+    status = result.get('status')
+    if status == 'no_active_job':
+        return "You don't have any book being read to you right now - nothing to stop."
+    if status in ('ambiguous', 'not_found'):
+        books = ', '.join(result.get('active_books', []))
+        if status == 'not_found':
+            return f"\"{request.book_reference}\" isn't among your active books - you've got: {books}. Which one did you mean?"
+        return f"You've got more than one book going - {books}. Which one should I stop?"
+    return result.get('result_summary') or f"Stopped {result.get('title', 'that book')}."
+
+
+async def _resolve_restart_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[_RestartReadingRequest]:
+    """None if this message isn't actually a "restart the book" request -
+    same degrade-on-failure contract every other classify-based resolver in
+    this module follows."""
+    try:
+        choice = await classify(text, _RESTART_READING_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Restart-reading intent classification failed: {describe_exception(e)}')
+        return None
+    if choice.skill_id != 'restart_book_reading':
+        return None
+    try:
+        return await extract(text, 'restart_book_reading', _RestartReadingRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Restart-reading parameter extraction failed: {describe_exception(e)}')
+        return None
+
+
+async def _restart_book_reading(
+    request: _RestartReadingRequest, chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows. Passes
+    the caller's own book wording through unresolved (adiyan_reader's
+    restart_reading.py matches it against THAT phone's own active jobs
+    itself, never a filename guessed here) and lets that skill's own status
+    values (no_active_job / ambiguous / not_found / restarted) drive the
+    reply."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'restart_reading', {
+            'phone_number': from_number or chat_id,
+            'book_reference': request.book_reference,
+            'all_books': request.all_books,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'restart_reading failed for {chat_id}: {e}')
+        return None
+
+    status = result.get('status')
+    if status == 'no_active_job':
+        return "You don't have any book being read to you right now - nothing to restart."
+    if status in ('ambiguous', 'not_found'):
+        books = ', '.join(result.get('active_books', []))
+        if status == 'not_found':
+            return f"\"{request.book_reference}\" isn't among your active books - you've got: {books}. Which one did you mean?"
+        return f"You've got more than one book going - {books}. Which one should I restart?"
+    return result.get('result_summary') or f"Restarted {result.get('title', 'that book')} from page 1."
+
+
+async def _resolve_reread_page_request(text: str, cfg: Dict[str, Any]) -> Optional[_RereadPageRequest]:
+    """None if this message isn't actually a "reread the current page"
+    request - same degrade-on-failure contract every other classify-based
+    resolver in this module follows."""
+    try:
+        choice = await classify(text, _REREAD_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Reread-page intent classification failed: {describe_exception(e)}')
+        return None
+    if choice.skill_id != 'reread_page':
+        return None
+    try:
+        return await extract(text, 'reread_page', _RereadPageRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Reread-page parameter extraction failed: {describe_exception(e)}')
+        return None
+
+
+async def _reread_page(
+    request: _RereadPageRequest, chat_id: str, from_number: Optional[str], tier: str, vertical_id: Optional[str] = None,
+) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention every other action function in this module follows."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'reread_page', {
+            'phone_number': from_number or chat_id,
+            'book_reference': request.book_reference,
+            'clearer': request.clearer,
+            'slower': request.slower,
+            'all_books': request.all_books,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'reread_page failed for {chat_id}: {describe_exception(e)}')
+        return None
+
+    status = result.get('status')
+    if status == 'no_active_job':
+        return "You don't have any book being read to you right now - nothing to reread."
+    if status == 'nothing_read_yet':
+        return result.get('result_summary') or "Haven't read any of that book yet - nothing to reread."
+    if status in ('ambiguous', 'not_found'):
+        books = ', '.join(result.get('active_books', []))
+        if status == 'not_found':
+            return f"\"{request.book_reference}\" isn't among your active books - you've got: {books}. Which one did you mean?"
+        return f"You've got more than one book going - {books}. Which one should I reread?"
+    return result.get('result_summary') or "Rereading that page now."
+
+
+# Fixed, stable suffix each of the four "more than one active book" replies
+# ends with - see each action function's own composed 'ambiguous' branch
+# above (the book list itself is glued on HERE in orchestrator; the skill's
+# own raw result_summary is never what actually gets sent/remembered, only
+# this suffix is constant across different customers' different book
+# lists). Matching on this - not free-text classification - is what lets a
+# bare follow-up like "for all" resolve against the RIGHT pending question
+# deterministically: these are fixed Python literals, never LLM-generated,
+# so there's nothing to hallucinate here.
+_PENDING_BOOK_DISAMBIGUATION: Dict[str, Tuple[str, Any, Any]] = {
+    'Which one should I change the voice for?': ('change_voice', _ChangeVoiceRequest, _change_voice),
+    'Which one should I stop?': ('stop_book_reading', _StopReadingRequest, _stop_book_reading),
+    'Which one should I restart?': ('restart_book_reading', _RestartReadingRequest, _restart_book_reading),
+    'Which one should I reread?': ('reread_page', _RereadPageRequest, _reread_page),
+}
+
+
+async def _resolve_pending_book_disambiguation(
+    text: str, contact_name: Optional[str], chat_id: str, vertical_id: Optional[str], cfg: Dict[str, Any],
+) -> Optional[Tuple[Any, Any]]:
+    """(action_fn, request) if the caller's LAST reply FROM US was one of
+    the fixed "which book?" disambiguation prompts change_voice/
+    stop_reading/restart_reading/reread_page all share, None otherwise
+    (chat_cache has nothing for this contact, or their last reply from us
+    wasn't one of these prompts).
+
+    Confirmed live as a real gap: "I want leah as my reader" -> (more than
+    one active book) "which one should I change the voice for?" -> "for
+    all" landed nowhere - that reply has no voice name and no book name in
+    it, so every classify() in the elif chain below correctly said "not
+    mine" and the customer's actual answer was silently dropped, 8 times
+    over one real conversation.
+
+    Reuses chat_cache's own already-populated per-contact history
+    (mesh/lib/chat_cache.py), not a second, parallel state store - the
+    pending question's own original request text (the turn's own
+    user_text, e.g. "I want leah as my reader") is already sitting right
+    there, written by this same function's own should_remember branch
+    after every reply. chat_cache is platform-level, shared by every agent
+    that wants it - the actual gap was never its existence, it was that
+    these four resolvers never read it before now.
+
+    Deliberately skips classify() on this path: which skill is pending is
+    already known for certain from the prompt's own fixed suffix (see
+    _PENDING_BOOK_DISAMBIGUATION's own comment on why that's a
+    deterministic match, not a guess) - only extract() runs, over the
+    ORIGINAL request text plus the new reply combined, so "for all" or a
+    specific book name resolves against real context. Never feeding history
+    into classify() itself, which compares against short skill descriptions
+    and would only get confused by a history block glued onto it - same
+    reasoning the should_remember branch's own history-prepending already
+    documents for itself, applied here too."""
+    turns = chat_cache.get_recent_turns(contact_name or chat_id, vertical_id)
+    if not turns:
+        return None
+    last_reply = turns[-1]['reply_text'].strip()
+    pending = next((v for suffix, v in _PENDING_BOOK_DISAMBIGUATION.items() if last_reply.endswith(suffix)), None)
+    if pending is None:
+        return None
+    skill_id, model_cls, action_fn = pending
+
+    combined_text = f'{turns[-1]["user_text"]}\n{text}'
+    try:
+        request = await extract(combined_text, skill_id, model_cls, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Pending-disambiguation extraction failed for {skill_id!r}: {describe_exception(e)}')
+        return None
+    return action_fn, request
 
 
 async def _resolve_book_reading_request(text: str, cfg: Dict[str, Any]) -> Optional[str]:
@@ -348,18 +929,39 @@ async def _start_book_reading(
 
     token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
     try:
-        resolved = await call_agent(memory_url, 'resolve_book', {'query': book_reference}, token=token)
+        resolved = await call_agent(memory_url, 'resolve_book', {
+            'query': book_reference, 'vertical_id': vertical_id,
+        }, token=token)
     except Exception as e:
         logger.error(f'Book resolution failed for {chat_id}: {e}')
         return None
 
     source_filename = resolved.get('source_filename') if resolved.get('found') else None
-    if not source_filename:
-        return f"I couldn't find \"{book_reference}\" among your uploaded books - upload the PDF first, then ask me to read it."
 
     reader_url = router.get_agent_url('adiyan_reader')
     if reader_url is None:
         return "The book reader isn't reachable right now - try again in a moment."
+
+    if not source_filename:
+        # Not among this person's own uploads - try Project Gutenberg
+        # before giving up. Scoped hard to Gutenberg by
+        # fetch_public_domain_book.py itself (never a general web fetch),
+        # so this can only ever resolve to a verified public-domain work -
+        # never something this business has no right to read aloud. A
+        # miss here (not on Gutenberg either, or ingestion failed) falls
+        # through to the same honest "couldn't find it" reply as before,
+        # just with Gutenberg now also ruled out.
+        try:
+            gutenberg = await call_agent(reader_url, 'fetch_public_domain_book', {
+                'query': book_reference, 'username': from_number or chat_id,
+            }, token=token)
+        except Exception as e:
+            logger.warning(f'Gutenberg fallback failed for {chat_id}: {describe_exception(e)}')
+            gutenberg = {'ingested': False}
+        if gutenberg.get('ingested'):
+            source_filename = gutenberg['source_filename']
+        else:
+            return f"I couldn't find \"{book_reference}\" among your uploaded books, or on Project Gutenberg - upload the PDF first, then ask me to read it."
 
     try:
         started = await call_agent(reader_url, 'start_reading', {
@@ -480,9 +1082,97 @@ async def _read_page_now(
     return result.get('result_summary') or "Couldn't read a page right now - try again in a moment."
 
 
+# Same single-skill classify-only pool shape as _READ_NOW_SKILLS - checked
+# BEFORE _READ_NOW_SKILLS in run()'s dispatch chain (see that chain's own
+# comment) since "read all" or "read page 1 to 10" would otherwise also
+# plausibly match read_now's "give me the next page now" description; the
+# more specific burst-read intent has to get first look.
+_READ_RANGE_SKILLS = [
+    AgentSkill(
+        id='read_range',
+        name='Read Page Range Now',
+        description=(
+            'The caller wants several pages read back-to-back right now, in one go - '
+            'an explicit page range ("read page 1 to 10"), a relative count ("read me the '
+            'next 5 pages", "send 3 more pages"), or the whole rest of the book ("read all", '
+            '"read the rest", "keep going until it\'s done"). Not for a single "read the next '
+            'page" request - that\'s read_now.'
+        ),
+        tags=['adiyan_reader', 'book'],
+        examples=[
+            'Read all',
+            "Send me continuous voice notes till the book is complete",
+            'Read page 1 to 10',
+            'Read pages 5 through 20',
+            'Read the rest of the book now',
+            'Keep reading until the book is finished',
+            'Read me the next 5 pages',
+            'Send 3 more pages',
+            'Give me the next 10 pages now',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+async def _resolve_read_range_request(
+    text: str, cfg: Dict[str, Any],
+) -> Optional[Tuple[Optional[int], Optional[int], Optional[int]]]:
+    """None if this message isn't a burst-read request - same degrade-on-
+    failure contract every other classify-based resolver in this module
+    follows. Otherwise (start_page, end_page, page_count) - all three may
+    be None (a bare 'read all'); page_count is set instead of end_page for
+    a relative count ('the next 5 pages') the caller's own bookmark has to
+    resolve against, which this extraction step has no visibility into -
+    see read_range.py's own run() for where that resolution actually
+    happens."""
+    try:
+        choice = await classify(text, _READ_RANGE_SKILLS, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Read-range intent classification failed: {describe_exception(e)}')
+        return None
+    if choice.skill_id != 'read_range':
+        return None
+    try:
+        params = await extract(text, 'read_range', _ReadRangeRequest, cfg['extract_parameters'])
+    except Exception as e:
+        logger.error(f'Read-range extraction failed: {describe_exception(e)}')
+        return (None, None, None)
+    return (params.start_page, params.end_page, params.page_count)
+
+
+async def _read_page_range(
+    chat_id: str, from_number: Optional[str], tier: str, start_page: Optional[int], end_page: Optional[int],
+    page_count: Optional[int] = None, vertical_id: Optional[str] = None,
+) -> Optional[str]:
+    """Reply text, or None only on a genuinely unexpected failure - same
+    convention _read_page_now follows. Reuses read_range's own
+    result_summary the same way _read_page_now reuses read_next_page's -
+    that skill already handles every real outcome (pages sent, the book
+    finished mid-range, no active job at all). page_count passes straight
+    through unresolved - read_range.py's own run() is what turns it into a
+    real end_page, since only it knows the caller's actual current_page."""
+    reader_url = router.get_agent_url('adiyan_reader')
+    if reader_url is None:
+        return "The book reader isn't reachable right now - try again in a moment."
+
+    token = permissions.mint_token(chat_id, tier, vertical_id=vertical_id)
+    try:
+        result = await call_agent(reader_url, 'read_range', {
+            'phone_number': from_number or chat_id, 'start_page': start_page, 'end_page': end_page,
+            'page_count': page_count,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'read_range failed for {chat_id}: {describe_exception(e)}')
+        return None
+
+    return result.get('result_summary') or "Couldn't read those pages right now - try again in a moment."
+
+
 async def _ingest_into_knowledge_base(
     media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str], do_ocr: bool = True,
-    vertical_id: Optional[str] = None,
+    vertical_id: Optional[str] = None, visibility: str = 'private',
 ) -> Tuple[Optional[str], Optional[str]]:
     """(reply, source_filename). reply is None only for a genuinely
     unexpected failure (see this module's own silent-on-failure convention,
@@ -518,10 +1208,13 @@ async def _ingest_into_knowledge_base(
     owner_identity is deliberately chat_id, not username above - a display
     name can be arbitrary or reused (see memory_index.py's own
     _scope_filters() docstring), but chat_id is the same stable identity
-    permissions.mint_token() already uses for this exact sender. Every
-    upload defaults to visibility='private' (memory_index.py's own default)
-    - it's visible only to whoever uploaded it, and the owner, unless later
-    explicitly marked global.
+    permissions.mint_token() already uses for this exact sender. `visibility`
+    defaults to 'private' (memory_index.py's own default) - visible only to
+    whoever uploaded it, and the owner. The caller passes 'global' instead
+    when _resolve_visibility_preference() found the owner's own caption
+    explicitly asking for it (e.g. "make this available for every
+    customer") - see that function's own docstring for why this is
+    owner-only, never something a customer's own caption can trigger.
 
     do_ocr defaults True (Docling's own default, safe for anything that
     might be scanned) - the caller only passes False once
@@ -550,6 +1243,7 @@ async def _ingest_into_knowledge_base(
             'username': contact_name or chat_id,
             'owner_identity': chat_id,
             'do_ocr': do_ocr,
+            'visibility': visibility,
         }, token=token)
     except Exception as e:
         logger.error(f'Ingestion failed for {chat_id}: {e}')
@@ -558,12 +1252,18 @@ async def _ingest_into_knowledge_base(
     if not result.get('available', True):
         return "Knowledge Bank isn't available right now (its storage backend is unreachable) - try again later.", None
     if not result.get('ingested'):
-        return f"Couldn't read that as a document: {result.get('error') or 'unknown reason'}", None
+        # result['error'] is only ever a deliberate, user-actionable message
+        # (see mesh/memory/skills/ingest.py's own ValueError/Exception split)
+        # - never a raw internal exception. None here means something
+        # internal failed; the real reason is already logged there, not
+        # something to guess a WhatsApp-safe phrasing for by dumping it here.
+        return result.get('error') or "Couldn't add that to the knowledge base right now - try again in a moment.", None
     # int(...): A2A's Part.data travels through a protobuf Struct, which has
     # no integer type, only double - confirmed live that the real int
     # ingest.py returns for 'chunks' silently became 1.0 by the time it got
     # here, printing "1.0 chunk(s) indexed" in an actual WhatsApp reply.
-    reply = f"Added to the knowledge base ({int(result['chunks'])} chunk(s) indexed)."
+    visibility_note = ' - available to every customer' if visibility == 'global' else ''
+    reply = f"Added to the knowledge base ({int(result['chunks'])} chunk(s) indexed){visibility_note}."
 
     # Also page-ingest every upload - confirmed live this session that
     # ingest_document alone leaves a document completely invisible to
@@ -621,6 +1321,34 @@ async def _resolve_ocr_preference(caption: str, cfg: Dict[str, Any]) -> bool:
         logger.error(f'OCR-preference extraction failed: {describe_exception(e)}')
         return False
     return params.skip_image_scanning
+
+
+async def _resolve_visibility_preference(caption: str, cfg: Dict[str, Any]) -> bool:
+    """False (the safe default - stays private, visible only to whoever
+    uploaded it and the owner) unless the caption itself explicitly says
+    this document should be available to every customer. Same degrade-on-
+    failure contract as _resolve_ocr_preference: an extraction failure here
+    must never accidentally make a document global that wasn't meant to be
+    - a private document mistakenly staying private is recoverable (ask
+    again, or the owner sets it global via config_agent later); a document
+    that should have stayed private going global by mistake is a real data
+    leak across every one of a business's customers, not a small thing to
+    get wrong in the other direction.
+
+    Owner-only by construction, not by a check in this function - see this
+    module's own call site, which only ever calls this for tier == 'owner'.
+    A customer's own upload always defaults to private no matter what their
+    caption says; only the business owner can decide something goes out to
+    every customer, same reasoning update_customer_record.py's
+    owner_section split already documents for a consequential fact."""
+    if not caption or not caption.strip():
+        return False
+    try:
+        params = await extract(caption, 'upload_visibility_preference', _UploadVisibilityPreference, cfg)
+    except Exception as e:
+        logger.error(f'Visibility-preference extraction failed: {describe_exception(e)}')
+        return False
+    return params.global_visibility
 
 
 async def _resolve_vertical_spec_intent(caption: str, cfg: Dict[str, Any]) -> bool:
@@ -884,7 +1612,7 @@ async def run(
     reply_language = language_display_name(detected_language) if audio_pending else None
 
     conn = db.connect(state_db_path(AGENT_ID))
-    gate_reply, tier, vertical_id = await rules_engine.check(
+    gate_reply, tier, vertical_id, just_auto_registered = await rules_engine.check(
         conn, chat_id, contact_name, text, from_number, cfg['add_named_contact'],
         is_self_chat=is_self_chat,
     )
@@ -1001,9 +1729,18 @@ async def run(
             # right below (_resolve_upload_instruction), and why it
             # defaults to False (OCR stays on) on any failure.
             skip_image_scanning = await _resolve_ocr_preference(text, cfg['extract_parameters'])
+            # Owner-only, same gate as _apply_vertical_spec_upload's own
+            # `tier == 'owner'` check just above - a customer's own caption
+            # can never make their upload visible to every other customer,
+            # no matter what it says. See _resolve_visibility_preference's
+            # own docstring for why this defaults to private on any
+            # ambiguity or failure.
+            visibility = 'private'
+            if tier == 'owner' and await _resolve_visibility_preference(text, cfg['extract_parameters']):
+                visibility = 'global'
             ingest_reply, source_filename = await _ingest_into_knowledge_base(
                 media_for_upload, chat_id, tier, contact_name, do_ocr=not skip_image_scanning,
-                vertical_id=vertical_id,
+                vertical_id=vertical_id, visibility=visibility,
             )
             if ingest_reply is None or source_filename is None:
                 # Either ingestion itself failed outright (source_filename
@@ -1037,6 +1774,44 @@ async def run(
                         reply = await humanize(text, caption_source, cfg['humanize'], community=community, language=reply_language, is_owner=tier == 'owner', vertical_id=vertical_id)
                     else:
                         reply = analysis.get('result') or ingest_reply
+    elif (pending_book := await _resolve_pending_book_disambiguation(text, contact_name, chat_id, vertical_id, cfg)) is not None:
+        # Checked FIRST among the book-action branches - a bare follow-up
+        # like "for all" or "the crime one" matches none of the classifiers
+        # below on its own, so it has to be recognized as the answer to the
+        # "which book?" question we just asked before they get a chance to
+        # reject it. See _resolve_pending_book_disambiguation()'s own docstring.
+        should_remember = True
+        pending_action, pending_request = pending_book
+        reply = await pending_action(pending_request, chat_id, from_number, tier, vertical_id=vertical_id)
+    elif await _resolve_voice_samples_request(text, cfg):
+        # Checked BEFORE _resolve_book_reading_request and _CHANGE_VOICE_SKILLS
+        # - "what voices do you have" must never be classified as a request
+        # to start a book named that, or as already naming a specific voice.
+        should_remember = True
+        reply = await _send_voice_samples(chat_id, from_number, tier, vertical_id=vertical_id)
+    elif (change_voice_request := await _resolve_change_voice_request(text, cfg)) is not None:
+        # Checked BEFORE _resolve_book_reading_request too, same reasoning.
+        should_remember = True
+        reply = await _change_voice(change_voice_request, chat_id, from_number, tier, vertical_id=vertical_id)
+    elif (reread_request := await _resolve_reread_page_request(text, cfg)) is not None:
+        # Checked BEFORE _resolve_book_reading_request - see _REREAD_SKILLS'
+        # own comment for why "read that again"/"slower" must never be
+        # classified as a request to start a new book.
+        should_remember = True
+        reply = await _reread_page(reread_request, chat_id, from_number, tier, vertical_id=vertical_id)
+    elif (restart_request := await _resolve_restart_reading_request(text, cfg)) is not None:
+        # Checked BEFORE _resolve_book_reading_request - see
+        # _RESTART_READING_SKILLS' own comment for why "start all over
+        # again" must never be classified as a request to start a NEW book
+        # (it isn't a book title) - a real subscriber hit exactly this gap.
+        should_remember = True
+        reply = await _restart_book_reading(restart_request, chat_id, from_number, tier, vertical_id=vertical_id)
+    elif (stop_request := await _resolve_stop_reading_request(text, cfg)) is not None:
+        # Checked BEFORE _resolve_book_reading_request - see
+        # _STOP_READING_SKILLS' own comment for why a "stop reading X" must
+        # never fall through to being classified as a request to start one.
+        should_remember = True
+        reply = await _stop_book_reading(stop_request, chat_id, from_number, tier, vertical_id=vertical_id)
     elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
         # Only reached once the gate has already let this sender through and
         # there's no image/document attached - a stranger or an upload
@@ -1068,7 +1843,10 @@ async def run(
         # single-next-page description. Same lazy-evaluation reasoning as
         # the book-reading branch above.
         should_remember = True
-        reply = await _read_page_range(chat_id, from_number, tier, range_pages[0], range_pages[1], vertical_id=vertical_id)
+        reply = await _read_page_range(
+            chat_id, from_number, tier, range_pages[0], range_pages[1], page_count=range_pages[2],
+            vertical_id=vertical_id,
+        )
     elif await _resolve_read_now_request(text, cfg):
         # Same lazy-evaluation reasoning as the book-reading branch above -
         # only classified once nothing earlier in this chain already
@@ -1257,6 +2035,18 @@ async def run(
             # above, not a best-effort apology message users have to parse.
             logger.error(f'Failed to handle message for {chat_id}: {e}')
             reply = None
+
+    if reply is not None and just_auto_registered:
+        # This identity was just silently auto-registered (a demo vertical,
+        # or a real one opted into open_enrollment - see rules_engine.py's
+        # own docstring) with no explicit "register me" from them, so this
+        # is their very first reply ever. Prepended, not appended - a
+        # privacy disclosure buried after the actual answer is easy to
+        # skim past; the explicit-registration path's own REGISTERED_REPLY
+        # already leads with the same wording. Only reply is None means a
+        # genuine failure (see the except block just above) - never prepend
+        # a disclosure to silence.
+        reply = rules_engine.AUTO_REGISTERED_NOTICE + reply
 
     if reply is None:
         # Either the branch above failed outright, or nothing in this

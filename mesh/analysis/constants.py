@@ -9,3 +9,4 @@ PORT = 8427
 AGENT_URL = f'http://{HOST}:{PORT}'
 
 MEMORY_AGENT_URL = 'http://127.0.0.1:8423'
+BROWSER_MCP_URL = 'http://127.0.0.1:8463/mcp'

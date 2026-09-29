@@ -40,6 +40,14 @@ Ask these one at a time, in a natural conversational tone - don't dump all eight
 
 9. **Would customers ever ask this number for a reminder/scheduling, a reflective journaling prompt, or a book being read aloud?** Most businesses only need the core assistant (covered by questions 1-8) - skip this unless the owner's use case plausibly involves one of those. If unsure, default to setting `business_persona_context` everywhere it's accepted anyway; it's free-text and costs nothing to repeat.
 
+10. **Should customers be able to actually DO anything through chat, not just ask questions?** Read out the five real options below one at a time and only note the ones the owner actually confirms - never assume all five, and never promise a sixth. See `references/config-vocabulary.md`'s own `workflows` section for exactly what each one does (and doesn't) do:
+    - Place an order and get a confirmation
+    - Make a payment and get a payment link
+    - Book an appointment or slot
+    - Cancel an existing order or booking
+    - Leave feedback after a transaction
+    Be plain that each is scaffolding - a real confirmation number and a real reply, but not a real payment gateway or calendar behind it yet. If the owner wants something outside these five, say so honestly rather than forcing their request into the closest option.
+
 ## Producing the output
 
 Once the interview is answered, write the YAML using this exact shape - do not add, rename, or restructure keys beyond what's shown. `orchestrator` and `analysis` are always present; the other five agents are optional, added only per question 9:
@@ -95,6 +103,14 @@ agents:
     constants:
       business_persona_context: |
         <the SAME paragraph as orchestrator's above>
+
+# Optional, top-level (NOT under `agents`) - only present if question 10
+# surfaced at least one real action the owner confirmed. One short English
+# line per capability, exactly as the owner described wanting it - do not
+# add a line for anything they didn't confirm, and do not describe a
+# capability outside the five in references/config-vocabulary.md.
+workflows:
+  - "<a plain-English line describing one confirmed action, e.g. \"Customers should be able to place an order and get a confirmation\">"
 ```
 
 Rules for filling this in:
@@ -103,6 +119,7 @@ Rules for filling this in:
 - `strict_grounding: true` if the owner wants to minimize the assistant saying anything not backed by an uploaded document. `false` if they're fine with it using judgment/estimates.
 - Every hard rule from question 5 and every boundary from question 7 must actually appear somewhere in `business_persona_context` - don't silently drop one because it didn't fit neatly.
 - `scheduler`, `journal`, `adiyan_reader`, `config_agent`, `micro_habits` only ever get `business_persona_context` - never `strict_grounding`, `summon_phrase`, or `card_description`, which don't exist on those agents. See `references/config-vocabulary.md` for the full field list per agent.
+- `workflows` only ever appears if question 10 surfaced at least one confirmed action - omit the key entirely rather than including an empty list. Each line should read like the owner's own words, not a template's internal name (write "let customers pay and get a link," never "payment_request").
 
 ## Customer records - automatic, not a spec field
 
@@ -119,6 +136,8 @@ e.g. `@marinaspice mark 9198765432 as paid for the tiffin plan`, or `@ascentcoac
 ## Handing it back
 
 Give the business owner the complete YAML in a fenced code block, plus one plain-English sentence confirming what it does: "This tells Adiyan to answer your customers as [business name] - warm tone, [key rule], and to say '[fallback line]' when it doesn't know something. Upload this file to your Adiyan WhatsApp number to activate it."
+
+If the spec includes a `workflows` section, also tell them plainly which real actions their customers will be able to do once it's uploaded (e.g. "customers will also be able to place an order and get a real confirmation number back"), and that Adiyan builds and activates these automatically - nothing else to set up. Don't claim any capability beyond what's actually in the `workflows` list.
 
 Also tell them, in the same handoff, that Adiyan will start keeping a private record of each customer automatically, and give them one real example of the owner-only command above, using their own business's own wake phrase - this is the one thing about customer records they actually need to know, everything else is automatic.
 

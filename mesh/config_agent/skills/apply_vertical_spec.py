@@ -32,12 +32,20 @@ import base64
 import io
 import logging
 import re
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, List
 
 import yaml
+from a2a.types import AgentSkill
 
+from mesh.config_agent.constants import AGENT_ID
 from mesh.config_agent.skills.update_config import _coerce, _CoerceError
-from mesh.lib import config_sdk
+from mesh.lib import config_sdk, n8n_client, workflow_registry
+from mesh.lib.config import load_runtime_config
+from mesh.lib.skill_router import classify
+from mesh.lib.workflow_templates import TEMPLATES, build_workflow_nodes
+
+AGENT_CODE_DIR = Path(__file__).parent.parent
 
 # Extensions treated as literal YAML text, decoded directly - anything else
 # (pdf, docx, ...) goes through Docling first. Confirmed live this session:
@@ -63,7 +71,7 @@ logger = logging.getLogger('ApplyVerticalSpec')
 # ships the exact same list to whichever LLM drafts the spec in the first
 # place, so a well-behaved spec should never even attempt one of these.
 _ALLOWED_CONSTANTS = {
-    'orchestrator': {'summon_phrase', 'card_description', 'business_persona_context'},
+    'orchestrator': {'summon_phrase', 'card_description', 'business_persona_context', 'open_enrollment'},
     'analysis': {'strict_grounding', 'business_persona_context'},
     'scheduler': {'business_persona_context'},
     'journal': {'business_persona_context'},
@@ -166,6 +174,79 @@ async def _validate_and_collect_writes(spec: Dict[str, Any], vertical_id: str) -
     return writes
 
 
+def _template_skills() -> List[AgentSkill]:
+    """One AgentSkill per entry in the template library, for classify() to
+    match a spec's own plain-English `workflows:` line against - the exact
+    same classify-then-act pattern every agent's own skill_router.classify
+    call already uses, just matching against workflow templates instead of
+    a real agent's skills."""
+    return [
+        AgentSkill(
+            id=template_id, name=template['label'], description=template['description'],
+            examples=template['match_examples'], tags=['workflow'],
+            input_modes=['text/plain'], output_modes=['application/json'],
+        )
+        for template_id, template in TEMPLATES.items()
+    ]
+
+
+async def _generate_workflows(vertical_id: str, business_name: Any, descriptions: List[Any]) -> Dict[str, list]:
+    """Best-effort, not all-or-nothing - unlike _validate_and_collect_writes'
+    own constants (a real config bug there means the whole spec should
+    fail before anything is written), a workflow-generation hiccup (n8n
+    unreachable, a description matching nothing) is an external-system
+    concern that shouldn't block the persona/config half of the same spec
+    from applying, same reasoning as ingest_book's own best-effort failure
+    handling elsewhere in this mesh. Every outcome (created or skipped, and
+    why) is reported back rather than silently dropped, so the spec's own
+    caller can see exactly what happened."""
+    skills = _template_skills()
+    cfg = await config_sdk.load_stage_configs(AGENT_ID, load_runtime_config(AGENT_CODE_DIR))
+
+    created, skipped = [], []
+    for description in descriptions:
+        if not isinstance(description, str) or not description.strip():
+            skipped.append({'description': description, 'reason': 'not a usable text description'})
+            continue
+
+        choice = await classify(description, skills, cfg['classify_skill'])
+        if choice.skill_id is None:
+            reason = 'no matching workflow template'
+            if choice.ambiguous_between:
+                reason += f" (ambiguous between {', '.join(choice.ambiguous_between)})"
+            skipped.append({'description': description, 'reason': reason})
+            continue
+
+        template_id = choice.skill_id
+        webhook_path = f'{vertical_id}-{template_id}'
+        nodes, connections = build_workflow_nodes(template_id, webhook_path)
+        name = f"{business_name or vertical_id} - {TEMPLATES[template_id]['label']}"
+
+        try:
+            result = await n8n_client.create_and_activate_workflow(name, nodes, connections)
+        except n8n_client.N8NError as e:
+            logger.warning(f'Workflow generation failed for {vertical_id!r}/{template_id!r}: {e}')
+            skipped.append({'description': description, 'template': template_id, 'reason': f'n8n error: {e}'})
+            continue
+
+        registered = await workflow_registry.register(
+            vertical_id, template_id, webhook_path, TEMPLATES[template_id]['description'],
+        )
+        if not registered:
+            skipped.append({
+                'description': description, 'template': template_id,
+                'reason': 'created in n8n but could not register with Adiyan - config store may be unreachable',
+            })
+            continue
+
+        created.append({
+            'description': description, 'template': template_id,
+            'webhook_path': webhook_path, 'workflow_id': result['workflow_id'],
+        })
+
+    return {'created': created, 'skipped': skipped}
+
+
 def _extract_yaml_text(raw: bytes, filename: str) -> str:
     """The actual YAML source, however it arrived. A .yaml/.yml/.txt
     upload's bytes already ARE that text - decoded directly. A PDF/.docx
@@ -258,8 +339,22 @@ async def run(content_b64: str, filename: str) -> Dict[str, Any]:
             'error': 'Wrote the configuration but could not enable it - try activating manually.',
         }
 
-    return {
+    result = {
         'applied': True, 'activated': True, 'vertical_id': vertical_id,
         'business_name': spec.get('business_name'),
         'written': [f'{a}.{k}' for a, k, _ in writes],
     }
+
+    # workflows: a list of plain-English lines describing what the
+    # business wants customers to be able to DO ("customers can place an
+    # order", "let people book a slot") - matched against
+    # mesh/lib/workflow_templates.py's own library and turned into real,
+    # running n8n workflows with no human touching n8n's editor. Optional
+    # and best-effort (see _generate_workflows' own docstring) - a spec
+    # with no workflows section, or one n8n can't reach, still applies the
+    # persona/config half above just fine.
+    workflows = spec.get('workflows')
+    if isinstance(workflows, list) and workflows:
+        result['workflows'] = await _generate_workflows(vertical_id, spec.get('business_name'), workflows)
+
+    return result

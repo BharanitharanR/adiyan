@@ -38,6 +38,31 @@ These exist in Adiyan's config store but are intentionally out of scope for a bu
 
 If a business owner's answer seems to call for one of these (e.g. "I want it to always negotiate down to a floor price during price talks" - which really wants to change `decide_next_step_prompt_template`'s actual reasoning, not just its tone), fold the *intent* into `business_persona_context` as a plain instruction instead ("Never agree to a price below ₹X without checking with a human first") rather than attempting to rewrite the underlying prompt template. The persona-context field is read by the same reasoning step, so a clearly-stated rule there is followed even though it isn't rewriting the template's own wording.
 
+## `workflows` (optional, top-level - not under `agents`)
+
+A plain list of short English sentences describing real actions this business's customers should be able to trigger over chat - not persona/tone, actual side effects. Each line is matched against a small fixed library of workflow templates; a line that doesn't clearly describe one of the five below is silently skipped (never guessed at, never fabricated into something it isn't), so only include a line when the owner actually wants that capability.
+
+The five templates that exist today - do not describe or promise any action outside this list, and do not invent a sixth:
+
+| Template | What it does |
+|---|---|
+| `order_confirmation` | Places an order and returns a confirmation ID and ETA. |
+| `payment_request` | Requests a payment and returns a payment reference and link. |
+| `appointment_booking` | Books an appointment/slot and returns a booking confirmation. |
+| `cancellation` | Cancels an existing order/booking and returns a cancellation confirmation. |
+| `feedback_request` | Asks for feedback after a transaction and returns a feedback link. |
+
+Every one of these is scaffolding, not a real payment gateway or calendar integration - it fabricates a plausible reference number and a plain-language reply. Never tell an owner this actually charges a card, blocks a real calendar slot, or does anything beyond confirm-and-reply; if they need that, say so plainly rather than implying it already works.
+
+Example:
+```yaml
+workflows:
+  - "Customers should be able to place an order and get a confirmation"
+  - "Let customers pay for their order and get a payment link"
+```
+
+Only include a line for a capability the owner actually confirmed wanting during the interview - see SKILL.md's own interview question for this.
+
 ## `vertical_id`
 
 Not itself a field under an agent - the top-level identifier for this whole business profile. Lowercase letters, numbers, and hyphens only, no spaces, no leading/trailing hyphen (e.g. `vizag-travel-co`, `sunrise-bakery`). This is how Adiyan tells one business's overrides apart from another's, and from the platform defaults every other Adiyan deployment uses.

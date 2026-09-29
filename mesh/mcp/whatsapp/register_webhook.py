@@ -61,7 +61,18 @@ def main() -> None:
         # presence separates Adiyan's own echoed replies from genuine
         # owner-composed self-chat/self-phone messages).
         'events': ['message.received', 'message.sent'],
-        'retryCount': 0,
+        # 0 (the original value) means OpenWA never retries a failed
+        # delivery - confirmed live this session, repeatedly: the free
+        # ngrok tunnel goes cold after a quiet gap, the FIRST request after
+        # that idle period times out re-establishing it, and with zero
+        # retries that single transient hiccup permanently drops the
+        # message. Every "fix" that looked like re-registering a stale URL
+        # was actually just a fresh request landing after the tunnel had
+        # already warmed back up - the URL was never wrong. A real retry
+        # budget lets OpenWA absorb exactly this kind of one-off cold-start
+        # timeout on its own, instead of needing a manual re-registration
+        # every time the tunnel goes idle for a while.
+        'retryCount': 3,
     }
 
     # Idempotent by SESSION, not by exact URL - confirmed live this was a

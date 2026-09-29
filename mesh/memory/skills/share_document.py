@@ -10,15 +10,24 @@ mesh/orchestrator/skills/handle_message.py's own docstring: any result
 carrying content_b64 is understood as "deliver a file," regardless of which
 skill produced it.
 
-The highest-stakes of every scoped read in this module - it hands back the
-actual file bytes for delivery over WhatsApp, not a snippet or a filename,
-so both the resolve step and the fetch step are scoped (see
-memory_index.py's find_source_document()/get_document() docstrings).
+The highest-stakes of every scoped read in this module in terms of ACCESS
+(it hands back the actual file bytes for delivery over WhatsApp, not a
+snippet or a filename, so both the resolve step and the fetch step are
+scoped - see memory_index.py's find_source_document()/get_document()
+docstrings) - but deliberately the most LENIENT on match confidence. A
+wrong file sent back is immediately, visibly wrong to whoever receives it;
+a wrong snippet quietly treated as grounding for a text answer is not. See
+_SHARE_MATCH_MIN_SCORE and find_source_document()'s own docstring for the
+confirmed-live case (a payment QR code scoring 0.49, correctly ranked
+first, rejected outright by resolve_document's stricter 0.55) this exists
+to fix.
 """
 from typing import Any, Dict, Optional
 
 from mesh.memory.constants import OLLAMA_URL, QDRANT_URL
 from mesh.memory.memory_index import get_memory_index
+
+_SHARE_MATCH_MIN_SCORE = 0.35
 
 
 def run(query: str, requester_id: Optional[str] = None, is_owner: bool = False) -> Dict[str, Any]:
@@ -26,7 +35,9 @@ def run(query: str, requester_id: Optional[str] = None, is_owner: bool = False) 
     if memory_index is None:
         return {'found': False, 'available': False}
 
-    source_filename = memory_index.find_source_document(query, requester_id=requester_id, is_owner=is_owner)
+    source_filename = memory_index.find_source_document(
+        query, requester_id=requester_id, is_owner=is_owner, min_score=_SHARE_MATCH_MIN_SCORE,
+    )
     if source_filename is None:
         return {'found': False, 'available': True}
 

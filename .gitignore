@@ -45,3 +45,6 @@ research/staleness/data/
 
 # Packaged Agent Skill zips (built artifacts, source is the unzipped folder)
 agent_skills/*.zip
+voicebox/
+/data/
+mesh/adiyan_reader/data/

@@ -33,6 +33,7 @@ from mesh.memory.skills import (
     get_document_text,
     ingest,
     ingest_book,
+    list_books,
     list_documents,
     recall,
     remember,
@@ -56,7 +57,7 @@ AGENT_CODE_DIR = Path(__file__).parent
 # see the setdefault() call below for exactly which caller that is and why.
 _SCOPED_SKILLS = {
     'search_knowledge_base', 'share_knowledge_document', 'resolve_document',
-    'get_document_text', 'search_document_chunks', 'list_documents',
+    'get_document_text', 'search_document_chunks', 'list_documents', 'list_books', 'resolve_book',
 }
 
 
@@ -97,6 +98,7 @@ SKILL_HANDLERS = {
     'search_document_chunks': search_document_chunks.run,
     'remember_interaction': remember.run,
     'list_documents': list_documents.run,
+    'list_books': list_books.run,
     'ingest_book': ingest_book.run,
     'get_book_page': get_book_page.run,
     'resolve_book': resolve_book.run,
@@ -170,18 +172,29 @@ class MemoryAgentExecutor(AgentExecutor):
             params.setdefault('requester_id', claims.get('sub'))
             params.setdefault('is_owner', claims.get('tier') == 'owner')
 
-        # to_thread, not a plain call: every handler here is a normal sync
-        # function, and ingest_book/ingest_document's Docling parse (OCR
+        # Most handlers here are plain sync functions and go through
+        # to_thread - ingest_book/ingest_document's Docling parse (OCR
         # especially) can run for minutes with no internal await point of
-        # its own. Called directly, that fully occupies this process's one
-        # event loop for its whole duration - confirmed live this session,
-        # a multi-minute book ingestion left this agent unable to answer
-        # even a plain search_knowledge_base call until it finished. A
-        # thread doesn't make the ingestion itself faster, but PyTorch's
-        # CPU work (what OCR actually spends its time in) releases the GIL
-        # during computation, so a background thread genuinely lets this
-        # loop keep serving other requests while it runs.
-        result = await asyncio.to_thread(handler, **params)
+        # its own, and called directly that fully occupies this process's
+        # one event loop for its whole duration (confirmed live this
+        # session: a multi-minute book ingestion left this agent unable to
+        # answer even a plain search_knowledge_base call until it
+        # finished). A thread doesn't make the ingestion itself faster, but
+        # PyTorch's CPU work (what OCR actually spends its time in)
+        # releases the GIL during computation, so a background thread
+        # genuinely lets this loop keep serving other requests while it
+        # runs.
+        #
+        # resolve_book is the one real async handler (it may call out to an
+        # LLM via classify() - see resolve_book.py's own docstring) -
+        # awaited directly on this loop instead, since asyncio.to_thread()
+        # on an async function would just hand back an un-awaited coroutine
+        # without ever running it, and there's no CPU-bound work here to
+        # justify a thread anyway (an LLM call is I/O-bound).
+        if asyncio.iscoroutinefunction(handler):
+            result = await handler(**params)
+        else:
+            result = await asyncio.to_thread(handler, **params)
         await updater.add_artifact(parts=[new_data_part(result)])
         await updater.complete()
 

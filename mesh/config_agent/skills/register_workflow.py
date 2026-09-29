@@ -22,13 +22,16 @@ platform-level list nothing ever reads.
 Owner-only in practice, same as update_customer_record.py - no
 permissions_config.json entry needed, the owner tier's own 'allow' is
 already ['*'].
+
+The actual upsert-by-name write lives in mesh/lib/workflow_registry.py now,
+not here - apply_vertical_spec.py's own auto-generated workflows (see its
+`workflows:` spec section) need the identical write, and duplicating the
+upsert logic across "an owner typed this" and "a spec asked for this"
+would have meant fixing the same bug twice the next time it needed one.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from mesh.lib import config_sdk
-
-_TARGET_AGENT_ID = 'analysis'
-_REGISTRY_KEY = 'workflow_registry'
+from mesh.lib import workflow_registry
 
 
 async def run(
@@ -43,10 +46,7 @@ async def run(
                 'vertical this workflow belongs to.'
             ),
         }
-    current: List[Dict[str, Any]] = await config_sdk.get_constant(_TARGET_AGENT_ID, _REGISTRY_KEY, [], vertical_id=vertical_id)
-    updated = [w for w in current if not (isinstance(w, dict) and w.get('name') == name)]
-    updated.append({'name': name, 'webhook_path': webhook_path, 'description': description})
-    ok = await config_sdk.set_constant(_TARGET_AGENT_ID, _REGISTRY_KEY, updated, vertical_id=vertical_id)
+    ok = await workflow_registry.register(vertical_id, name, webhook_path, description)
     if not ok:
         return {'registered': False, 'error': 'Could not write the registration - the config store may be unreachable.'}
     return {'registered': True, 'vertical_id': vertical_id, 'name': name, 'webhook_path': webhook_path}

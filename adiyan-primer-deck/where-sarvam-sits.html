@@ -1,0 +1,234 @@
+<title>Where Sarvam-1 Sits</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..700&family=Mulish:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#ECE2CA; --panel:#F6EFDC; --ink:#241F14; --ink-soft:#6B5A3A; --line:#C9B587;
+  --accent:#8A6B32; --accent-soft:#DCCBA0;
+  --ok:#3D6B35; --ok-soft:#DCE9D5;
+  --gone:#8A3B2A; --gone-soft:#EDD9CF;
+  --sans:'Mulish',system-ui,sans-serif; --serif:'Playfair Display',serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+    --accent:#D6AD5F; --accent-soft:#4A3A1C;
+    --ok:#8FC17E; --ok-soft:#243318;
+    --gone:#E08B6F; --gone-soft:#3A2117;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#1B160D; --panel:#272013; --ink:#ECE2CA; --ink-soft:#B8A97C; --line:#3D3319;
+  --accent:#D6AD5F; --accent-soft:#4A3A1C;
+  --ok:#8FC17E; --ok-soft:#243318;
+  --gone:#E08B6F; --gone-soft:#3A2117;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);}
+.wrap{max-width:840px;margin:0 auto;padding:2.6rem 1.5rem 4rem;}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);font-weight:600;margin:0 0 .6rem;}
+h1{font-family:var(--serif);font-size:1.9rem;font-weight:700;margin:0 0 .5rem;text-wrap:balance;line-height:1.18;}
+.lede{color:var(--ink-soft);font-size:.98rem;line-height:1.7;max-width:64ch;margin:0 0 1.6rem;}
+h2.sect{font-family:var(--serif);font-size:1.25rem;font-weight:700;margin:2.4rem 0 .4rem;}
+p.sect-sub{font-size:.86rem;color:var(--ink-soft);margin:0 0 1.2rem;line-height:1.55;}
+
+.answer{background:var(--gone-soft);border:1.5px solid var(--gone);border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:2rem;font-size:.95rem;line-height:1.65;}
+.answer b{color:var(--gone);}
+
+.toggle-row{display:flex;gap:.5rem;margin-bottom:1.2rem;}
+.toggle-btn{font-family:var(--sans);font-size:.85rem;font-weight:600;color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:6px;padding:.55rem 1rem;cursor:pointer;flex:1;}
+.toggle-btn.active{border-color:var(--accent);border-width:2px;color:var(--accent);background:var(--accent-soft);}
+
+svg text{font-family:var(--mono);}
+figure{margin:0;}
+figcaption{font-size:.82rem;color:var(--ink-soft);margin-top:.7rem;text-align:center;}
+
+.timeline{display:flex;flex-direction:column;gap:0;margin-top:1.5rem;}
+.tl-item{display:grid;grid-template-columns:28px 1fr;gap:.9rem;}
+.tl-marker{display:flex;flex-direction:column;align-items:center;}
+.tl-dot{width:11px;height:11px;border-radius:50%;background:var(--accent);margin-top:.3rem;flex-shrink:0;}
+.tl-line{width:1.5px;flex:1;background:var(--line);margin-top:.3rem;}
+.tl-item:last-child .tl-line{display:none;}
+.tl-body{padding-bottom:1.4rem;}
+.tl-title{font-weight:700;font-size:.92rem;margin-bottom:.25rem;}
+.tl-desc{font-size:.85rem;color:var(--ink-soft);line-height:1.55;}
+.tl-desc code{font-family:var(--mono);background:var(--panel);padding:.05rem .3rem;border-radius:4px;font-size:.82rem;}
+
+.moral{margin-top:1rem;padding:1.1rem 1.3rem;border-radius:11px;background:var(--panel);border:1.5px dashed var(--line);font-size:.9rem;line-height:1.65;}
+.moral b{color:var(--accent);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Adiyan &middot; status check</p>
+  <h1>Where does Sarvam-1 actually sit in Adiyan right now?</h1>
+  <p class="lede">Short answer first, then the diagram, then how it got there.</p>
+
+  <div class="answer">
+    <b>Nowhere in the live pipeline.</b> Sarvam-1 was tried, tested with real evidence, wired in, and then removed - all in this session. It's still pulled locally in Ollama, but nothing in the running mesh calls it today.
+  </div>
+
+  <h2 class="sect">Then vs. now</h2>
+  <p class="sect-sub">Toggle between the design that got built first, and what actually shipped.</p>
+
+  <div class="toggle-row">
+    <button class="toggle-btn active" id="btn-then">v1 — sarvam-1 side-channel</button>
+    <button class="toggle-btn" id="btn-now">v2 — shipped</button>
+  </div>
+
+  <figure>
+    <svg id="diagram" viewBox="0 0 780 230" role="img" style="width:100%;height:auto;"></svg>
+    <figcaption id="caption"></figcaption>
+  </figure>
+
+  <h2 class="sect">Why it changed</h2>
+  <p class="sect-sub">Three real turns in this session, in order.</p>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-marker"><div class="tl-dot"></div><div class="tl-line"></div></div>
+      <div class="tl-body">
+        <div class="tl-title">v1 built and proven, narrowly</div>
+        <div class="tl-desc">Sarvam-1 (a raw completion model, not chat-tuned) was few-shot wrapped into a Question/Answer shape with a stop sequence, and confirmed live to correctly answer a real Tamil question - the actual test evidence held up. But it answered <i>directly</i>, with no access to <code>search_knowledge_base</code>, <code>analyse_this</code>, memory, or any other skill.</div>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-marker"><div class="tl-dot"></div><div class="tl-line"></div></div>
+      <div class="tl-body">
+        <div class="tl-title">Real-world test exposed the actual gap</div>
+        <div class="tl-desc">A real WhatsApp voice note (not a clean synthetic test sample) transcribed to garbage - Whisper mangled English technical terms mixed into natural Tamil speech. That test made the deeper problem visible: even a perfect transcription would only ever get a standalone sarvam-1 answer, never a real business answer grounded in your knowledge base.</div>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-marker"><div class="tl-dot"></div></div>
+      <div class="tl-body">
+        <div class="tl-title">Redesigned: full routing, sarvam-1 dropped</div>
+        <div class="tl-desc">Transcribed text now flows through the exact same <code>classify_skill</code> → <code>route_to_agent</code> path a typed message takes - full access to everything. The reply-language step (getting a Tamil answer back) moved to <code>humanize()</code>'s new <code>language</code> parameter, running on <code>qwen3:8b-16k</code> - already chat-tuned, already multilingual, no few-shot/stop-sequence workarounds needed. Sarvam-1's call site was deleted, not just disabled.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="moral">
+    <b>Where this leaves it:</b> sarvam-1 is proven capable of one thing (raw Q&A completion, with the right prompt shape) but isn't currently the right tool for either job in this pipeline - transcription isn't its job at all, and answering-with-full-context is qwen3's job here, already working. It stays pulled locally if a real use case for it shows up later - nothing about removing it deleted the model itself, just its one call site.
+  </div>
+</div>
+
+<script>
+const then = {
+  caption: 'v1: sarvam-1 answered directly - no knowledge base, no memory, no skills.',
+  boxes: [
+    {x: 15, y: 85, w: 90, r: 42, label: 'Voice\nnote', circle: true},
+    {x: 130, y: 60, w: 110, h: 70, label: 'Whisper', sub: '--language ta'},
+    {x: 300, y: 60, w: 140, h: 70, label: 'Sarvam-1', sub: 'few-shot Q&A\n+ stop sequence', highlight: true},
+    {x: 500, y: 60, w: 110, h: 70, label: 'Tamil\nreply', dashedOut: true},
+  ],
+  arrows: [[105,95,130,95],[240,95,300,95],[440,95,500,95]],
+  skipped: {x: 300, y: 150, w: 300, label: 'search_knowledge_base · analyse_this · memory — never reached'},
+};
+
+const now = {
+  caption: 'v2 (shipped): transcription feeds the real pipeline - full routing, then a language-aware final reply.',
+  boxes: [
+    {x: 15, y: 85, w: 90, r: 42, label: 'Voice\nnote', circle: true},
+    {x: 130, y: 60, w: 100, h: 70, label: 'Whisper', sub: '--language ta'},
+    {x: 255, y: 60, w: 150, h: 70, label: 'classify_skill', sub: 'route_to_agent'},
+    {x: 430, y: 60, w: 150, h: 70, label: 'search_knowledge_base', sub: 'analyse_this · memory', small: true},
+    {x: 605, y: 60, w: 155, h: 70, label: 'humanize()', sub: 'qwen3:8b-16k\nlanguage="Tamil"', highlight: true},
+  ],
+  arrows: [[105,95,130,95],[230,95,255,95],[405,95,430,95],[580,95,605,95]],
+};
+
+function renderDiagram(scene){
+  const svg = document.getElementById('diagram');
+  const ns = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+  const defs = document.createElementNS(ns, 'defs');
+  defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>';
+  svg.appendChild(defs);
+
+  const arrowG = document.createElementNS(ns, 'g');
+  arrowG.setAttribute('stroke', 'currentColor');
+  arrowG.setAttribute('stroke-width', '1.5');
+  scene.arrows.forEach(([x1,y1,x2,y2]) => {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    line.setAttribute('marker-end', 'url(#arrow)');
+    arrowG.appendChild(line);
+  });
+  svg.appendChild(arrowG);
+
+  scene.boxes.forEach(b => {
+    const g = document.createElementNS(ns, 'g');
+    if (b.circle) {
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', b.x + b.r); c.setAttribute('cy', b.y + 10); c.setAttribute('r', b.r);
+      c.setAttribute('fill', 'none'); c.setAttribute('stroke', 'currentColor'); c.setAttribute('stroke-width', '1.5');
+      g.appendChild(c);
+      const lines = b.label.split('\n');
+      lines.forEach((ln, i) => {
+        const t = document.createElementNS(ns, 'text');
+        t.setAttribute('x', b.x + b.r); t.setAttribute('y', b.y + 5 + i*13);
+        t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-size', '11');
+        t.textContent = ln;
+        g.appendChild(t);
+      });
+    } else {
+      const r = document.createElementNS(ns, 'rect');
+      r.setAttribute('x', b.x); r.setAttribute('y', b.y);
+      r.setAttribute('width', b.w); r.setAttribute('height', b.h);
+      r.setAttribute('rx', 8);
+      r.setAttribute('fill', b.highlight ? 'var(--accent-soft)' : 'none');
+      r.setAttribute('stroke', b.highlight ? 'var(--accent)' : 'currentColor');
+      r.setAttribute('stroke-width', b.highlight ? 2 : 1.5);
+      if (b.dashedOut) r.setAttribute('stroke-dasharray', '4 3');
+      g.appendChild(r);
+      const cx = b.x + b.w/2;
+      const t1 = document.createElementNS(ns, 'text');
+      t1.setAttribute('x', cx); t1.setAttribute('y', b.y + (b.sub ? 27 : 39));
+      t1.setAttribute('text-anchor', 'middle'); t1.setAttribute('font-size', b.small ? '9.5' : '11');
+      t1.setAttribute('font-weight', '700');
+      t1.textContent = b.label;
+      g.appendChild(t1);
+      if (b.sub) {
+        b.sub.split('\n').forEach((ln, i) => {
+          const t2 = document.createElementNS(ns, 'text');
+          t2.setAttribute('x', cx); t2.setAttribute('y', b.y + 43 + i*12);
+          t2.setAttribute('text-anchor', 'middle'); t2.setAttribute('font-size', '9');
+          t2.setAttribute('opacity', '0.75');
+          t2.textContent = ln;
+          g.appendChild(t2);
+        });
+      }
+    }
+    svg.appendChild(g);
+  });
+
+  if (scene.skipped) {
+    const s = scene.skipped;
+    const r = document.createElementNS(ns, 'rect');
+    r.setAttribute('x', s.x - s.w/2); r.setAttribute('y', s.y);
+    r.setAttribute('width', s.w); r.setAttribute('height', 40); r.setAttribute('rx', 8);
+    r.setAttribute('fill', 'var(--gone-soft, none)'); r.setAttribute('fill-opacity', '0.5');
+    r.setAttribute('stroke', 'var(--gone)'); r.setAttribute('stroke-width', '1.5'); r.setAttribute('stroke-dasharray', '3 3');
+    svg.appendChild(r);
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', s.x); t.setAttribute('y', s.y + 24);
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-size', '10'); t.setAttribute('fill', 'var(--gone)');
+    t.textContent = s.label;
+    svg.appendChild(t);
+  }
+
+  document.getElementById('caption').textContent = scene.caption;
+}
+
+document.getElementById('btn-then').addEventListener('click', function(){
+  this.classList.add('active');
+  document.getElementById('btn-now').classList.remove('active');
+  renderDiagram(then);
+});
+document.getElementById('btn-now').addEventListener('click', function(){
+  this.classList.add('active');
+  document.getElementById('btn-then').classList.remove('active');
+  renderDiagram(now);
+});
+renderDiagram(then);
+</script>

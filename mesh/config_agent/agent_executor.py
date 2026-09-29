@@ -26,6 +26,8 @@ from mesh.config_agent.skills import (
     deactivate_vertical,
     get_active_vertical,
     get_all_configs,
+    list_customer_needs,
+    message_customer,
     onboard_mcp_server,
     query_config,
     register_workflow,
@@ -78,6 +80,16 @@ class RegisterWorkflowParams(BaseModel):
     description: str = Field(description='A short plain-language description of what this workflow does and when to use it, e.g. "Place a food order and get a confirmation ID and ETA".')
 
 
+class MessageCustomerParams(BaseModel):
+    phone_number: str = Field(description="The customer's phone number exactly as given (digits, spaces, country code, '+' - whatever form the caller used). Do not invent or reformat it.")
+    message: str = Field(description='The exact message to send, as close to the caller\'s own wording as possible - do not paraphrase, shorten, or add anything the caller did not say.')
+
+
+class ListCustomerNeedsParams(BaseModel):
+    phone_number: Optional[str] = Field(default=None, description="The customer's phone number, if the caller named one - leave unset to cover every customer.")
+    date: Optional[str] = Field(default=None, description="A specific day to look at, as 'YYYY-MM-DD' - leave unset to cover every day on file.")
+
+
 EXTRACTION_SCHEMAS = {
     'query_config': QueryConfigParams,
     'update_config': UpdateConfigParams,
@@ -86,6 +98,8 @@ EXTRACTION_SCHEMAS = {
     'get_active_vertical': NoParams,
     'update_customer_record': UpdateCustomerRecordParams,
     'register_workflow': RegisterWorkflowParams,
+    'message_customer': MessageCustomerParams,
+    'list_customer_needs': ListCustomerNeedsParams,
 }
 
 # get_all_configs/update_stage_config/apply_vertical_spec: DataPart-only,
@@ -108,6 +122,8 @@ SKILL_HANDLERS = {
     'apply_vertical_spec': apply_vertical_spec.run,
     'update_customer_record': update_customer_record.run,
     'register_workflow': register_workflow.run,
+    'message_customer': message_customer.run,
+    'list_customer_needs': list_customer_needs.run,
 }
 
 
@@ -159,14 +175,13 @@ class ConfigAgentExecutor(AgentExecutor):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
 
-        # Scoped to these two skills, not every handler - update_customer_record.run()
-        # and register_workflow.run() are the only ones that accept vertical_id, and
-        # setting it unconditionally on `params` would raise a TypeError for every
-        # other skill's own handler. vertical_id itself comes from
-        # rules_engine.check()'s phrase-registry resolution (mesh/orchestrator/
-        # rules_engine.py), carried in the token's claims the same way analysis's
-        # own owner-bypass reads it.
-        if skill_id in ('update_customer_record', 'register_workflow'):
+        # Scoped to these three skills, not every handler - the others don't
+        # accept vertical_id, and setting it unconditionally on `params`
+        # would raise a TypeError for every other skill's own handler.
+        # vertical_id itself comes from rules_engine.check()'s phrase-registry
+        # resolution (mesh/orchestrator/rules_engine.py), carried in the token's
+        # claims the same way analysis's own owner-bypass reads it.
+        if skill_id in ('update_customer_record', 'register_workflow', 'message_customer', 'list_customer_needs'):
             params.setdefault('vertical_id', (claims or {}).get('vertical_id'))
 
         try:

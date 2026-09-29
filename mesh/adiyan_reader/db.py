@@ -38,6 +38,7 @@ MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
 JOBS_COLLECTION = 'adiyan_reader_jobs'
 QUESTIONS_COLLECTION = 'adiyan_reader_questions'
+EVAL_RESULTS_COLLECTION = 'adiyan_reader_eval_results'
 
 _client: Optional[MongoClient] = None
 
@@ -82,6 +83,8 @@ def create_reading_job(
         'voice': voice,
         'current_page': 0,
         'active': True,
+        'questions_enabled': True,
+        'speech_rate': 1.0,
         'last_delivered_at': None,
         'created_at': datetime.now(timezone.utc).isoformat(),
     })
@@ -119,6 +122,54 @@ def get_active_reading_jobs_by_phone(conn: Database, phone_number: str) -> List[
     return [_doc_to_job(doc) for doc in cursor]
 
 
+# How long a processing lock is honored before being treated as abandoned
+# (a crashed run that never released it) - long enough to cover even a slow
+# TTS synthesis + comprehension-question generation, short enough that a
+# genuine crash doesn't wedge a reading job's "read next page" indefinitely.
+_PROCESSING_LOCK_TTL_SECONDS = 300
+
+
+def try_acquire_reading_lock(conn: Database, job_id: str) -> bool:
+    """Atomically claims the right to process this job's next page right
+    now - True if acquired, False if another read is already in flight (or
+    started recently and hasn't released yet) for the same job.
+
+    Confirmed live: a customer sending "read next page" four times in
+    quick succession (four nearly-simultaneous webhook deliveries, all
+    landing before the first one's TTS synthesis had finished) each read
+    the same stale current_page and sent the exact same page number twice
+    over WhatsApp - db.advance_page() doesn't run until AFTER synthesis and
+    sending complete, which easily takes longer than the gap between two
+    impatient follow-up messages. This lock exists specifically to make
+    every request after the first WAIT (return a "still working on it"
+    status) instead of silently duplicating that work.
+
+    Self-healing via processing_since's own TTL, not a separate release-on-
+    crash mechanism: a lock older than _PROCESSING_LOCK_TTL_SECONDS is
+    treated as abandoned and can be reacquired, so a process that crashed
+    mid-read doesn't wedge that reading job's "next page" forever."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    stale_before = now_ts - _PROCESSING_LOCK_TTL_SECONDS
+    result = conn[JOBS_COLLECTION].find_one_and_update(
+        {
+            '_id': job_id,
+            '$or': [
+                {'processing_since': {'$exists': False}},
+                {'processing_since': None},
+                {'processing_since': {'$lt': stale_before}},
+            ],
+        },
+        {'$set': {'processing_since': now_ts}},
+    )
+    return result is not None
+
+
+def release_reading_lock(conn: Database, job_id: str) -> None:
+    """Always called from a finally block by whoever acquired the lock -
+    see read_next_page.py's and read_range.py's own run() functions."""
+    conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'processing_since': None}})
+
+
 def advance_page(conn: Database, job_id: str, new_page: int) -> None:
     conn[JOBS_COLLECTION].update_one(
         {'_id': job_id},
@@ -134,11 +185,48 @@ def set_reading_job_voice(conn: Database, job_id: str, voice: str) -> None:
     conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'voice': voice}})
 
 
+def set_reading_job_speech_rate(conn: Database, job_id: str, rate: float) -> None:
+    """A persistent per-job playback-speed multiplier (1.0 = normal), not a
+    one-off - once a customer asks to slow down, every future page (nightly
+    and on-demand alike) keeps that pace until they change it back. Applied
+    at read_next_page.py's own tts.synthesize() call via job['speech_rate'],
+    the same "resolved live from the job document, never frozen at request
+    time" pattern set_reading_job_voice() already uses."""
+    conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'speech_rate': rate}})
+
+
 def deactivate_reading_job(conn: Database, job_id: str) -> None:
     """The book has run out of pages - stop re-registering the nightly
     trigger, but leave the document (and its question history) on file
-    rather than deleting it."""
+    rather than deleting it. Also reused as-is by stop_reading.py for a
+    customer-requested stop: tonight's already-registered one-shot cron
+    trigger still fires once (cron_trigger has no cancel-in-place), but
+    read_next_page.run() checks job['active'] before sending anything and
+    returns 'inactive' with neither audio nor a re-registration - so the
+    stop takes effect from the very next scheduled fire, not immediately
+    mid-flight, with no separate trigger-removal step needed."""
     conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'active': False}})
+
+
+def reset_reading_job_page(conn: Database, job_id: str) -> None:
+    """Puts a job back to current_page=0 (the same starting state
+    create_reading_job() gives a brand-new job) so the next read - on
+    demand or nightly - delivers page 1 again. restart_reading.py's own
+    docstring covers the real gap this closes. Doesn't touch active,
+    voice, or questions_enabled - a restart is "read this again from the
+    start," not a new job with a blank slate on every other setting."""
+    conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'current_page': 0}})
+
+
+def set_questions_enabled(conn: Database, job_id: str, enabled: bool) -> None:
+    """Independent of `active` - lets a customer keep the nightly narration
+    going while opting out of just the next-morning comprehension questions
+    (stop_reading.py's questions_only=True path). Checked by
+    read_next_page.py's own _schedule_quiz_and_next_reading() right before it
+    would otherwise generate and schedule that page's questions; the nightly
+    re-registration itself never looks at this flag, so narration is
+    unaffected either way."""
+    conn[JOBS_COLLECTION].update_one({'_id': job_id}, {'$set': {'questions_enabled': enabled}})
 
 
 def add_questions(
@@ -173,3 +261,19 @@ def mark_questions_sent(conn: Database, reading_job_id: str, page_number: int) -
         {'reading_job_id': reading_job_id, 'page_number': page_number},
         {'$set': {'sent': True}},
     )
+
+
+def record_eval_result(
+    conn: Database, reading_job_id: str, source_filename: str, page_number: int,
+    match_percentage: int, threshold: int, passed: bool, transcript: str,
+) -> None:
+    """One row per page's post-delivery audio-quality eval - see
+    eval_quality.py's own module docstring for the transcribe-and-compare
+    loop that produces these. Written after the fact, purely for
+    monitoring/trend visibility - nothing reads this back to affect a live
+    reading job."""
+    conn[EVAL_RESULTS_COLLECTION].insert_one({
+        '_id': str(uuid.uuid4()), 'reading_job_id': reading_job_id, 'source_filename': source_filename,
+        'page_number': page_number, 'match_percentage': match_percentage, 'threshold': threshold,
+        'passed': passed, 'transcript': transcript, 'created_at': datetime.now(timezone.utc).isoformat(),
+    })

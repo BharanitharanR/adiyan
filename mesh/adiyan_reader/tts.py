@@ -36,6 +36,7 @@ confirmed live: ffmpeg transcodes the WAV losslessly-enough for speech in
 under 100ms, negligible next to the actual TTS generation time.
 """
 import asyncio
+import json
 import logging
 import re
 import subprocess
@@ -43,6 +44,8 @@ import tempfile
 import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.lib import config_sdk
@@ -66,6 +69,106 @@ SAMPLE_RATE = 24000
 
 VOICES = ('tara', 'leah', 'jess', 'leo', 'dan', 'mia', 'zac', 'zoe')
 DEFAULT_VOICE = 'tara'
+
+# A short, fixed demo line every voice sample uses - original text, not book
+# content, so a sample never accidentally reads out someone's actual page.
+# Generated once per voice, then cached on disk (get_or_create_voice_sample
+# below): the voice models and this line are both static, so regenerating
+# per customer request would be pure waste of an Ollama round-trip.
+VOICE_SAMPLE_TEXT = "Hello, I'm one of the voices here at Audio Book Junkie. I'll be reading your books to you, one page every night."
+_VOICE_SAMPLE_CACHE_DIR = Path(__file__).parent / 'data' / 'voice_samples'
+
+
+async def get_or_create_voice_sample(voice: str, cfg: Dict[str, Any]) -> bytes:
+    """Opus/OGG bytes for `voice` speaking VOICE_SAMPLE_TEXT - read from
+    the on-disk cache if a previous request already generated it, otherwise
+    synthesized once and cached for every request after. voice_samples.py
+    is the only real caller today (see its own docstring)."""
+    _VOICE_SAMPLE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = _VOICE_SAMPLE_CACHE_DIR / f'{voice}.ogg'
+    if cache_path.exists():
+        return cache_path.read_bytes()
+    audio = await synthesize(VOICE_SAMPLE_TEXT, voice, cfg)
+    cache_path.write_bytes(audio)
+    return audio
+
+# A local Voicebox instance (github.com/jamiepine/voicebox), run natively as
+# its own mesh component - not Docker, see mesh/start_all.sh's own voicebox
+# entry - offering an alternative synthesize path via its Chatterbox Turbo
+# engine, chosen (over Voicebox's other 6 engines) specifically because it's
+# the only one that actually performs inline paralinguistic tags rather than
+# reading them as literal text, matching what add_emotion_tags() below
+# already does for Orpheus. Selected via the 'engine' key in the
+# synthesize_speech stage config (config_sdk-driven, same as every other
+# knob here) - 'orpheus' (default, the path below this comment) or
+# 'chatterbox_turbo'. Both paths coexist deliberately: switching back is a
+# config change, not a code revert.
+VOICEBOX_URL = 'http://127.0.0.1:17493'
+_VOICEBOX_POLL_INTERVAL_SECONDS = 1.0
+_VOICEBOX_POLL_TIMEOUT_SECONDS = 180.0
+
+# Chatterbox Turbo's own recognized paralinguistic tags (square brackets) -
+# a different vocabulary and syntax than the <angle-bracket> tokens
+# add_emotion_tags() below was originally tuned to produce for Orpheus.
+# Translated here rather than re-tuning that prompt: the underlying model's
+# actual judgment call ("does this sentence call for a tag") is identical
+# either way, only the surface syntax the target engine expects differs.
+# 'yawn' has no Chatterbox Turbo equivalent - dropped rather than mapped to
+# a wrong-sounding substitute, the same "never invent" rule the rest of
+# this pipeline already follows for content, applied here to delivery.
+_ORPHEUS_TO_CHATTERBOX_TAGS = {
+    'laugh': 'laugh', 'chuckle': 'chuckle', 'sigh': 'sigh', 'gasp': 'gasp',
+    'cough': 'cough', 'sniffle': 'sniff', 'groan': 'groan',
+}
+_ORPHEUS_TAG_TRANSLATE_RE = re.compile(r'<(laugh|chuckle|sigh|gasp|yawn|cough|sniffle|groan)>')
+
+
+def _translate_tags_for_chatterbox(text: str) -> str:
+    def _sub(match: 're.Match[str]') -> str:
+        mapped = _ORPHEUS_TO_CHATTERBOX_TAGS.get(match.group(1))
+        return f'[{mapped}]' if mapped else ''
+    return _ORPHEUS_TAG_TRANSLATE_RE.sub(_sub, text)
+
+
+async def _synthesize_via_voicebox(text: str, profile_id: str, cfg: Dict[str, Any]) -> bytes:
+    """Text -> WAV bytes via a local Voicebox instance's Chatterbox Turbo
+    engine. Voicebox does its own sentence-aware chunking and crossfading
+    internally (its /generate 'max_chunk_chars'/'crossfade_ms' params,
+    defaults used here) - a whole page goes in as one string, unlike the
+    Orpheus path below, which has to hand-chunk into short pieces itself
+    (see _split_into_speech_chunks()'s own docstring for why THAT model
+    specifically needs it)."""
+    voicebox_url = cfg.get('voicebox_url') or VOICEBOX_URL
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(f'{voicebox_url}/generate', json={
+            'profile_id': profile_id, 'text': text, 'engine': 'chatterbox_turbo',
+        })
+        response.raise_for_status()
+        generation_id = response.json()['id']
+
+        elapsed = 0.0
+        payload: Dict[str, Any] = {}
+        while elapsed < _VOICEBOX_POLL_TIMEOUT_SECONDS:
+            status_response = await client.get(f'{voicebox_url}/generate/{generation_id}/status')
+            status_response.raise_for_status()
+            # Voicebox streams status as SSE ("data: {...}") even on a plain
+            # GET - the last line is always the most current state.
+            lines = [ln for ln in status_response.text.strip().split('\n') if ln.startswith('data: ')]
+            if lines:
+                payload = json.loads(lines[-1][len('data: '):])
+            status = payload.get('status')
+            if status == 'completed':
+                break
+            if status == 'failed':
+                raise RuntimeError(f'Voicebox generation failed: {payload.get("error")}')
+            await asyncio.sleep(_VOICEBOX_POLL_INTERVAL_SECONDS)
+            elapsed += _VOICEBOX_POLL_INTERVAL_SECONDS
+        else:
+            raise RuntimeError(f'Voicebox generation {generation_id!r} timed out')
+
+        audio_response = await client.get(f'{voicebox_url}/audio/{generation_id}')
+        audio_response.raise_for_status()
+        return audio_response.content
 
 _snac_model = None
 _snac_device: Optional[str] = None
@@ -102,12 +205,36 @@ def clean_for_speech(text: str) -> str:
     read incompletely and inconsistently across repeated runs - stripped
     to plain prose here before it ever reaches Orpheus."""
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)  # <!-- image --> and similar
+    # [Illustration: FIG. 18.--Overcast joint] and similar - Docling's other
+    # image-placeholder shape, confirmed live on an image-heavy technical
+    # manual (Elements of Plumbing, 37 of its 105 pages carry this markup):
+    # unlike "<!-- image -->", these captions have real sentence-ending
+    # periods inside them ("FIG. 18."), so they weren't just read as
+    # literal bracket/colon noise - they also skewed looks_like_prose()'s
+    # own punctuation-ratio heuristic toward "this is prose" on pages that
+    # are actually just a run of figure captions with nothing narratable in
+    # them at all.
+    text = re.sub(r'\[Illustration:[^\]]*\]', '', text)
     text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)  # markdown headings
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # **bold**
     text = re.sub(r'\*(.+?)\*', r'\1', text)  # *italic*
+    # \_Ninth\_, and similar - Docling escapes underscores it uses for
+    # markdown emphasis (backslash-underscore, not the bare *asterisk*
+    # form the two lines above already handle), confirmed live on the same
+    # image-heavy manual as the [Illustration: ...] fix above: read
+    # verbatim, "\_Ninth\_," comes out as literal backslash/underscore
+    # noise around the word instead of just "Ninth,". Escaped emphasis
+    # first (paired \_..\_), then any leftover lone \_ that wasn't part of
+    # a pair (an unmatched escape at a fragment boundary, same reasoning
+    # _split_trailing_fragment() already documents for mid-sentence cuts).
+    text = re.sub(r'\\_(.+?)\\_', r'\1', text)
+    text = re.sub(r'\\_', '', text)
     text = re.sub(r'\n{3,}', '\n\n', text)  # collapse excess blank lines
     text = re.sub(r'[ \t]{2,}', ' ', text)  # collapse OCR'd multi-space/tab runs between words
     return text.strip()
+
+
+_ROMAN_NUMERAL_MARKER_RE = re.compile(r'(?<!\w)[IVXLCDM]{1,4}\.\s')
 
 
 def looks_like_prose(text: str) -> bool:
@@ -125,9 +252,29 @@ def looks_like_prose(text: str) -> bool:
     _split_into_speech_chunks() falls back to for punctuation-less runs
     (see that function's own docstring on why that fallback exists at
     all - it keeps a heading page from becoming one giant unsplit chunk,
-    but doesn't make heading fragments sound like real speech)."""
+    but doesn't make heading fragments sound like real speech).
+
+    A dedicated check for roman-numeral list markers ("CHAPTER I. ... II.
+    The Use and Care of the Soldering Iron... III. ...") runs BEFORE the
+    ratio heuristic below - confirmed live as a real blind spot the ratio
+    check alone can't catch: a chapter title is itself a legitimate
+    multi-word phrase, so a word-count floor doesn't distinguish "II. The
+    Use and Care of the Soldering Iron" (a table-of-contents line) from an
+    actual sentence of similar length - the period after "II." isn't a
+    real sentence boundary, it's an enumeration marker, and the naive split
+    lands on one at the end of nearly every piece by construction, scoring
+    ~100% "real sentence chars" despite being pure listing structure. A
+    real page of prose essentially never contains 3+ bare roman numerals
+    each followed by a period - checked directly against two genuine prose
+    pages (zero matches each) and the actual table-of-contents page this
+    was found on (17 matches) - so a small count threshold cleanly
+    separates the two without touching the ratio check the ORIGINAL bad
+    case (heading fragments jammed together with no periods at all, no
+    roman numerals in sight) still fails on its own."""
     cleaned = clean_for_speech(text)
     if not cleaned:
+        return False
+    if len(_ROMAN_NUMERAL_MARKER_RE.findall(cleaned)) >= 3:
         return False
     raw_sentences = re.split(r'(?<=[.!?])\s+', cleaned.replace('\n', ' ').strip())
     real_sentence_chars = sum(len(s) for s in raw_sentences if re.search(r'[.!?]\s*$', s.strip()))
@@ -135,15 +282,27 @@ def looks_like_prose(text: str) -> bool:
 
 
 async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
-    """Only called for a page looks_like_prose() already said isn't real
-    prose (a heading/table-of-contents page) - normal prose pages never pay
-    this extra Ollama round-trip, they go straight from clean_for_speech()
-    to chunking/Orpheus like before. Uses the reasoning model this agent
-    already calls for comprehension-question generation (qwen3:8b-16k, a
-    different model from Orpheus/SNAC - this is an ordinary chat completion,
-    not audio), not another regex pass - clean_for_speech() only strips
-    markdown syntax, it has no way to turn "Past Pain: Dissolving the
-    Pain-Body ... The Origin of Fear" into an actual sentence.
+    """Called for EVERY page, not gated behind a pre-check - the model
+    itself now decides whether this page is real prose (told to return it
+    completely unchanged) or a heading/table-of-contents page (told to
+    describe it in 1-3 short spoken sentences instead). Confirmed live this
+    session as a genuine, repeated blind spot in the regex-based
+    looks_like_prose() heuristic this replaced: first a heading-jumble page
+    with no periods at all, then - after that was patched - a table-of-
+    contents page numbered with roman numerals ("CHAPTER I. ... II. The Use
+    and Care of..."), where a chapter title being itself a legitimate
+    multi-word phrase defeated a word-count fix too. Two different regex
+    patches for two different failure shapes in one session is the pattern
+    this function exists to stop repeating - "is this real prose" is
+    exactly the kind of judgment call a model handles better than pattern-
+    matching. Every page now pays one Ollama round-trip it didn't before;
+    accepted deliberately in exchange for not re-litigating this heuristic
+    a third time for whatever the next book's own formatting quirk turns
+    out to be.
+
+    Uses the reasoning model this agent already calls for comprehension-
+    question generation (qwen3:8b-16k, a different model from Orpheus/SNAC -
+    this is an ordinary chat completion, not audio).
 
     Strictly grounded, same "never invent" rule this whole mesh already
     follows for anything read back to a user (mesh/scheduler/skills/
@@ -152,7 +311,7 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
     explicitly to describe, not embellish, and to say plainly when a page
     is just a table of contents rather than trying to narrate every
     heading. Falls back to clean_for_speech(text) unchanged on any failure
-    - a Table-of-contents page read awkwardly is still better than no page
+    - a page read exactly as it was ingested is still better than no page
     at all."""
     cleaned = clean_for_speech(text)
     try:
@@ -167,6 +326,12 @@ async def rewrite_for_speech(text: str, cfg: Dict[str, Any]) -> str:
         rewritten = (await _agent.ask(
             prompt, stage='rewrite_for_speech', model=cfg['model'], temperature=cfg.get('temperature', 0.3),
         ) or '').strip()
+        # Confirmed live: on the "return it unchanged" path, the model
+        # sometimes echoes the prompt's own \"\"\"{cleaned}\"\"\" quoting
+        # back around its answer instead of just returning the bare text -
+        # harmless to the actual words, but those literal triple-quote
+        # marks would otherwise get narrated too.
+        rewritten = re.sub(r'^"""|"""$', '', rewritten).strip()
         return rewritten or cleaned
     except Exception as e:
         logger.warning(f'rewrite_for_speech failed, falling back to raw cleaned text: {e}')
@@ -541,18 +706,29 @@ def _write_wav(pcm_segments: List[bytes]) -> bytes:
     return wav_bytes
 
 
-def _wav_to_opus_ogg(wav_bytes: bytes) -> bytes:
+def _wav_to_opus_ogg(wav_bytes: bytes, rate: float = 1.0) -> bytes:
     """ffmpeg transcode, WAV -> Opus/OGG - see this module's own docstring
-    for why WhatsApp's voice-note (PTT) UI needs this, not raw WAV."""
+    for why WhatsApp's voice-note (PTT) UI needs this, not raw WAV.
+
+    rate: playback-speed multiplier applied via ffmpeg's own atempo filter
+    (1.0 = unchanged, 0.85 = noticeably slower without a pitch shift, unlike
+    naively resampling). Engine-agnostic on purpose - neither Orpheus nor
+    Chatterbox Turbo exposes a tempo knob of its own, so this is the one
+    place "read it slower" can actually apply regardless of which engine
+    rendered the audio. atempo only accepts 0.5-2.0 in a single filter
+    instance; every real request from a customer ("slower"/"a bit slower")
+    stays well inside that range, so chaining multiple atempo filters for
+    a more extreme rate was never needed."""
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as wav_f:
         wav_f.write(wav_bytes)
         wav_path = wav_f.name
     ogg_path = wav_path.replace('.wav', '.ogg')
     try:
-        subprocess.run(
-            ['ffmpeg', '-y', '-i', wav_path, '-c:a', 'libopus', '-b:a', '32k', ogg_path],
-            check=True, capture_output=True, timeout=30,
-        )
+        cmd = ['ffmpeg', '-y', '-i', wav_path]
+        if rate != 1.0:
+            cmd += ['-filter:a', f'atempo={rate}']
+        cmd += ['-c:a', 'libopus', '-b:a', '32k', ogg_path]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
         return Path(ogg_path).read_bytes()
     finally:
         Path(wav_path).unlink(missing_ok=True)
@@ -561,6 +737,7 @@ def _wav_to_opus_ogg(wav_bytes: bytes) -> bytes:
 
 async def synthesize(
     text: str, voice: str, cfg: Dict[str, Any], emotion_cfg: Optional[Dict[str, Any]] = None,
+    rate: float = 1.0,
 ) -> bytes:
     """Text -> Opus/OGG audio bytes, ready for OpenWAService.send_voice().
 
@@ -596,7 +773,28 @@ async def synthesize(
     Raises if Orpheus produced no usable audio at all across every chunk
     (e.g. Ollama unreachable, or the model genuinely emitted nothing) -
     callers decide what that means for their own domain, same contract
-    every other tool call in this mesh follows."""
+    every other tool call in this mesh follows.
+
+    cfg['engine'] == 'chatterbox_turbo' takes a completely different path
+    (this module's own _synthesize_via_voicebox()) instead of everything
+    below this docstring - see VOICEBOX_URL's own comment for why this
+    exists as a config-selected alternative rather than a wholesale
+    replacement. `voice` is ignored on that path (cfg['voicebox_profile_id']
+    already carries a specific cloned voice identity), and emotion tagging
+    still runs first, exactly as it does for Orpheus - only the tag
+    SYNTAX handed to the engine differs (_translate_tags_for_chatterbox)."""
+    if cfg.get('engine') == 'chatterbox_turbo':
+        profile_id = cfg.get('voicebox_profile_id')
+        if not profile_id:
+            raise RuntimeError("engine='chatterbox_turbo' but no voicebox_profile_id configured.")
+        text = clean_for_speech(text)
+        chunks = _split_into_speech_chunks(text)
+        if emotion_cfg is not None:
+            chunks = await _tag_chunks_windowed(chunks, emotion_cfg)
+        tagged_text = _translate_tags_for_chatterbox(' '.join(chunks))
+        wav_bytes = await _synthesize_via_voicebox(tagged_text, profile_id, cfg)
+        return await asyncio.to_thread(_wav_to_opus_ogg, wav_bytes, rate)
+
     if voice not in VOICES:
         logger.warning(f"Unknown voice {voice!r}, falling back to {DEFAULT_VOICE!r}")
         voice = DEFAULT_VOICE
@@ -637,4 +835,4 @@ async def synthesize(
         raise RuntimeError('Orpheus produced no audio for this text - check Ollama and the model name.')
 
     wav_bytes = await asyncio.to_thread(_write_wav, all_segments)
-    return await asyncio.to_thread(_wav_to_opus_ogg, wav_bytes)
+    return await asyncio.to_thread(_wav_to_opus_ogg, wav_bytes, rate)

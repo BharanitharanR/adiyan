@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adiyan Instagram Carousels</title>
+<style>
+@font-face{
+  font-family:'Playfair Display';
+  font-weight:600 700;
+  src: local('Playfair Display');
+}
+:root{
+  --paper:#ECE2CA;
+  --paper-2:#E0D2AC;
+  --ink:#241F14;
+  --ink-soft:rgba(36,31,20,.68);
+  --ink-faint:rgba(36,31,20,.42);
+  --accent:#8A6B32;
+  --line:rgba(36,31,20,.18);
+}
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Mulish',-apple-system,sans-serif;background:#555;}
+.card{
+  width:1080px; height:1080px;
+  background:var(--paper);
+  position:relative;
+  overflow:hidden;
+  padding:96px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.card + .card{ margin-top:24px; }
+.eyebrow{
+  font-size:28px; text-transform:uppercase; letter-spacing:.14em;
+  color:var(--accent); font-weight:700; margin:0 0 28px;
+}
+.headline{
+  font-family:'Playfair Display', Georgia, serif;
+  font-weight:700; font-size:76px; line-height:1.12; color:var(--ink);
+  margin:0; letter-spacing:-.01em;
+}
+.headline em{ color:var(--accent); font-style:italic; }
+.body{
+  font-size:36px; line-height:1.5; color:var(--ink-soft);
+  margin:36px 0 0; max-width:820px;
+}
+.footer-brand{
+  position:absolute; bottom:64px; left:96px; right:96px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:26px; color:var(--ink-faint); letter-spacing:.04em;
+}
+.footer-brand b{ color:var(--ink); font-weight:800; }
+.pagenum{
+  position:absolute; top:64px; right:96px;
+  font-size:26px; color:var(--ink-faint); font-weight:700;
+}
+.tag-row{ margin-top:44px; display:flex; flex-wrap:wrap; gap:16px; }
+.chip{
+  font-size:26px; padding:12px 24px; border-radius:999px;
+  border:1.5px solid var(--line); color:var(--ink-soft); font-weight:600;
+}
+.bubble{
+  border-radius:22px; padding:28px 34px; font-size:32px; line-height:1.45;
+  max-width:760px; margin-top:24px;
+}
+.bubble--out{ background:var(--ink); color:var(--paper); margin-left:auto; }
+.bubble--in{ background:var(--paper-2); color:var(--ink); }
+.hook{
+  font-family:'Playfair Display', Georgia, serif;
+  font-weight:700; font-size:88px; line-height:1.1; color:var(--ink);
+}
+.hook .num{ color:var(--accent); }
+.mono-line{
+  font-family:ui-monospace, 'SF Mono', monospace; font-size:30px;
+  background:var(--paper-2); border-radius:14px; padding:22px 28px;
+  color:var(--ink); margin-top:32px; display:inline-block;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ CAROUSEL A: PITCH ============ -->
+
+<!-- A1 -->
+<div class="card" id="A1">
+  <p class="eyebrow">The platform</p>
+  <h1 class="headline">Meet <em>Adiyan.</em></h1>
+  <p class="body">அடியான், "your humble servant." A self-hosted AI agent harness that lives inside WhatsApp, running entirely on your own machine. Not rented from someone else's cloud.</p>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">1 / 5</div>
+</div>
+
+<!-- A2 -->
+<div class="card" id="A2">
+  <p class="eyebrow">The idea</p>
+  <h1 class="headline">Underneath, it's <em>a mesh, not one bot.</em></h1>
+  <p class="body">Modular by design. Each agent does one job well, an orchestrator routes every conversation to whichever one actually knows how to help. Memory on two timescales: the recent thread, and a longer-term knowledge base it can search and cite back from.</p>
+  <div class="tag-row">
+    <span class="chip">Self-hosted, not SaaS</span>
+    <span class="chip">Modular by design</span>
+    <span class="chip">Short + long-term memory</span>
+  </div>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">2 / 5</div>
+</div>
+
+<!-- A3 -->
+<div class="card" id="A3">
+  <p class="eyebrow">Agent offerings</p>
+  <h1 class="headline">Meet AdiyanReader. <em>One agent, built on this harness.</em></h1>
+  <p class="body">Hand it a book. Every night, the next page arrives as a real synthesized voice note. The next morning, a comprehension question on what was actually read. Nothing special-cased, just an ordinary agent in the same mesh.</p>
+  <div class="bubble bubble--in">🎙️ Page 14 of "The Almanack of Naval Ravikant"</div>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">3 / 5</div>
+</div>
+
+<!-- A4 -->
+<div class="card" id="A4">
+  <p class="eyebrow">Grounded, not guessing</p>
+  <h1 class="headline">If it can't find the answer, <em>it says so.</em></h1>
+  <p class="body">A specific detail is only ever answered from something a tool actually retrieved. Never invented to sound complete. The same discipline as any real retrieval-augmented system, held to even when honesty is less satisfying than a guess.</p>
+  <div class="bubble bubble--out">What does the report say about the Q3 numbers?</div>
+  <div class="bubble bubble--in">I don't have anything on that. I'm not going to guess at figures I can't verify.</div>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">4 / 5</div>
+</div>
+
+<!-- A5 -->
+<div class="card" id="A5">
+  <p class="eyebrow">Your turn</p>
+  <h1 class="headline">Meet Adiyan. <em>See what comes back.</em></h1>
+  <p class="body" style="font-style:italic;">"Register me to make my life better"</p>
+  <p class="body" style="margin-top:8px;">Self-hosted, private, and ready when you are. One line in Terminal to install.</p>
+  <div class="mono-line">curl -fsSL .../adiyan/main/get.sh | bash</div>
+  <div class="footer-brand"><b>Adiyan</b><span>bharanitharanr.github.io/adiyan</span></div>
+  <div class="pagenum">5 / 5</div>
+</div>
+
+<!-- ============ CAROUSEL B: BUILD IN PUBLIC ============ -->
+
+<!-- B1 -->
+<div class="card" id="B1">
+  <p class="eyebrow">Building in public</p>
+  <h1 class="hook">Tonight, <em style="color:var(--accent);font-style:italic;">Adiyan started spamming itself.</em></h1>
+  <p class="body">A real incident, from a few hours ago. Here's exactly what happened, and what we shipped because of it.</p>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">1 / 5</div>
+</div>
+
+<!-- B2 -->
+<div class="card" id="B2">
+  <p class="eyebrow">What we found</p>
+  <h1 class="headline">5 overlapping scheduled jobs. <em>One of them firing hourly.</em></h1>
+  <p class="body">A literal duplicate ("Journal" and "Journal Reminder," same job, twice), plus a "check in on patterns" job running every single hour with nothing real to report. Each one, when it had nothing to say, still tried to say something.</p>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">2 / 5</div>
+</div>
+
+<!-- B3 -->
+<div class="card" id="B3">
+  <p class="eyebrow">The actual bug</p>
+  <h1 class="headline">When a job has nothing to report, <em>it should say nothing.</em></h1>
+  <p class="body">Instead, the fallback prompt asked for "a warm reminder message" about a description with zero real content. The model reached for template phrasing, "Hi [Name]!", and never had a name to fill in. Every fallback message was a small hallucination in disguise.</p>
+  <div class="bubble bubble--in">Hi [Name]! Just a gentle nudge to check in... 😊</div>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">3 / 5</div>
+</div>
+
+<!-- B4 -->
+<div class="card" id="B4">
+  <p class="eyebrow">What shipped</p>
+  <h1 class="headline">Cut the noise. <em>Then fixed the root cause.</em></h1>
+  <p class="body">Deleted the duplicate, dropped the hourly job to daily, and found a second real bug along the way: a lookup function silently broken for anything but exact-schedule matches. Fixed and shipped. Now, if there's nothing real to say, the message just doesn't send.</p>
+  <div class="footer-brand"><b>Adiyan</b><span>Swipe →</span></div>
+  <div class="pagenum">4 / 5</div>
+</div>
+
+<!-- B5 -->
+<div class="card" id="B5">
+  <p class="eyebrow">The actual lesson</p>
+  <h1 class="headline">Silence is a valid answer. <em>Fake warmth isn't.</em></h1>
+  <p class="body">Whether it's a scheduled nudge or an answer to a real question, an AI that admits "nothing here" is more trustworthy than one that always has something to say. That's the standard we're building Adiyan to.</p>
+  <div class="footer-brand"><b>Adiyan</b><span>bharanitharanr.github.io/adiyan</span></div>
+  <div class="pagenum">5 / 5</div>
+</div>
+
+</body>
+</html>
