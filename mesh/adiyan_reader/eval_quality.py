@@ -41,43 +41,14 @@ _agent = AdiyanAgent(AGENT_ID)
 # collected before it finishes - see this module's own top docstring.
 _PENDING_EVALS: Set[Any] = set()
 
-# Voicebox's own /transcribe accepts exactly: base, small, medium, large,
-# turbo - confirmed live via its own 400 error message ("Invalid model
-# size 'whisper-turbo'. Must be one of: ...") after an initial guess at the
-# name was wrong. 'turbo' - ~8x faster than 'large' with minimal quality
-# loss per Voicebox's own docs - is the right default for something that
-# now runs on every single page.
-_TRANSCRIBE_TIMEOUT_SECONDS = 60.0
-_DEFAULT_STT_MODEL = 'turbo'
-
-# Confirmed live: the very first eval call after picking a Whisper model
-# Voicebox hasn't downloaded yet gets a 202 with {"downloading": true}, not
-# the transcription - a one-time cold start per model, same shape as this
-# mesh's own scale-to-zero wake-up waits elsewhere. Retried with a real
-# delay between attempts rather than failing that first page's eval
-# outright; a model already downloaded (every call after the first) never
-# takes this branch at all.
-_MODEL_DOWNLOAD_POLL_SECONDS = 15.0
-_MODEL_DOWNLOAD_MAX_ATTEMPTS = 20  # ~5 minutes ceiling for a first-time download
+# Speech-to-text now lives in mesh/lib/stt.py, shared with other agents and
+# plugins; these names stay so this module reads (and behaves) as before.
+from mesh.lib.stt import DEFAULT_STT_MODEL as _DEFAULT_STT_MODEL  # noqa: E402
 
 
 async def _transcribe(audio_bytes: bytes, stt_model: str, voicebox_url: str) -> str:
-    import asyncio
-
-    async with httpx.AsyncClient(timeout=_TRANSCRIBE_TIMEOUT_SECONDS) as client:
-        for attempt in range(_MODEL_DOWNLOAD_MAX_ATTEMPTS):
-            response = await client.post(
-                f'{voicebox_url}/transcribe',
-                files={'file': ('page.ogg', audio_bytes, 'audio/ogg')},
-                data={'model': stt_model},
-            )
-            if response.status_code == 202:
-                logger.info(f'Whisper model {stt_model!r} still downloading, waiting before retry (attempt {attempt + 1})')
-                await asyncio.sleep(_MODEL_DOWNLOAD_POLL_SECONDS)
-                continue
-            response.raise_for_status()
-            return response.json()['text']
-    raise RuntimeError(f'Whisper model {stt_model!r} never finished downloading within the retry window.')
+    from mesh.lib.stt import transcribe
+    return await transcribe(audio_bytes, stt_model, voicebox_url, filename='page.ogg', mimetype='audio/ogg')
 
 
 class _MatchScore(BaseModel):

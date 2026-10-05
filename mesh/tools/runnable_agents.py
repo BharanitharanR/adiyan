@@ -91,9 +91,19 @@ def _discover() -> list:
     return found
 
 
+def _discover_plugins() -> list:
+    """Installed plugins (mesh/lib/plugins.py), launched by module path; start_all.sh
+    puts the plugins folder on PYTHONPATH."""
+    try:
+        from mesh.lib import plugins
+        return [{'agent_id': p['id'], 'module': p['server_module'], 'port': p['port']} for p in plugins.installed()]
+    except Exception:
+        return []
+
+
 async def _main() -> None:
-    # Step 1: sweep the filesystem into run_the_agent (idempotent upsert).
-    for agent in _discover():
+    # Step 1: sweep the filesystem (mesh/ and the plugins folder) into run_the_agent (idempotent upsert).
+    for agent in _discover() + _discover_plugins():
         await config_sdk.register_runnable(agent['agent_id'], module=agent['module'], port=agent['port'])
 
     # Step 2: print every enabled row, in COMPONENTS format.

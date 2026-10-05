@@ -52,7 +52,17 @@ def _signing_key() -> str:
 
 
 def _load_config() -> Dict[str, Any]:
-    return json.loads(CONFIG_PATH.read_text())
+    """The core tiers, plus each installed plugin's own tier (mesh/lib/plugins.py).
+    A plugin can never replace a core tier: core names win, and plugins.validate()
+    already refuses a manifest that reuses one."""
+    config = json.loads(CONFIG_PATH.read_text())
+    try:
+        from mesh.lib import plugins
+        for name, rule in plugins.plugin_tiers().items():
+            config['tiers'].setdefault(name, rule)
+    except Exception:
+        pass  # a broken plugins folder must never break permission checks for core agents
+    return config
 
 
 def default_client_tier() -> str:

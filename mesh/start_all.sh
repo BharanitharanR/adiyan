@@ -93,6 +93,12 @@ LOG_DIR="$HOME/.Adiyan/logs"
 mkdir -p "$LOG_DIR"
 cd "$REPO_ROOT"
 
+# Installed plugins (mesh/lib/plugins.py, mesh/tools/plugin.py) are importable
+# packages under ~/.Adiyan/plugins, launched with `python -m <server_module>`.
+ADIYAN_PLUGINS_DIR="${ADIYAN_PLUGINS_DIR:-$HOME/.Adiyan/plugins}"
+export ADIYAN_PLUGINS_DIR
+export PYTHONPATH="$ADIYAN_PLUGINS_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 # Prefer install.sh's own venv over whatever bare python3/phoenix happen to
 # resolve to in the caller's shell - confirmed live to matter: on a fresh
 # terminal (no manual `source .venv/bin/activate` first), bare python3
