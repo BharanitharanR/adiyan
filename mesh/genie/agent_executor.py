@@ -26,11 +26,19 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
-from mesh.genie.skills import listen_and_check, socratic_nudge
+from mesh.genie.skills import listen_and_check, parent, socratic_nudge
 from mesh.lib.secrets_vault import get_secret
 
 DEVICE_KEY_SECRET = 'GENIE_DEVICE_KEY'
-SKILL_HANDLERS = {'socratic_nudge': socratic_nudge.run, 'listen_and_check': listen_and_check.run}
+SKILL_HANDLERS = {
+    'socratic_nudge': socratic_nudge.run,
+    'listen_and_check': listen_and_check.run,
+    'parent_verify_start': parent.verify_start,
+    'parent_verify_confirm': parent.verify_confirm,
+    'parent_status': parent.status,
+    'parent_remove': parent.remove,
+    'notify_parent': parent.notify,
+}
 
 
 def device_key_ok(sent: Any) -> bool:

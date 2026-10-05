@@ -49,9 +49,9 @@ def gives_away(hint: str, answer_key: str) -> bool:
         return False
     if re.fullmatch(r'[\d\s./r]+', answer, re.I):
         parts = [p for p in re.split(r'\s*r\s*|\s+', answer, flags=re.I) if p]
-        if len(parts) > 1 and all(re.search(rf'(?<![\d.]){re.escape(p)}(?![\d.])', hint) for p in parts):
+        if len(parts) > 1 and all(re.search(rf'(?<!\d)(?<!\d\.){re.escape(p)}(?!\d)(?!\.\d)', hint) for p in parts):
             return True
-        return re.search(rf'(?<![\d.]){re.escape(answer)}(?![\d.])', hint) is not None \
+        return re.search(rf'(?<!\d)(?<!\d\.){re.escape(answer)}(?!\d)(?!\.\d)', hint) is not None \
             or (len(_squash(answer)) > 2 and _squash(answer) in _squash(hint))
     return _squash(answer) in _squash(hint)
 

@@ -21,11 +21,13 @@ from mesh.lib import config_sdk
 _DEFAULT_DESCRIPTIONS: Dict[str, str] = {
     'socratic_nudge': 'Called only by the Daily Practice tablet app: one short Socratic hint (a guiding question) for a practice question, never the answer. Not for chat messages.',
     'listen_and_check': "Called only by the Daily Practice tablet app: transcribes a child's recording (reading aloud, or explaining how they solved a problem) and checks how well they did. Not for chat messages.",
+    'notify_parent': "Called only by the Daily Practice tablet app: sends a short WhatsApp update to the child's verified parents. Not for chat messages.",
 }
 
 _DEFAULT_EXAMPLES: Dict[str, List[str]] = {
     'socratic_nudge': ['(structured call from the Daily Practice app only)'],
     'listen_and_check': ['(structured call from the Daily Practice app only)'],
+    'notify_parent': ['(structured call from the Daily Practice app only)'],
 }
 
 _STRUCTURE: Dict[str, Dict[str, Any]] = {
@@ -35,6 +37,10 @@ _STRUCTURE: Dict[str, Dict[str, Any]] = {
     },
     'listen_and_check': {
         'name': 'Listen and Check', 'tags': ['genie', 'daily-practice', 'whisper'],
+        'input_modes': ['application/json'], 'output_modes': ['application/json'],
+    },
+    'notify_parent': {
+        'name': 'Notify Parent', 'tags': ['genie', 'daily-practice', 'whatsapp'],
         'input_modes': ['application/json'], 'output_modes': ['application/json'],
     },
 }

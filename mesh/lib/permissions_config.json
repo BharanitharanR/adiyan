@@ -2,7 +2,9 @@
   "default_client_tier": "standard",
   "tiers": {
     "owner": {
-      "allow": ["*"]
+      "allow": [
+        "*"
+      ]
     },
     "service": {
       "description": "Internal machine-to-machine callers with no WhatsApp identity behind them - cron_trigger firing a scheduled job, one agent calling another as part of composing a reply. Deliberately not '*': scoped to exactly what today's internal flows need.",
@@ -129,6 +131,13 @@
         "mcp.whatsapp.send_document",
         "mcp.whatsapp.send_image",
         "mcp.whatsapp.send_location"
+      ]
+    },
+    "genie_service": {
+      "description": "genie's own outbound calls (mesh/genie/skills/parent.py): WhatsApp updates to a child's parents for the Daily Practice app, and the 6-digit code that verifies a parent's number first. Its own tier so it can resolve and message only through WhatsApp MCP, nothing else; destinations are limited to verified numbers inside genie itself.",
+      "allow": [
+        "mcp.whatsapp.resolve_chat_id",
+        "mcp.whatsapp.send_message"
       ]
     }
   }
