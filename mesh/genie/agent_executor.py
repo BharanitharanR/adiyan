@@ -26,7 +26,7 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 
-from mesh.genie.skills import listen_and_check, parent, socratic_nudge
+from mesh.genie.skills import family, listen_and_check, parent, socratic_nudge
 from mesh.lib.secrets_vault import get_secret
 
 DEVICE_KEY_SECRET = 'GENIE_DEVICE_KEY'
@@ -38,7 +38,12 @@ SKILL_HANDLERS = {
     'parent_status': parent.status,
     'parent_remove': parent.remove,
     'notify_parent': parent.notify,
+    'ping': family.ping,
+    'peers': family.peers,
+    'announce': family.announce,
 }
+# Real work counts towards this genie's load, which ping reports to a racing caller.
+WORK_SKILLS = {'socratic_nudge', 'listen_and_check'}
 
 
 def device_key_ok(sent: Any) -> bool:
@@ -79,7 +84,11 @@ class GenieExecutor(AgentExecutor):
             return
 
         try:
-            result = await handler(**params)
+            if skill_id in WORK_SKILLS:
+                async with family.busy():
+                    result = await handler(**params)
+            else:
+                result = await handler(**params)
         except TypeError as e:
             await updater.failed(new_text_message(f'Bad request for {skill_id}: {e}'))
             return

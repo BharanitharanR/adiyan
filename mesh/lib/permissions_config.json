@@ -137,7 +137,8 @@
       "description": "genie's own outbound calls (mesh/genie/skills/parent.py): WhatsApp updates to a child's parents for the Daily Practice app, and the 6-digit code that verifies a parent's number first. Its own tier so it can resolve and message only through WhatsApp MCP, nothing else; destinations are limited to verified numbers inside genie itself.",
       "allow": [
         "mcp.whatsapp.resolve_chat_id",
-        "mcp.whatsapp.send_message"
+        "mcp.whatsapp.send_message",
+        "mcp.whatsapp.get_own_phone"
       ]
     }
   }

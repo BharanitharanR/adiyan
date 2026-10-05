@@ -19,6 +19,7 @@ from datetime import date
 from typing import Any, Dict, List
 
 from mesh.genie.constants import AGENT_ID
+from mesh.genie.skills import family
 from mesh.lib import config_sdk, permissions
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
@@ -71,7 +72,19 @@ async def _send(chat_id: str, text: str) -> None:
     await call_tool(WHATSAPP_MCP_URL, 'send_message', {'chat_id': chat_id, 'text': text}, token=await _token())
 
 
-async def verify_start(phone: str) -> Dict[str, Any]:
+async def _elsewhere(skill: str, params: Dict[str, Any], forwarded: bool) -> Any:
+    """If this Adiyan has no WhatsApp link, hand the call to a family peer that does
+    (once - a forwarded call is never forwarded again, so peers can't loop)."""
+    if forwarded or await family.whatsapp_ready():
+        return None
+    result = await family.forward_to_whatsapp_peer(skill, params)
+    return result if result is not None else {'sent': 0, 'reason': 'No family genie with WhatsApp is reachable.'}
+
+
+async def verify_start(phone: str, forwarded: bool = False) -> Dict[str, Any]:
+    other = await _elsewhere('parent_verify_start', {'phone': phone}, forwarded)
+    if other is not None:
+        return other
     phone = _digits(phone)
     conn = _db()
     now = time.time()
@@ -91,7 +104,10 @@ async def verify_start(phone: str) -> Dict[str, Any]:
     return {'sent': True, 'to': _masked(phone), 'expiresInSeconds': CODE_TTL_SECONDS}
 
 
-async def verify_confirm(phone: str, code: str) -> Dict[str, Any]:
+async def verify_confirm(phone: str, code: str, forwarded: bool = False) -> Dict[str, Any]:
+    other = await _elsewhere('parent_verify_confirm', {'phone': phone, 'code': code}, forwarded)
+    if other is not None:
+        return other
     phone = _digits(phone)
     conn = _db()
     row = conn.execute('SELECT code, chat_id, expires_at, tries FROM codes WHERE phone = ?', (phone,)).fetchone()
@@ -112,12 +128,18 @@ async def verify_confirm(phone: str, code: str) -> Dict[str, Any]:
     return {'verified': True, 'phone': _masked(phone)}
 
 
-async def status() -> Dict[str, Any]:
+async def status(forwarded: bool = False) -> Dict[str, Any]:
+    other = await _elsewhere('parent_status', {}, forwarded)
+    if other is not None:
+        return other
     rows = _db().execute('SELECT phone FROM parents ORDER BY verified_at').fetchall()
     return {'parents': [_masked(r[0]) for r in rows]}
 
 
-async def remove(phone: str) -> Dict[str, Any]:
+async def remove(phone: str, forwarded: bool = False) -> Dict[str, Any]:
+    other = await _elsewhere('parent_remove', {'phone': phone}, forwarded)
+    if other is not None:
+        return other
     phone = _digits(phone)
     conn = _db()
     conn.execute('DELETE FROM parents WHERE phone = ?', (phone,))
@@ -125,7 +147,10 @@ async def remove(phone: str) -> Dict[str, Any]:
     return {'removed': _masked(phone)}
 
 
-async def notify(text: str, event: str = 'update') -> Dict[str, Any]:
+async def notify(text: str, event: str = 'update', forwarded: bool = False) -> Dict[str, Any]:
+    other = await _elsewhere('notify_parent', {'text': text, 'event': event}, forwarded)
+    if other is not None:
+        return other
     text = ' '.join((text or '').split())[:MAX_TEXT]
     if not text:
         raise ValueError('text was empty.')
