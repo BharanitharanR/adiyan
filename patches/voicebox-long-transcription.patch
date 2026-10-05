@@ -1,0 +1,67 @@
+From 182f850756d793b63da00220f639bb307cf80186 Mon Sep 17 00:00:00 2001
+From: BharanitharanR <bharani_ran@yahoo.com>
+Date: Mon, 5 Oct 2026 21:39:30 +0530
+Subject: [PATCH] Transcribe whole recordings, not just the first 30 seconds
+ (local Adiyan patch)
+
+The Whisper processor's defaults truncate audio to one 30 s window, so longer
+recordings came back as only their first ~30 s. Keep the full input
+(truncation=False, padding='longest', attention mask) and decode it with
+return_timestamps=True (transformers' sequential long-form transcription).
+Use language/task instead of forced_decoder_ids, which long-form generation
+doesn't accept.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ backend/backends/pytorch_backend.py | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/backend/backends/pytorch_backend.py b/backend/backends/pytorch_backend.py
+index f8ae79b..9604faa 100644
+--- a/backend/backends/pytorch_backend.py
++++ b/backend/backends/pytorch_backend.py
+@@ -343,10 +343,19 @@ class PyTorchSTTBackend:
+             # whose `get_decoder_prompt_ids` / tokenizer calls issue
+             # legitimate metadata lookups.
+             # Process audio
++            # Local patch (Adiyan): the processor's defaults truncate to Whisper's
++            # 30 s window, so anything longer came back as just its first ~30 s
++            # (confirmed live: a 119 s reading returned only its first 48 words).
++            # truncation=False + padding="longest" keeps the whole recording, and
++            # return_timestamps=True below makes generate() decode it window by
++            # window (transformers' sequential long-form transcription).
+             inputs = self.processor(
+                 audio,
+                 sampling_rate=16000,
+                 return_tensors="pt",
++                truncation=False,
++                padding="longest",
++                return_attention_mask=True,
+             )
+             inputs = inputs.to(self.device)
+ 
+@@ -354,15 +363,16 @@ class PyTorchSTTBackend:
+             # If language is provided, force it; otherwise let Whisper auto-detect
+             generate_kwargs = {}
+             if language:
+-                forced_decoder_ids = self.processor.get_decoder_prompt_ids(
+-                    language=language,
+-                    task="transcribe",
+-                )
+-                generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
++                # Local patch (Adiyan): language/task instead of forced_decoder_ids,
++                # which long-form (more than 30 s) generation doesn't accept.
++                generate_kwargs["language"] = language
++                generate_kwargs["task"] = "transcribe"
+ 
+             with torch.no_grad():
+                 predicted_ids = self.model.generate(
+                     inputs["input_features"],
++                    attention_mask=inputs["attention_mask"],
++                    return_timestamps=True,
+                     **generate_kwargs,
+                 )
+ 
+-- 
+2.49.0
+

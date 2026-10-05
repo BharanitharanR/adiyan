@@ -33,6 +33,21 @@ GENERATED_CONFIG_PATH = Path(
 # gateway needs a different port so the two server blocks don't collide.
 DEFAULT_GATEWAY_PORT = 8081
 
+# Per-agent nginx overrides. nginx's own defaults (1 MB request bodies, 60 s
+# upstream reads) suit every chat-sized A2A call; genie is the exception:
+# the Daily Practice app sends it a child's read-aloud recording (about 1 MB
+# a minute, base64-encoded) and waits while Whisper transcribes it.
+AGENT_LIMITS = {
+    # client_body_buffer_size keeps the body in memory: Homebrew's client_body_temp
+    # folder can end up owned by another user (confirmed live: 'Permission denied',
+    # a 500 on any body past the default 16 KB buffer).
+    # proxy_buffering off for the same reason on the way back: a large reply would
+    # otherwise spill into the (unwritable) proxy_temp folder and arrive cut off.
+    'genie': ['client_max_body_size 20m;', 'client_body_buffer_size 20m;',
+              'proxy_buffering off;', 'proxy_max_temp_file_size 0;',
+              'proxy_read_timeout 300s;', 'proxy_send_timeout 300s;'],
+}
+
 
 def render_config(agents: List[Dict[str, Any]], gateway_port: int = DEFAULT_GATEWAY_PORT) -> str:
     """One `location /agents/<agent_id>/` block per registry entry,
@@ -60,7 +75,8 @@ def render_config(agents: List[Dict[str, Any]], gateway_port: int = DEFAULT_GATE
             f'        proxy_pass {url}/;\n'
             '        proxy_set_header Host $host;\n'
             '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
-            '    }\n'
+            + ''.join(f'        {line}\n' for line in AGENT_LIMITS.get(agent_id, []))
+            + '    }\n'
         )
     return header + '\n'.join(blocks) + '\n}\n'
 
