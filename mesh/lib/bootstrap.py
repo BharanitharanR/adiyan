@@ -240,6 +240,7 @@ def build_app(
     agent_id: str,
     skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
     register_with_agent_registry: bool = True,
+    extra_routes: Optional[list] = None,
 ) -> Starlette:
     """Everything serve() needs before starting the two background threads
     and calling uvicorn.run() - split into its own function so
@@ -325,6 +326,9 @@ def build_app(
     routes = []
     routes.extend(create_agent_card_routes(agent_card, card_modifier=card_modifier))
     routes.extend(create_jsonrpc_routes(request_handler, '/'))
+    # Plain HTTP routes an agent adds beside A2A (e.g. a file download, which doesn't belong
+    # inside a JSON-RPC message). They go before nothing special: A2A owns '/' and the card path only.
+    routes.extend(extra_routes or [])
 
     return Starlette(routes=routes, lifespan=_lifespan)
 
@@ -338,6 +342,7 @@ def serve(
     agent_id: str,
     skills_refresher: Optional[Callable[[], Awaitable[List[AgentSkill]]]] = None,
     register_with_agent_registry: bool = True,
+    extra_routes: Optional[list] = None,
 ) -> None:
     """Blocks, running the agent's A2A server. See build_app()'s own
     docstring for what it builds and why that part is split out; this
@@ -352,6 +357,7 @@ def serve(
     app = build_app(
         agent_card, executor, host, port, tasks_db_path, agent_id, skills_refresher,
         register_with_agent_registry=register_with_agent_registry,
+        extra_routes=extra_routes,
     )
 
     if register_with_agent_registry:
