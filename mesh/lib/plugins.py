@@ -48,6 +48,8 @@ GRANTABLE = {
     'mcp.whatsapp.send_message',
     'mcp.whatsapp.resolve_chat_id',
     'mcp.whatsapp.get_own_phone',
+    'mcp.whatsapp.send_image',
+    'mcp.whatsapp.send_document',  # the Genie's end-of-day report is a PDF
 }
 
 # nginx directives a plugin may set on its own /agents/<id>/ location, with
