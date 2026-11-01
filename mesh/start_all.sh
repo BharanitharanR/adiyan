@@ -295,13 +295,35 @@ fi
 # nothing here can provision - see mesh/tools/run_workspace_mcp.sh's own
 # docstring. Also needs ngrok itself usable, since its redirect URI is
 # built from ngrok's current public URL at launch time.
+#
+# Bounded to a few seconds, not a bare blocking call - confirmed live this
+# session: reading an EXISTING macOS Keychain item from a new caller can
+# pop a GUI "Allow access" dialog that nothing here can click, and a bare
+# "$PYTHON_BIN" -c "..." call hung start_all.sh's entire startup on it
+# indefinitely - every other component, mesh-wide, silently never started
+# because of ONE optional check for ONE not-yet-used integration. No
+# `timeout`/`gtimeout` binary on this machine, so a manual poll-and-kill
+# loop - unusable (0) is the correct, safe default on a timeout, same as
+# any other missing prerequisite this file already degrades gracefully on.
 WORKSPACE_MCP_USABLE=0
-if [ "$NGROK_USABLE" -eq 1 ] && "$PYTHON_BIN" -c "
+if [ "$NGROK_USABLE" -eq 1 ]; then
+    "$PYTHON_BIN" -c "
 from mesh.lib.secrets_vault import get_secret
 import sys
 sys.exit(0 if get_secret('GOOGLE_OAUTH_CLIENT_ID') and get_secret('GOOGLE_OAUTH_CLIENT_SECRET') else 1)
-" >/dev/null 2>&1; then
-    WORKSPACE_MCP_USABLE=1
+" >/dev/null 2>&1 &
+    _wmcp_check_pid=$!
+    _wmcp_waited=0
+    while kill -0 "$_wmcp_check_pid" 2>/dev/null && [ "$_wmcp_waited" -lt 3 ]; do
+        sleep 1
+        _wmcp_waited=$((_wmcp_waited + 1))
+    done
+    if kill -0 "$_wmcp_check_pid" 2>/dev/null; then
+        kill -9 "$_wmcp_check_pid" 2>/dev/null
+        wait "$_wmcp_check_pid" 2>/dev/null
+    elif wait "$_wmcp_check_pid" 2>/dev/null; then
+        WORKSPACE_MCP_USABLE=1
+    fi
 fi
 
 is_target() {
