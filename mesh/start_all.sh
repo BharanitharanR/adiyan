@@ -184,16 +184,17 @@ COMPONENTS=(
     "analysis|8427|mesh.analysis.server"
     "config_agent|8428|mesh.config_agent.server"
     "config_server|8500|mesh.config_server.server"
-    # Meta Global AI Developer Hackathon entry - its own venv, same reasoning
-    # as voicebox above: langchain-openai (needed to call the Meta Model API
-    # through a real LangChain ChatOpenAI, so Phoenix's auto-tracing covers
-    # it) requires openai>=2.45.0, which directly conflicts with
-    # browser-use's own exact openai==2.26.0 pin in this mesh's shared
-    # .venv - confirmed live (installing it there broke browser_use's import
-    # immediately). mesh/meta_travel_agent/.venv is a plain, separate venv
-    # with only this agent's own deps, not sharing a single package with the
-    # main .venv - no conflict possible by construction.
-    "meta_travel_agent|8445|$REPO_ROOT/mesh/meta_travel_agent/.venv/bin/python3 -m mesh.meta_travel_agent.server"
+    # Wayfinder - Adiyan's family trip-planning agent, built on the Meta
+    # Model API for the Meta Global AI Developer Hackathon. Its own venv,
+    # same reasoning as voicebox above: langchain-openai (needed to call
+    # the Meta Model API through a real LangChain ChatOpenAI, so Phoenix's
+    # auto-tracing covers it) requires openai>=2.45.0, which directly
+    # conflicts with browser-use's own exact openai==2.26.0 pin in this
+    # mesh's shared .venv - confirmed live (installing it there broke
+    # browser_use's import immediately). mesh/wayfinder/.venv is a plain,
+    # separate venv with only this agent's own deps, not sharing a single
+    # package with the main .venv - no conflict possible by construction.
+    "wayfinder|8445|$REPO_ROOT/mesh/wayfinder/.venv/bin/python3 -m mesh.wayfinder.server"
     # Platform infrastructure, not something any agent author touches or
     # needs to know exists - mesh/lib/agent_sdk.py's ask() is the only
     # caller, for every plain-text LLM call. The actual "run this locally
@@ -386,17 +387,17 @@ launch_component() {
         # launch site adds what's actually needed" split as mongo_mcp's
         # own npx prefix above.
         nohup mesh/tools/run_n8n.sh >> "$logfile" 2>&1 &
-    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ] || [ "$name" = "voicebox" ] || [ "$name" = "meta_travel_agent" ]; then
+    elif [ "$name" = "mongodb" ] || [ "$name" = "qdrant" ] || [ "$name" = "openwa" ] || [ "$name" = "ngrok" ] || [ "$name" = "graph_db" ] || [ "$name" = "voicebox" ] || [ "$name" = "wayfinder" ]; then
         # A raw binary/npm invocation, not a `python3 -m` module - mongod
         # logs to its own configured path (systemLog.path in
         # mongod.conf) rather than this one; qdrant, openwa, ngrok,
         # neo4j (graph_db), voicebox (its own venv's uvicorn), and
-        # meta_travel_agent (its own venv's python, see its own
-        # COMPONENTS entry comment) do log here. meta_travel_agent's own
-        # cmd already spells out its own venv's python3 -m - routing it
-        # through the default branch's "$PYTHON_BIN" -m "$cmd" below
-        # would run the WRONG interpreter against a string that isn't a
-        # bare module path at all.
+        # wayfinder (its own venv's python, see its own COMPONENTS entry
+        # comment) do log here. wayfinder's own cmd already spells out
+        # its own venv's python3 -m - routing it through the default
+        # branch's "$PYTHON_BIN" -m "$cmd" below would run the WRONG
+        # interpreter against a string that isn't a bare module path at
+        # all.
         nohup $cmd >> "$logfile" 2>&1 &
     else
         nohup "$PYTHON_BIN" -m "$cmd" >> "$logfile" 2>&1 &

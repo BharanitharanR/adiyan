@@ -1,5 +1,5 @@
-# This agent's own venv (mesh/meta_travel_agent/.venv) - deliberately NOT
-# the mesh's shared .venv/requirements.txt. langchain-openai (needed for a
+# Wayfinder's own venv (mesh/wayfinder/.venv) - deliberately NOT the
+# mesh's shared .venv/requirements.txt. langchain-openai (needed for a
 # real LangChain ChatOpenAI against the Meta Model API, so Phoenix's
 # auto-tracing covers it - see mesh/lib/meta_model_client.py) requires
 # openai>=2.45.0, which conflicts with browser-use's own exact
@@ -7,10 +7,10 @@
 # mesh/start_all.sh's own comment on this agent's COMPONENTS entry.
 #
 # Set up once:
-#   python3.11 -m venv mesh/meta_travel_agent/.venv
-#   mesh/meta_travel_agent/.venv/bin/pip install -r mesh/meta_travel_agent/requirements.txt
+#   python3.11 -m venv mesh/wayfinder/.venv
+#   mesh/wayfinder/.venv/bin/pip install -r mesh/wayfinder/requirements.txt
 #
-# Everything this agent imports from mesh/lib (bootstrap, config_sdk,
+# Everything Wayfinder imports from mesh/lib (bootstrap, config_sdk,
 # permissions, mcp_client, persona_hook, privacy_mode, registry_client,
 # agent_activity, customer_record_hook) is covered by the packages below -
 # deliberately NOT the full mesh requirements.txt, which pulls in heavy,
