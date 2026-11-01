@@ -24,6 +24,7 @@ nothing here is specific to that one skill_id; any future skill from any
 agent that wants to hand back a file just needs to return
 {content_b64, filename, mimetype} the same way.
 """
+import asyncio
 import base64
 import logging
 import re
@@ -48,7 +49,7 @@ from mesh.lib.paths import state_db_path
 from mesh.lib.registry_client import list_agents
 from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db, router, rules_engine
-from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL, WORKSPACE_MCP_URL
+from mesh.orchestrator.constants import AGENT_ID, FINANCE_MCP_REPO_PATH, WHATSAPP_MCP_URL, WORKSPACE_MCP_URL
 from mesh.orchestrator.humanize import humanize
 from mesh.orchestrator.router import route_to_agent
 
@@ -1708,32 +1709,39 @@ async def _resolve_financial_statement_intent(caption: str, cfg: Dict[str, Any])
     return choice.skill_id == 'financial_statement_upload'
 
 
+_BANK_NAME_PATTERN = re.compile(r'\b(hdfc|sbi)\b', re.IGNORECASE)
+
+
 async def _ingest_financial_statement_upload(
-    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str],
+    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str], caption: str = '',
 ) -> Optional[str]:
     """Reply text, or None only for a genuinely unexpected failure - same
     silent-on-failure convention as _apply_vertical_spec_upload. Writes the
-    uploaded bytes to a real file on disk first: family_finance_agent's
-    ingest_statement skill parses an actual bank export with xlrd, which
-    needs a real file path, not base64 sitting in memory. Saved under a
-    per-sender subfolder so two different uploaders' files never collide,
-    then handed straight to the family_finance agent over A2A - the same
-    "this agent already knows exactly what it wants, no classify needed"
-    shape _apply_vertical_spec_upload's own call uses.
+    uploaded bytes to a real file on disk first, then shells out to the
+    Wayfinder Finance MCP repo's own CLI (a separate, standalone checkout,
+    not an Adiyan plugin - see FINANCE_MCP_REPO_PATH's own comment) -
+    ingestion is deliberately a plain CLI/function there, never an MCP
+    tool, so this is a subprocess call, not an A2A/MCP one.
 
-    person_id is only a best-effort default from the sender's contact
-    name - dataModel/hdfcBank_csv_parser.py's own logic overrides it with
-    whatever name it finds printed inside the statement itself (MR./MRS./
-    MS. lines), so this only matters when that in-file name line is
-    missing. tier is minted into the outgoing token as-is (never hardcoded
-    to 'owner') - the call site below only reaches this function at all
-    when tier == 'owner', but the token must still reflect who's actually
-    asking, not an assumption baked in here."""
-    family_finance_url = router.get_agent_url('family_finance')
-    if family_finance_url is None:
-        return "The family finance tracker isn't reachable right now - try again in a moment."
+    bank (hdfc/sbi) is read off the caption text (same _BANK_NAME_PATTERN
+    either in the caption or the uploaded filename) - there's no other
+    signal a WhatsApp upload carries that says which bank a statement is
+    from, so an ambiguous/missing caption gets a clear "say which bank"
+    reply rather than guessing. account_id is bank + a best-effort person
+    label from the sender's contact name, e.g. 'hdfc_RAVI' - the finance
+    repo's own dedup is keyed on file content hash, not this label, so a
+    reasonable guess here costs nothing even if it's later renamed by hand.
 
+    tier is minted into the outgoing token as-is (never hardcoded to
+    'owner') - unused by this function now that there's no A2A call left,
+    kept in the signature so call sites don't need updating if a future
+    permission-gated step is added here."""
     filename = media.get('filename') or 'statement.xls'
+    bank_match = _BANK_NAME_PATTERN.search(caption) or _BANK_NAME_PATTERN.search(filename)
+    if bank_match is None:
+        return "Which bank is this statement from - HDFC or SBI? Send it again with that in the caption."
+    bank = bank_match.group(1).lower()
+
     safe_chat_id = re.sub(r'[^A-Za-z0-9_@.-]', '_', chat_id)
     upload_dir = Path.home() / '.Adiyan' / 'family_finance' / 'uploads' / safe_chat_id
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -1745,26 +1753,22 @@ async def _ingest_financial_statement_upload(
         return None
 
     person_id = (contact_name or chat_id).split()[0].upper()
-    token = permissions.mint_token(chat_id, tier)
+    account_id = f'{bank}_{person_id}'
     try:
-        result = await call_agent(family_finance_url, 'ingest_statement', {
-            'file_path': str(file_path), 'person_id': person_id,
-        }, token=token)
+        process = await asyncio.create_subprocess_exec(
+            f'{FINANCE_MCP_REPO_PATH}/.venv/bin/python3', '-m', 'wayfinder_finance_mcp.cli', 'ingest',
+            str(file_path), '--account-id', account_id, '--bank', bank,
+            cwd=FINANCE_MCP_REPO_PATH, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
     except Exception as e:
-        logger.error(f'ingest_statement failed for {chat_id}: {e}')
+        logger.error(f'wayfinder-finance ingest failed to launch for {chat_id}: {describe_exception(e)}')
         return None
 
-    if result.get('error'):
-        return f"Couldn't add that statement: {result['error']}"
-    zetaris_note = '' if result.get('zetaris_refreshed') else ' (the live query table may take a moment to catch up)'
-    # int(...): the same A2A/protobuf Struct float-crossing cast
-    # _ingest_into_knowledge_base's own 'chunks' field already needs -
-    # transactions_ingested is a genuine int on family_finance_agent's own
-    # side but arrives here as a double regardless.
-    return (
-        f"Added {int(result['transactions_ingested'])} transactions for "
-        f"{result.get('person_id', person_id)}{zetaris_note}."
-    )
+    if process.returncode != 0:
+        logger.error(f'wayfinder-finance ingest failed for {chat_id}: {stderr.decode(errors="replace")}')
+        return "Couldn't add that statement - the parser rejected it. Check it's a real HDFC/SBI export."
+    return stdout.decode(errors='replace').strip() or f'Added the statement for {account_id}.'
 
 
 async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Optional[str]:
@@ -2190,7 +2194,7 @@ async def run(
         if tier == 'owner' and (is_yaml_upload or await _resolve_vertical_spec_intent(text, cfg['caption_intent'])):
             reply = await _apply_vertical_spec_upload(media_for_upload, chat_id, tier)
         elif tier == 'owner' and await _resolve_financial_statement_intent(text, cfg['caption_intent']):
-            reply = await _ingest_financial_statement_upload(media_for_upload, chat_id, tier, contact_name)
+            reply = await _ingest_financial_statement_upload(media_for_upload, chat_id, tier, contact_name, text)
         else:
             # Resolved from the caption BEFORE ingestion, not after - once
             # Docling has already spent 30-50s/page skipping OCR it thought
