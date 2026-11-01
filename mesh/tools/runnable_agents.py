@@ -92,11 +92,16 @@ def _discover() -> list:
 
 
 def _discover_plugins() -> list:
-    """Installed plugins (mesh/lib/plugins.py), launched by module path; start_all.sh
-    puts the plugins folder on PYTHONPATH."""
+    """Installed plugins (mesh/lib/plugins.py), launched by module path (or,
+    for a plugin that declares its own "venv", a full command naming that
+    venv's own python3 explicitly - see plugins.py's launch_command()).
+    start_all.sh puts the plugins folder on PYTHONPATH either way."""
     try:
         from mesh.lib import plugins
-        return [{'agent_id': p['id'], 'module': p['server_module'], 'port': p['port']} for p in plugins.installed()]
+        return [
+            {'agent_id': p['id'], 'module': plugins.launch_command(p), 'port': p['port']}
+            for p in plugins.installed()
+        ]
     except Exception:
         return []
 

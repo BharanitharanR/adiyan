@@ -23,6 +23,7 @@ Manifest (adiyan-plugin.json):
   "module_root": "daily_practice_genie", # the Python package; installed to plugins/<module_root>
   "server_module": "daily_practice_genie.server",
   "port": 8442,
+  "venv": ".venv",                       # optional - see below
   "tier": "genie_service",               # optional: the permission tier this plugin mints for itself
   "permissions": ["mcp.whatsapp.send_message"],
   "gateway": ["client_max_body_size 20m;"],
@@ -30,6 +31,20 @@ Manifest (adiyan-plugin.json):
   "requires": ["voicebox", "whatsapp"],
   "description": "..."
 }
+
+"venv" (optional): a relative path, inside the plugin's own installed
+directory, to a venv this plugin's process should run under instead of the
+mesh's shared one - the same reasoning mesh/start_all.sh's own voicebox
+COMPONENTS entry already established for a core component: some plugin's
+own real dependency (e.g. langchain-openai, needed for a real LangChain
+chat model against an OpenAI-compatible API) can directly conflict with a
+pin something ELSE already sharing the main venv needs exactly (confirmed
+live this session: langchain-openai requires openai>=2.45.0, which breaks
+browser-use's own exact openai==2.26.0 pin). Omitted (the overwhelming
+majority of plugins, e.g. genie): launched with the shared venv exactly as
+before - this field changes nothing for a manifest that doesn't set it.
+launch_command() below is what turns this into the actual command
+mesh/tools/runnable_agents.py prints and mesh/start_all.sh launches.
 """
 import json
 import os
@@ -99,6 +114,9 @@ def validate(manifest: Dict[str, Any], core_tiers: List[str] = ()) -> Dict[str, 
     for s in m.get('secrets', []):
         if not re.match(r'^[A-Z][A-Z0-9_]{2,60}$', str(s.get('name', ''))):
             raise PluginError(f'bad secret name: {s.get("name")!r}')
+    venv = m.get('venv')
+    if venv is not None and (not re.match(r'^[a-zA-Z0-9_.-]+$', str(venv)) or '..' in str(venv)):
+        raise PluginError(f'venv must be a single relative path segment, not {venv!r} (no "/" or "..")')
     return m
 
 
@@ -128,6 +146,24 @@ def installed() -> List[Dict[str, Any]]:
             found.append(m)
     _cache.update(at=time.time(), plugins=found)
     return found
+
+
+def launch_command(manifest: Dict[str, Any]) -> str:
+    """What mesh/start_all.sh should actually run for this plugin - its bare
+    server_module (launched with the shared venv's python, via the default
+    "$PYTHON_BIN" -m "$cmd" branch in launch_component(), exactly as every
+    plugin worked before this existed) unless the manifest declares its own
+    "venv", in which case this returns a full command naming that venv's
+    own python3 explicitly. launch_component() tells the two apart by
+    whether the string has a space in it - a bare dotted module path never
+    does, every full command (this one, or voicebox's) always does - see
+    that function's own comment for why that's the actual dividing line,
+    not a per-name list."""
+    venv = manifest.get('venv')
+    if not venv:
+        return manifest['server_module']
+    python_bin = Path(manifest['_dir']) / venv / 'bin' / 'python3'
+    return f'{python_bin} -m {manifest["server_module"]}'
 
 
 def plugin_tiers() -> Dict[str, Dict[str, Any]]:
