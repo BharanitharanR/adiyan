@@ -21,6 +21,7 @@ this same FastMCP app - confirmed available in the installed mcp package.
 Run from the repo root as `python -m mesh.mcp.whatsapp.server`.
 Requires: pip install "mcp[cli]" httpx starlette uvicorn
 """
+import asyncio
 import base64
 import logging
 import re
@@ -261,7 +262,29 @@ async def _resolve_media(message: Dict[str, Any]) -> Any:
         if message['from_me'] or message.get('is_self_chat'):
             content_b64 = await _resolve_outbound_media(message)
         else:
-            downloaded = await _openwa.download_media(message['lid'], message['whatsapp_message_id'])
+            # Retried, not a single attempt - confirmed live this session:
+            # OpenWA's own media archive 404s on the FIRST fetch attempt,
+            # made right as the webhook fires, for a real inbound document
+            # (three real statement uploads lost this way even after the
+            # receiver-side media-detection bug above was fixed) - a real
+            # attachment's bytes evidently aren't always finished
+            # downloading into OpenWA's own archive by the moment it tells
+            # Adiyan about the message, a genuine race, not a permanent
+            # 404. A short, bounded retry absorbs exactly that gap; still
+            # raises (caller already treats that as recoverable) if the
+            # archive genuinely never gets it.
+            last_error: Optional[Exception] = None
+            downloaded = None
+            for attempt in range(4):
+                if attempt:
+                    await asyncio.sleep(2.0)
+                try:
+                    downloaded = await _openwa.download_media(message['lid'], message['whatsapp_message_id'])
+                    break
+                except Exception as e:
+                    last_error = e
+            if downloaded is None:
+                raise last_error
             content_b64 = base64.b64encode(downloaded['content']).decode('ascii')
 
     if not content_b64:
