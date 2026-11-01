@@ -1843,6 +1843,28 @@ def format_history(turns: list[Dict[str, Any]], new_message: str) -> str:
     )
     return f'Conversation so far:\n{exchanges}\n\nNew message: {new_message}'
 
+
+def _parse_wayfinder_meta_command(text: str) -> Optional[bool]:
+    """Fixed-phrase command ('Adiyan, switch to using Meta for Wayfinder' /
+    'Adiyan, switch off Meta for Wayfinder'), never LLM-classified - same
+    reasoning as privacy_mode.parse_command's own docstring: deciding
+    whether to spend real money calling a hosted model must never itself
+    depend on sending the message to one, and a misread should never flip
+    it. True = turn Meta on, False = turn it off, None = not this command.
+
+    Checked against the real stored constant's default (see agent_sdk.py's
+    ask(): a Meta-eligible stage's 'use_meta' constant on the agent it
+    belongs to, default False) - this function only recognizes the on/off
+    wording, it doesn't itself decide what the default is."""
+    lowered = (text or '').lower()
+    if 'meta' not in lowered or 'wayfinder' not in lowered:
+        return None
+    if re.search(r'\bswitch\s+off\b|\bturn\s+off\b|\bstop\s+using\b|\bdisable\b', lowered):
+        return False
+    if re.search(r'\bswitch\s+(to\s+using|on)\b|\bturn\s+on\b|\benable\b|\buse\s+meta\b', lowered):
+        return True
+    return None
+
 async def run(
     text: str,
     chat_id: str,
@@ -2081,6 +2103,19 @@ async def run(
         await privacy_mode.set_incognito(db.resolve_identity_key(chat_id), vertical_id, privacy_switch)
         privacy_mode.CURRENT_INCOGNITO.set(privacy_switch)
         reply = privacy_mode.INCOGNITO_ON_REPLY if privacy_switch else privacy_mode.INCOGNITO_OFF_REPLY
+    elif (
+        not kb_pending and tier == 'owner'
+        and (meta_switch := _parse_wayfinder_meta_command(text)) is not None
+    ):
+        # Same fixed-phrase reasoning as the privacy_switch branch just
+        # above, owner-only - this spends real money calling a hosted
+        # model once turned on (mesh/lib/agent_sdk.py's ask() reads this
+        # same constant). Not remembered: should_remember stays False.
+        await config_sdk.set_constant('wayfinder', 'use_meta', meta_switch)
+        reply = (
+            'Wayfinder will use the Meta Model API now.' if meta_switch else
+            'Wayfinder is back off the Meta Model API (Claude CLI, or local Ollama in incognito).'
+        )
     elif not kb_pending and model_confidentiality.is_model_question(text):
         # An explicit "what model/LLM/company powers you" question gets a fixed
         # answer with no model involved - see mesh/lib/model_confidentiality.py.

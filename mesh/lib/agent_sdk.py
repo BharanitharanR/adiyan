@@ -565,6 +565,80 @@ class AdiyanAgent:
         if context_prefix:
             prompt = f'{context_prefix}\n\n{prompt}'
 
+        # Meta Model API backend (mesh/lib/meta_model_client.py) - checked
+        # BEFORE Claude CLI, deliberately, and gated on TWO separate things
+        # that must both be true, not one: (1) this STAGE is even eligible
+        # ('provider': 'meta' in its own stage config - a code-level
+        # decision, e.g. Wayfinder's plan_trip) and (2) Meta is actually
+        # turned ON right now (the 'use_meta' constant on that agent,
+        # default False - a user-level runtime decision, flipped by a
+        # fixed-phrase WhatsApp command, see mesh/orchestrator/skills/
+        # handle_message.py's _parse_wayfinder_meta_command). A stage can
+        # be eligible for months before anyone actually turns it on - an
+        # eligible-but-off stage must still go to Claude CLI, exactly like
+        # a stage that was never eligible at all, which is why this isn't
+        # folded into a single flag. Checked ahead of Claude CLI (not
+        # behind it, and not as a fallback) for a real reason: once this
+        # IS on, a hosted model other than Meta must never quietly answer
+        # instead - that would defeat the entire point of turning it on.
+        # Incognito overrides both regardless of either flag - never
+        # spend real money on a hosted call for a contact who asked for
+        # local-only. Same call shapes as the Claude CLI branch below
+        # (plain-text/schema/tools only - image and raw have no Meta
+        # equivalent), and the same "unavailable backend degrades a call,
+        # never breaks it" contract: any failure falls through to the
+        # Claude CLI check right below, same as if this stage had never
+        # been eligible at all.
+        if image_b64 is None and not raw and not privacy_mode.CURRENT_INCOGNITO.get():
+            provider_cfg = await config_sdk.get_stage_config(
+                self.agent_id, stage, {'model': model, 'temperature': temperature, 'provider': 'ollama'},
+            )
+            if provider_cfg.get('provider') == 'meta':
+                # Global kill-switch, checked before the per-agent toggle
+                # below, and deliberately NOT reachable from WhatsApp/chat
+                # at all - only mesh/tools/set_meta_master_switch.py, run
+                # locally, can flip it. Real money is spent the moment a
+                # call actually reaches Meta; a chat phrase (however well
+                # intentioned) is not a safe enough gate for that by
+                # itself, so this one requires a deliberate, local,
+                # out-of-band action - same posture as a secret in
+                # mesh/lib/secrets_vault.py, even though this isn't itself
+                # secret data. Defaults False: no request reaches Meta on
+                # a fresh install, or until this is explicitly turned on,
+                # no matter what any per-agent 'use_meta' constant says.
+                master_on = await config_sdk.get_constant(
+                    '_meta_model', 'master_switch_enabled', False,
+                    description=(
+                        "Global kill-switch for ANY Meta Model API call, platform-wide. NOT meant to "
+                        "be set via WhatsApp/chat - use mesh/tools/set_meta_master_switch.py locally. "
+                        "Off by default: blocks every Meta call regardless of any agent's own "
+                        "'use_meta' constant."
+                    ),
+                )
+                use_meta_now = master_on and await config_sdk.get_constant(
+                    self.agent_id, 'use_meta', False,
+                    description=(
+                        "Runtime on/off switch for this agent's Meta-eligible stages. Defaults off "
+                        "even when a stage's own config marks it provider='meta' - a stage being "
+                        "eligible for the Meta Model API and Meta actually being turned on are two "
+                        "separate decisions. Also gated by the platform-wide master switch (see "
+                        "mesh/tools/set_meta_master_switch.py) - this alone is never enough to "
+                        "actually reach Meta."
+                    ),
+                )
+                if use_meta_now:
+                    try:
+                        from mesh.lib import meta_model_client
+                        result = await meta_model_client.run(
+                            prompt, model=provider_cfg['model'], temperature=provider_cfg['temperature'],
+                            schema=schema, tools=tools,
+                        )
+                        mode = 'tools' if tools is not None else ('schema' if schema is not None else 'text')
+                        llm_log.log_call(self.agent_id, stage, mode, f"meta:{provider_cfg['model']}", prompt, result)
+                        return result
+                    except Exception as e:
+                        logger.warning(f'Meta Model API call failed for {self.agent_id}/{stage}, trying Claude CLI: {e}')
+
         # Claude CLI backend for plain-text and schema calls, unless this
         # contact is in incognito or the stage is local-only (see
         # _use_claude_cli). Any failure falls through to the local Ollama
@@ -574,32 +648,6 @@ class AdiyanAgent:
                 return await _ask_claude_cli(self.agent_id, stage, prompt, schema, tools)
             except Exception as e:
                 logger.warning(f'Claude CLI call failed for {self.agent_id}/{stage}, using local model: {e}')
-
-        # Meta Model API backend (mesh/lib/meta_model_client.py) - a third
-        # provider alongside Ollama/Claude CLI, opted into per-stage via the
-        # ordinary stage config's 'provider' key (default 'ollama', so every
-        # existing stage on every existing agent is byte-for-byte
-        # unaffected). Same call shapes as the Claude CLI branch above
-        # (plain-text/schema/tools only - image and raw have no Meta
-        # equivalent here, same reasoning as that branch), and the same
-        # "unavailable backend degrades a call, never breaks it" contract:
-        # any failure falls through to the local Ollama paths below.
-        if image_b64 is None and not raw:
-            provider_cfg = await config_sdk.get_stage_config(
-                self.agent_id, stage, {'model': model, 'temperature': temperature, 'provider': 'ollama'},
-            )
-            if provider_cfg.get('provider') == 'meta':
-                try:
-                    from mesh.lib import meta_model_client
-                    result = await meta_model_client.run(
-                        prompt, model=provider_cfg['model'], temperature=provider_cfg['temperature'],
-                        schema=schema, tools=tools,
-                    )
-                    mode = 'tools' if tools is not None else ('schema' if schema is not None else 'text')
-                    llm_log.log_call(self.agent_id, stage, mode, f"meta:{provider_cfg['model']}", prompt, result)
-                    return result
-                except Exception as e:
-                    logger.warning(f'Meta Model API call failed for {self.agent_id}/{stage}, using local model: {e}')
 
         # Central LLM logging (mesh/lib/llm_log.py): every branch below logs
         # its own prompt/response right at its own return point, since each
