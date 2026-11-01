@@ -223,15 +223,43 @@ class OpenWAAdapter:
         # (WhatsApp never gives one, same as image).
         media = None
         raw_type = data.get('type')
-        if raw_type in ('image', 'document', 'ptt', 'audio', 'voice') and data.get('media'):
-            raw_media = data['media']
+        if raw_type in ('image', 'document', 'ptt', 'audio', 'voice'):
+            # Confirmed live this session: this installed OpenWA/whatsapp-
+            # web.js build sometimes emits a media-type message (a real
+            # forwarded PDF, confirmed via three real statement uploads)
+            # with NO 'media' key in the payload AT ALL - not omitted=True,
+            # the key is simply absent. The old `and data.get('media')`
+            # guard silently fell through to treating the whole message as
+            # plain text, with WhatsApp's own filename (sitting in `body`
+            # for a document with no media object) standing in as if it
+            # were the message's real text - three real statement uploads
+            # vanished exactly this way, with no error anywhere, each one
+            # answered as an ordinary chat message instead. A document's
+            # filename is still useful even with no inline data (it's in
+            # `body`), so it's captured here rather than discarded.
+            # `omitted` forced True whenever there's no inline blob (empty
+            # or missing 'media' object alike) - same download_media()
+            # fetch path _resolve_media() in whatsapp_mcp/server.py already
+            # has for the genuinely-too-large case, now also covering this
+            # build's "didn't inline it at all" case for the same reason.
+            raw_media = data.get('media') or {}
+            used_body_as_filename = raw_type == 'document' and not raw_media.get('filename') and bool(message_body)
             media = {
                 'kind': raw_type,
                 'mimetype': raw_media.get('mimetype'),
                 'data': raw_media.get('data'),
-                'omitted': bool(raw_media.get('omitted')),
-                'filename': raw_media.get('filename') if raw_type == 'document' else None,
+                'omitted': bool(raw_media.get('omitted')) or not raw_media.get('data'),
+                'filename': (raw_media.get('filename') or message_body or None) if raw_type == 'document' else None,
             }
+            if used_body_as_filename:
+                # body was WhatsApp's own filename, not a real caption the
+                # sender typed - already captured as media['filename']
+                # above, so it must not ALSO masquerade as this message's
+                # text/caption downstream (confirmed live: without this, a
+                # forwarded PDF's own filename text got fed straight into
+                # the financial-statement caption/password-parsing logic
+                # as if the sender had typed it).
+                message_body = ''
 
         # A shared location - like image/document/audio above, carries no
         # body text of its own, so without this it hit the empty-message
