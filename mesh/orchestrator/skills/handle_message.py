@@ -48,7 +48,7 @@ from mesh.lib.paths import state_db_path
 from mesh.lib.registry_client import list_agents
 from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db, router, rules_engine
-from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL
+from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL, WORKSPACE_MCP_URL
 from mesh.orchestrator.humanize import humanize
 from mesh.orchestrator.router import route_to_agent
 
@@ -1865,6 +1865,18 @@ def _parse_wayfinder_meta_command(text: str) -> Optional[bool]:
         return True
     return None
 
+
+def _parse_connect_google_command(text: str) -> bool:
+    """Fixed-phrase command ('Adiyan, connect my Google account' / 'Adiyan,
+    link my Google account') - never LLM-classified, same reasoning as
+    _parse_wayfinder_meta_command just above. One-shot, not a toggle: there's
+    nothing to turn back off here, it either triggers workspace-mcp's own
+    OAuth flow or it doesn't."""
+    lowered = (text or '').lower()
+    if 'google' not in lowered:
+        return False
+    return bool(re.search(r'\b(connect|link)\b', lowered))
+
 async def run(
     text: str,
     chat_id: str,
@@ -2116,6 +2128,32 @@ async def run(
             'Wayfinder will use the Meta Model API now.' if meta_switch else
             'Wayfinder is back off the Meta Model API (Claude CLI, or local Ollama in incognito).'
         )
+    elif not kb_pending and tier == 'owner' and _parse_connect_google_command(text):
+        # Fixed-phrase, owner-only, one-shot - triggers workspace-mcp's own
+        # OAuth flow by calling one real, read-only tool (list_calendars);
+        # with no stored credentials yet, that call doesn't raise - it
+        # RETURNS a plain-text instructions block containing the real
+        # "Authorization URL: https://accounts.google.com/..." (confirmed
+        # by reading workspace-mcp's own auth/google_auth.py source), which
+        # gets relayed back verbatim as this reply. A connect_token of its
+        # own, not the inbound caller's 'owner' token - same reasoning
+        # orchestrator_delivery's own tier documents for itself (an
+        # outbound call Orchestrator makes on its own behalf never reuses
+        # whatever tier the inbound message happened to carry). Not
+        # remembered: should_remember stays False, same as the branches
+        # above - this is admin bookkeeping, not conversation.
+        connect_token = permissions.mint_token('orchestrator', 'orchestrator_google_connect')
+        try:
+            reply = str(await call_tool(
+                WORKSPACE_MCP_URL, 'list_calendars', {'user_google_email': ''}, token=connect_token,
+            ))
+        except Exception as e:
+            logger.error(f'Google connect attempt failed: {describe_exception(e)}')
+            reply = (
+                "Couldn't reach the Google connection service - make sure workspace_mcp is running "
+                "(see mesh/tools/run_workspace_mcp.sh) and that GOOGLE_OAUTH_CLIENT_ID/SECRET are set, "
+                "then try again."
+            )
     elif not kb_pending and model_confidentiality.is_model_question(text):
         # An explicit "what model/LLM/company powers you" question gets a fixed
         # answer with no model involved - see mesh/lib/model_confidentiality.py.

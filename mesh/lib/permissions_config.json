@@ -83,6 +83,12 @@
         "mcp.whatsapp.send_location"
       ]
     },
+    "orchestrator_google_connect": {
+      "description": "Orchestrator's own outbound call when the owner sends the fixed-phrase 'connect my Google account' command (mesh/orchestrator/skills/handle_message.py's _parse_connect_google_command) - triggering workspace-mcp's own OAuth flow by calling one real, read-only, side-effect-free tool (list_calendars) so its response text (the Authorization URL) can be relayed back to the owner. Its own tier, not 'service' or the inbound caller's own 'owner' token - same reasoning orchestrator_delivery documents for itself: an outbound call Orchestrator makes on its own behalf gets its own narrowly-scoped tier, never piggybacked on whatever the inbound message's own tier happened to allow.",
+      "allow": [
+        "mcp.workspace.list_calendars"
+      ]
+    },
     "config_server_otp": {
       "description": "config_server's own OTP-login flow (mesh/config_server/otp.py) sending a dashboard login code to the owner's own WhatsApp. Deliberately its own tier, not 'service': one message per human-initiated login attempt, not an automated/recurring job, so it shouldn't be reopened or closed by whatever policy scheduler/journal's automated sends need.",
       "allow": [

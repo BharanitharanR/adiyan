@@ -51,6 +51,12 @@ def _agent_limits() -> dict:
 SERVICE_ROUTES: List[Dict[str, Any]] = [
     {'match': 'exact', 'path': '/webhook/whatsapp', 'upstream': 'https://127.0.0.1:8425', 'https_self_signed': True},
     {'match': 'prefix', 'path': '/verticals/', 'upstream': 'https://127.0.0.1:8425', 'https_self_signed': True},
+    # Google's OAuth consent redirect lands here, through the same public
+    # ngrok tunnel every other service above already uses - see
+    # mesh/tools/run_workspace_mcp.sh's own docstring for why that's the
+    # actual redirect URI registered in Google Cloud Console, not
+    # 127.0.0.1:8447 directly.
+    {'match': 'exact', 'path': '/oauth2callback', 'upstream': 'http://127.0.0.1:8447'},
 ]
 
 

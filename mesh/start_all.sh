@@ -239,6 +239,16 @@ COMPONENTS=(
     # precisely because that backend is HTTPS-only - the gateway block owns
     # that detail now. Needs nginx and the nginx_gateway_watcher both running.
     "ngrok|4040|ngrok http 8081 --log=stdout"
+    # Google Workspace (Gmail/Calendar/Drive/Docs/Sheets/Slides/Tasks/
+    # Contacts/Chat/Forms/Search), full read/write, no --tools/--permissions
+    # restriction at all - every tool the workspace-mcp package has. Needs
+    # a Google Cloud OAuth client (WORKSPACE_MCP_USABLE above) and ngrok's
+    # public URL at launch time (its own redirect URI) - see
+    # mesh/tools/run_workspace_mcp.sh's own docstring for both. cmd here is
+    # what the wrapper's own `exec` turns into, not a literal invocation -
+    # same "cmd stays semantic for pkill matching, launch site adds what's
+    # actually needed" split n8n/mongo_mcp already use for themselves.
+    "workspace_mcp|8447|.venv/bin/workspace-mcp --transport streamable-http --single-user"
     "whatsapp_mcp|8425|mesh.mcp.whatsapp.server"
     "orchestrator|8426|mesh.orchestrator.server"
     # Deterministic workflow execution (order-lifecycle-style state
@@ -280,6 +290,20 @@ if command -v ngrok >/dev/null 2>&1 && ngrok config check >/dev/null 2>&1; then
     NGROK_USABLE=1
 fi
 
+# Same reasoning as NGROK_USABLE just above: a Google Cloud OAuth client
+# (client id + secret) is a one-time human step in Google Cloud Console
+# nothing here can provision - see mesh/tools/run_workspace_mcp.sh's own
+# docstring. Also needs ngrok itself usable, since its redirect URI is
+# built from ngrok's current public URL at launch time.
+WORKSPACE_MCP_USABLE=0
+if [ "$NGROK_USABLE" -eq 1 ] && "$PYTHON_BIN" -c "
+from mesh.lib.secrets_vault import get_secret
+import sys
+sys.exit(0 if get_secret('GOOGLE_OAUTH_CLIENT_ID') and get_secret('GOOGLE_OAUTH_CLIENT_SECRET') else 1)
+" >/dev/null 2>&1; then
+    WORKSPACE_MCP_USABLE=1
+fi
+
 is_target() {
     # No names given ("${TARGET_NAMES[@]}" empty) means "every component" -
     # the original, unscoped behavior. Otherwise only a name explicitly
@@ -290,6 +314,9 @@ is_target() {
     # launch/wait/retry/stop loop already calls through, rather than
     # threading a separate check into each of them individually.
     if [ "$name" = "ngrok" ] && [ "$NGROK_USABLE" -ne 1 ]; then
+        return 1
+    fi
+    if [ "$name" = "workspace_mcp" ] && [ "$WORKSPACE_MCP_USABLE" -ne 1 ]; then
         return 1
     fi
     [ "${#TARGET_NAMES[@]}" -eq 0 ] && return 0
@@ -376,6 +403,15 @@ launch_component() {
         # launch site adds what's actually needed" split as mongo_mcp's
         # own npx prefix above.
         nohup mesh/tools/run_n8n.sh >> "$logfile" 2>&1 &
+    elif [ "$name" = "workspace_mcp" ]; then
+        # Launches the real wrapper script, not the literal $cmd string -
+        # same "cmd stays semantic for pkill matching, launch site adds
+        # what's actually needed" split as n8n/mongo_mcp above. The
+        # wrapper reads ngrok's current public URL and the OAuth
+        # credentials live, at the moment it actually runs - see its own
+        # docstring for why that can't be baked into a static COMPONENTS
+        # string.
+        nohup mesh/tools/run_workspace_mcp.sh >> "$logfile" 2>&1 &
     elif [[ "$cmd" == *" "* ]]; then
         # A raw multi-word command - a binary invocation (mongod, qdrant-bin,
         # ngrok, neo4j console), an `env VAR=... cmd` prefix (openwa), or a
@@ -467,6 +503,15 @@ do_start() {
     if [ "$NGROK_USABLE" -ne 1 ] && is_target "whatsapp_mcp"; then
         echo "ngrok isn't installed or has no authtoken configured yet - WhatsApp messages won't reach Adiyan until you run:"
         echo "  brew install ngrok && ngrok config add-authtoken <token from https://dashboard.ngrok.com>"
+        echo "then re-run this script."
+        echo
+    fi
+
+    if [ "$WORKSPACE_MCP_USABLE" -ne 1 ] && is_target "workspace_mcp"; then
+        echo "GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET aren't set yet - Gmail/Calendar/Drive won't be available until you:"
+        echo "  1. Create an OAuth 2.0 Client (type: Web application) in Google Cloud Console"
+        echo "  2. python3 -m mesh.tools.set_secret GOOGLE_OAUTH_CLIENT_ID"
+        echo "  3. python3 -m mesh.tools.set_secret GOOGLE_OAUTH_CLIENT_SECRET"
         echo "then re-run this script."
         echo
     fi

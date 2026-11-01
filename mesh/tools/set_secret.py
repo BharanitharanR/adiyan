@@ -19,7 +19,10 @@ from mesh.lib.secrets_vault import delete_secret, get_secret, set_secret
 # Not an enforced allow-list (any key name works) - just what this CLI knows
 # to report on for --list, so a typo'd key name doesn't silently vanish
 # unnoticed.
-KNOWN_KEYS = ['PERMISSIONS_JWT_SECRET', 'CONFIG_DASHBOARD_PASSWORD']
+KNOWN_KEYS = [
+    'PERMISSIONS_JWT_SECRET', 'CONFIG_DASHBOARD_PASSWORD', 'MODEL_API_KEY',
+    'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET',
+]
 
 
 def main():
