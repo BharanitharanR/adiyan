@@ -575,6 +575,32 @@ class AdiyanAgent:
             except Exception as e:
                 logger.warning(f'Claude CLI call failed for {self.agent_id}/{stage}, using local model: {e}')
 
+        # Meta Model API backend (mesh/lib/meta_model_client.py) - a third
+        # provider alongside Ollama/Claude CLI, opted into per-stage via the
+        # ordinary stage config's 'provider' key (default 'ollama', so every
+        # existing stage on every existing agent is byte-for-byte
+        # unaffected). Same call shapes as the Claude CLI branch above
+        # (plain-text/schema/tools only - image and raw have no Meta
+        # equivalent here, same reasoning as that branch), and the same
+        # "unavailable backend degrades a call, never breaks it" contract:
+        # any failure falls through to the local Ollama paths below.
+        if image_b64 is None and not raw:
+            provider_cfg = await config_sdk.get_stage_config(
+                self.agent_id, stage, {'model': model, 'temperature': temperature, 'provider': 'ollama'},
+            )
+            if provider_cfg.get('provider') == 'meta':
+                try:
+                    from mesh.lib import meta_model_client
+                    result = await meta_model_client.run(
+                        prompt, model=provider_cfg['model'], temperature=provider_cfg['temperature'],
+                        schema=schema, tools=tools,
+                    )
+                    mode = 'tools' if tools is not None else ('schema' if schema is not None else 'text')
+                    llm_log.log_call(self.agent_id, stage, mode, f"meta:{provider_cfg['model']}", prompt, result)
+                    return result
+                except Exception as e:
+                    logger.warning(f'Meta Model API call failed for {self.agent_id}/{stage}, using local model: {e}')
+
         # Central LLM logging (mesh/lib/llm_log.py): every branch below logs
         # its own prompt/response right at its own return point, since each
         # branch resolves a different model name and shapes its response
