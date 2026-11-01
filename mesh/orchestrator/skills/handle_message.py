@@ -26,8 +26,10 @@ agent that wants to hand back a file just needs to return
 """
 import asyncio
 import base64
+import json
 import logging
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -1712,6 +1714,31 @@ async def _resolve_financial_statement_intent(caption: str, cfg: Dict[str, Any])
 _BANK_NAME_PATTERN = re.compile(r'\b(hdfc|sbi)\b', re.IGNORECASE)
 
 
+def _sniff_pdf_identity(file_path: Path, password: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(bank, holder_name), both best-effort, via a blocking subprocess -
+    see wayfinder_finance_mcp/parsers/pdf_adapter.py's sniff_identity for
+    what it actually reads (a PDF's own letterhead/holder-name line, never
+    anything stored). A subprocess, same as the real ingest call below,
+    since this lives in a different repo/venv - not importable in-process."""
+    script = (
+        'import sys, json; '
+        'from wayfinder_finance_mcp.parsers.pdf_adapter import sniff_identity; '
+        'bank, holder = sniff_identity(sys.argv[1], password=sys.argv[2] or None); '
+        'print(json.dumps({"bank": bank, "holder": holder}))'
+    )
+    try:
+        completed = subprocess.run(
+            [f'{FINANCE_MCP_REPO_PATH}/.venv/bin/python3', '-c', script, str(file_path), password or ''],
+            cwd=FINANCE_MCP_REPO_PATH, capture_output=True, timeout=30, text=True,
+        )
+        if completed.returncode != 0:
+            return None, None
+        result = json.loads(completed.stdout)
+        return result.get('bank'), result.get('holder')
+    except Exception:
+        return None, None
+
+
 async def _ingest_financial_statement_upload(
     media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str], caption: str = '',
 ) -> Optional[str]:
@@ -1723,24 +1750,34 @@ async def _ingest_financial_statement_upload(
     ingestion is deliberately a plain CLI/function there, never an MCP
     tool, so this is a subprocess call, not an A2A/MCP one.
 
-    bank (hdfc/sbi) is read off the caption text (same _BANK_NAME_PATTERN
-    either in the caption or the uploaded filename) - there's no other
-    signal a WhatsApp upload carries that says which bank a statement is
-    from, so an ambiguous/missing caption gets a clear "say which bank"
-    reply rather than guessing. account_id is bank + a best-effort person
-    label from the sender's contact name, e.g. 'hdfc_RAVI' - the finance
-    repo's own dedup is keyed on file content hash, not this label, so a
-    reasonable guess here costs nothing even if it's later renamed by hand.
+    For a PDF, bank and the account holder's name are both read off the
+    PDF's own letterhead/printed name (see pdf_adapter.py's sniff_identity)
+    - a real bank statement prints both, so no caption is needed at all.
+    The caption's only remaining job for a PDF is as the unlock password,
+    if the file is protected (the whole caption, stripped - "send the
+    password-protected PDF with the password as the caption" is the
+    simplest convention that needed no new UI; happy to change this if a
+    different convention is wanted).
+
+    A CSV carries neither signal (confirmed against real HDFC/SBI net-
+    banking exports - the column headers differ, but neither prints a bank
+    name or account holder anywhere in the file), so a CSV still needs the
+    bank named in the caption or filename, and still uses the sender's own
+    contact name as the person label - same limitation as before, just
+    narrowed to CSV specifically now that PDF doesn't need it.
+
+    account_id is bank + a best-effort person label, e.g. 'hdfc_RAVI' -
+    the finance repo's own dedup is keyed on file content hash, not this
+    label, so a reasonable guess here costs nothing even if it's later
+    renamed by hand.
 
     tier is minted into the outgoing token as-is (never hardcoded to
     'owner') - unused by this function now that there's no A2A call left,
     kept in the signature so call sites don't need updating if a future
     permission-gated step is added here."""
     filename = media.get('filename') or 'statement.xls'
-    bank_match = _BANK_NAME_PATTERN.search(caption) or _BANK_NAME_PATTERN.search(filename)
-    if bank_match is None:
-        return "Which bank is this statement from - HDFC or SBI? Send it again with that in the caption."
-    bank = bank_match.group(1).lower()
+    is_pdf = filename.lower().endswith('.pdf')
+    password = caption.strip() if is_pdf and caption.strip() else None
 
     safe_chat_id = re.sub(r'[^A-Za-z0-9_@.-]', '_', chat_id)
     upload_dir = Path.home() / '.Adiyan' / 'family_finance' / 'uploads' / safe_chat_id
@@ -1752,13 +1789,32 @@ async def _ingest_financial_statement_upload(
         logger.error(f'Could not save uploaded statement for {chat_id}: {e}')
         return None
 
-    person_id = (contact_name or chat_id).split()[0].upper()
+    bank: Optional[str] = None
+    if is_pdf:
+        bank, holder = await asyncio.to_thread(_sniff_pdf_identity, file_path, password)
+        if bank is None or holder is None:
+            return (
+                "Couldn't read the bank name and account holder off that PDF - check it's a real HDFC or SBI "
+                "statement, and that the caption has the right password if it's protected."
+            )
+        person_id = holder.split()[0]
+    else:
+        bank_match = _BANK_NAME_PATTERN.search(caption) or _BANK_NAME_PATTERN.search(filename)
+        if bank_match is None:
+            return "Which bank is this statement from - HDFC or SBI? Send it again with that in the caption."
+        bank = bank_match.group(1).lower()
+        person_id = (contact_name or chat_id).split()[0].upper()
+
     account_id = f'{bank}_{person_id}'
+    cli_args = [
+        f'{FINANCE_MCP_REPO_PATH}/.venv/bin/python3', '-m', 'wayfinder_finance_mcp.cli', 'ingest',
+        str(file_path), '--account-id', account_id, '--bank', bank,
+    ]
+    if password:
+        cli_args += ['--password', password]
     try:
         process = await asyncio.create_subprocess_exec(
-            f'{FINANCE_MCP_REPO_PATH}/.venv/bin/python3', '-m', 'wayfinder_finance_mcp.cli', 'ingest',
-            str(file_path), '--account-id', account_id, '--bank', bank,
-            cwd=FINANCE_MCP_REPO_PATH, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *cli_args, cwd=FINANCE_MCP_REPO_PATH, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await process.communicate()
     except Exception as e:
