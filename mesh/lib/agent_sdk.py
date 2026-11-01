@@ -35,13 +35,14 @@ something this class auto-creates at runtime.
 import base64
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional, Type
 
 import httpx
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
-from mesh.lib import config_sdk, customer_record_hook, llm_log, memory_hook, permissions, persona_hook
+from mesh.lib import claude_cli, config_sdk, customer_record_hook, llm_log, memory_hook, model_confidentiality, permissions, persona_hook, privacy_mode
 from mesh.lib.a2a_client import call_agent as _call_agent
 from mesh.lib.mcp_client import call_tool as _call_tool
 from mesh.lib.utilities.whatsapp.notify_owner import WHATSAPP_MCP_URL, notify_owner as _notify_owner
@@ -79,6 +80,191 @@ CRON_TRIGGER_URL = 'http://127.0.0.1:8421/mcp'
 # for the actual "run locally or offload to a peer" decision, which
 # lives there now, not inline in this file.
 INFERENCE_ROUTER_URL = 'http://127.0.0.1:8441'
+
+# Shared pseudo agent_id holding the platform-wide LLM backend settings,
+# editable from the config dashboard like any other constant: `backend`
+# ('claude_cli' by default, or 'ollama' to turn the hosted path off for
+# everyone), `claude_cli_model`, `claude_cli_timeout_seconds`,
+# `claude_cli_max_concurrency`, and `local_only_stages`.
+_BACKEND_AGENT_ID = '_llm_backend'
+
+# Stages that never go to the Claude CLI regardless of `backend`: the
+# per-page AdiyanReader pipeline (high volume, not chat) and compute_share's
+# run_inference (it serves peers, so it must be this machine's own model).
+# The Analysis Agent's ReAct loop is NOT here any more - it runs on the CLI
+# too, tool selection included (see _ask_claude_cli's tools path).
+# Editable at runtime via the `local_only_stages` constant.
+_DEFAULT_LOCAL_ONLY_STAGES = [
+    'synthesize_speech', 'add_emotion_tags', 'rewrite_for_speech', 'eval_audio_quality', 'generate_questions',
+    'run_inference',
+]
+
+# Stages where the answer's quality is the product - the ReAct loop deciding
+# what to look up and how to answer. They use `claude_cli_reasoning_model`
+# (sonnet by default) instead of `claude_cli_model` (haiku).
+_REASONING_STAGES = {'decide_next_step', 'final_answer'}
+
+
+async def _use_claude_cli(stage: str, schema, tools, image_b64, raw, community) -> bool:
+    """Plain-text, schema and tool-selection calls are eligible - image and raw
+    have no CLI equivalent here, and community means the sender explicitly
+    asked for the peer-sharing network. A contact in incognito never
+    qualifies."""
+    if image_b64 is not None or raw or community:
+        return False
+    if privacy_mode.CURRENT_INCOGNITO.get():
+        return False
+    backend = await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'backend', 'claude_cli',
+        description="Which LLM answers plain-text and schema calls: 'claude_cli' (default) or 'ollama' (local only, for everyone).",
+    )
+    if backend != 'claude_cli':
+        return False
+    local_only = await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'local_only_stages', _DEFAULT_LOCAL_ONLY_STAGES,
+        description='Stage names that always stay on local Ollama even when backend is claude_cli.',
+    )
+    if isinstance(local_only, str):
+        local_only = [s.strip() for s in local_only.split(',') if s.strip()]
+    return stage not in local_only
+
+
+async def claude_cli_active(stage: str, community: Optional[str] = None) -> bool:
+    """Whether a plain-text/schema call at `stage` would go to the Claude CLI
+    right now for the current request (backend on, stage not local-only,
+    contact not in incognito). For callers that choose a different strategy
+    when the hosted model is the one answering - e.g. Orchestrator's single
+    merged skill classification versus its per-skill chain on local Ollama."""
+    return await _use_claude_cli(stage, None, None, None, False, community)
+
+
+async def claude_cli_web_research(agent_id: str, task: str) -> str:
+    """Answer a web research task through the Claude CLI's own web tools and
+    return its text (sources included). Raises on any failure - the caller
+    falls back to the local browser agent. Callers check claude_cli_active()
+    first, which is also what keeps an incognito contact's task off the web
+    tools."""
+    model = await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_web_model', 'haiku',
+        description='Model alias for Claude CLI web research (browse_web). Use sonnet for better synthesis at higher cost.',
+    )
+    timeout_s = float(await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_web_timeout_seconds', 150,
+        description='Seconds before a Claude CLI web research call is abandoned and the local browser agent is used.',
+    ))
+    budget = float(await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_web_max_budget_usd', 0.30,
+        description='Most one Claude CLI web research task may spend, in USD.',
+    ))
+    concurrency = int(await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_max_concurrency', 3,
+        description='Most Claude CLI processes allowed to run at once on this machine.',
+    ))
+    try:
+        data = await claude_cli.web_research(
+            task, model=model, timeout_s=timeout_s, max_budget_usd=budget, max_concurrency=concurrency,
+        )
+        result = (data.get('result') or '').strip()
+        if not result:
+            raise claude_cli.ClaudeCliError('empty web research result')
+    except Exception as e:
+        llm_log.log_call(agent_id, 'browse_web', 'web', f'claude-cli:{model}', task, None, error=str(e))
+        raise
+    llm_log.log_call(agent_id, 'browse_web', 'web', f"claude-cli:{model} (${data.get('total_cost_usd', 0):.4f})", task, result)
+    return result
+
+
+class _ToolCallMessage:
+    """The shape callers read from a tool-selection reply: .tool_calls (the
+    same {name, args, id, type} dicts langchain produces) and .content, so
+    code written against ChatOllama.bind_tools() works unchanged."""
+
+    def __init__(self, tool_calls: list):
+        self.content = ''
+        self.tool_calls = tool_calls
+        self.additional_kwargs: Dict[str, Any] = {}
+
+
+def _tool_arguments_schema(tool) -> Dict[str, Any]:
+    schema = dict(tool.get_input_schema().model_json_schema())
+    for noise in ('title', 'description'):
+        schema.pop(noise, None)
+    schema.setdefault('type', 'object')
+    schema.setdefault('properties', {})
+    return schema
+
+
+def _tool_selection_schema(tools: list) -> Dict[str, Any]:
+    variants = [{
+        'type': 'object',
+        'properties': {'tool': {'const': t.name}, 'args': _tool_arguments_schema(t)},
+        'required': ['tool', 'args'], 'additionalProperties': False,
+    } for t in tools]
+    return {
+        'type': 'object', 'properties': {'call': {'anyOf': variants}},
+        'required': ['call'], 'additionalProperties': False,
+    }
+
+
+def _tool_listing(tools: list) -> str:
+    return '\n\n'.join(f'- {t.name}: {" ".join((t.description or "").split())}' for t in tools)
+
+
+async def _ask_claude_cli(agent_id: str, stage: str, prompt: str, schema, tools=None):
+    reasoning = stage in _REASONING_STAGES
+    model = await config_sdk.get_constant(
+        _BACKEND_AGENT_ID,
+        'claude_cli_reasoning_model' if reasoning else 'claude_cli_model',
+        'sonnet' if reasoning else 'haiku',
+        description=(
+            "Model alias for the reasoning stages (the ReAct loop's tool choice and final answer): haiku, sonnet, opus, or a full model id."
+            if reasoning else
+            "Model alias passed to the Claude CLI's --model (haiku, sonnet, opus, or a full model id)."
+        ),
+    )
+    timeout_s = float(await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_timeout_seconds', 90,
+        description='Seconds before a Claude CLI call is abandoned and the call falls back to local Ollama.',
+    ))
+    concurrency = int(await config_sdk.get_constant(
+        _BACKEND_AGENT_ID, 'claude_cli_max_concurrency', 3,
+        description='Most Claude CLI processes allowed to run at once on this machine.',
+    ))
+    mode = 'tools' if tools is not None else ('schema' if schema is not None else 'text')
+    try:
+        if tools is not None:
+            full_prompt = (
+                f'{prompt}\n\nTools you can call (choose exactly one):\n{_tool_listing(tools)}\n\n'
+                'Respond with exactly one tool call: set "tool" to that tool\'s name and "args" to its arguments.'
+            )
+            data = await claude_cli.run(
+                full_prompt, model=model, json_schema=_tool_selection_schema(tools),
+                timeout_s=timeout_s, max_concurrency=concurrency,
+            )
+            call = (data.get('structured_output') or {}).get('call')
+            names = {t.name for t in tools}
+            if not isinstance(call, dict) or call.get('tool') not in names or not isinstance(call.get('args'), dict):
+                raise claude_cli.ClaudeCliError(f'unusable tool selection: {call!r}')
+            result = _ToolCallMessage([{
+                'name': call['tool'], 'args': call['args'], 'id': uuid.uuid4().hex, 'type': 'tool_call',
+            }])
+            prompt = full_prompt
+        else:
+            data = await claude_cli.run(
+                prompt, model=model, schema=schema, timeout_s=timeout_s, max_concurrency=concurrency,
+            )
+            if schema is not None:
+                structured = data.get('structured_output')
+                if structured is None:
+                    raise claude_cli.ClaudeCliError('no structured_output in CLI reply')
+                result = schema.model_validate(structured)
+            else:
+                result = data.get('result') or ''
+    except Exception as e:
+        llm_log.log_call(agent_id, stage, mode, f'claude-cli:{model}', prompt, None, error=str(e))
+        raise
+    llm_log.log_call(agent_id, stage, mode, f"claude-cli:{model} (${data.get('total_cost_usd', 0):.4f})", prompt, result)
+    return result
 
 
 async def _raw_ollama_stream(
@@ -370,8 +556,24 @@ class AdiyanAgent:
         context_prefix = '\n\n'.join(
             block for block in (persona_context, customer_record_context, memory_context) if block
         )
+        # Same exclusion as the blocks above (classify/extract/image/raw never
+        # produce text a person reads). Never reveal what powers the answer -
+        # see mesh/lib/model_confidentiality.py for why this is only the
+        # second of two layers.
+        if _inject_context:
+            context_prefix = '\n\n'.join(b for b in (model_confidentiality.CONFIDENTIALITY_RULE, context_prefix) if b)
         if context_prefix:
             prompt = f'{context_prefix}\n\n{prompt}'
+
+        # Claude CLI backend for plain-text and schema calls, unless this
+        # contact is in incognito or the stage is local-only (see
+        # _use_claude_cli). Any failure falls through to the local Ollama
+        # paths below, so the CLI being down degrades a call, never breaks it.
+        if await _use_claude_cli(stage, schema, tools, image_b64, raw, community):
+            try:
+                return await _ask_claude_cli(self.agent_id, stage, prompt, schema, tools)
+            except Exception as e:
+                logger.warning(f'Claude CLI call failed for {self.agent_id}/{stage}, using local model: {e}')
 
         # Central LLM logging (mesh/lib/llm_log.py): every branch below logs
         # its own prompt/response right at its own return point, since each

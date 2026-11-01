@@ -42,6 +42,20 @@ SKILL_HANDLERS = {
     'voice_samples': voice_samples.run,
 }
 
+# The four skills whose daily-limit checks (start_reading's book cap,
+# read_now/read_range/restart_reading/reread_page's shared page cap) exempt
+# the owner - see each skill's own docstring on why the owner is never
+# throttled. is_owner is computed HERE, from the token this process itself
+# just verified, and always overwrites whatever the incoming payload's own
+# dict happened to contain for that key - never trusted from params, even
+# though in practice only Orchestrator (never a customer directly) ever
+# builds that payload. Defense in depth costs nothing here: a customer
+# forging is_owner=True in their own message could never reach this
+# process's params dict today, but the check is free and the alternative
+# (a rate limit a determined customer could just claim their way past) is
+# the one thing this whole feature exists to prevent.
+_LIMITED_SKILLS = {'start_reading', 'read_now', 'read_range', 'restart_reading', 'reread_page'}
+
 
 class AdiyanReaderAgentExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -85,6 +99,9 @@ class AdiyanReaderAgentExecutor(AgentExecutor):
         if not permissions.is_allowed(claims, f'{AGENT_ID}.{skill_id}'):
             await updater.reject(new_text_message('Not authorized for this.'))
             return
+
+        if skill_id in _LIMITED_SKILLS:
+            params['is_owner'] = (claims or {}).get('tier') == 'owner'
 
         try:
             result = await handler(**params)

@@ -164,6 +164,21 @@ async def _is_open_enrollment(vertical_id: Optional[str]) -> bool:
     return bool(value)
 
 
+async def _has_session_carry_over(vertical_id: Optional[str]) -> bool:
+    """True if this REAL vertical's own owner opted it into demo-style
+    session carry-over - a phrase-less follow-up within
+    db.SESSION_WINDOW_SECONDS of the last real summon still counts as
+    talking to it, the same relaxation demo verticals already get
+    unconditionally. get_vertical_own_constant, not get_constant - same
+    reasoning _is_open_enrollment() already documents for the identical
+    pitfall (a vertical that never set this must not be treated as if it
+    explicitly opted in)."""
+    if not vertical_id or _is_demo_vertical(vertical_id):
+        return False  # demo verticals already get this via _is_demo_vertical
+    value = await config_sdk.get_vertical_own_constant(AGENT_ID, vertical_id, 'session_carry_over')
+    return bool(value)
+
+
 async def _fallback_to_active_session(
     conn: db.Collection, identity_key: str,
 ) -> Tuple[bool, Optional[str]]:
@@ -177,7 +192,7 @@ async def _fallback_to_active_session(
     deactivated vertical must stay unreachable regardless of what the session
     says."""
     vertical_id = db.get_active_session_vertical(conn, identity_key)
-    if not _is_demo_vertical(vertical_id):
+    if not (_is_demo_vertical(vertical_id) or await _has_session_carry_over(vertical_id)):
         return False, None
     enabled = await config_sdk.get_constant(AGENT_ID, 'vertical_enabled', True, vertical_id=vertical_id)
     if not enabled:
@@ -483,7 +498,7 @@ async def check(
         summoned, vertical_id = await _fallback_to_active_session(conn, identity_key)
         if not summoned:
             return None, None, None, False
-    elif _is_demo_vertical(vertical_id):
+    elif _is_demo_vertical(vertical_id) or await _has_session_carry_over(vertical_id):
         db.record_summon(conn, identity_key, vertical_id)
 
     tier = db.get_metadata(conn, identity_key).get('permission_type') or permissions.default_client_tier()

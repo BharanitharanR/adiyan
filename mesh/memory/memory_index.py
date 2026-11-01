@@ -291,6 +291,16 @@ KB_CHUNK_OVERLAP = 100
 # queried by similarity.
 KB_PAGES_COLLECTION_NAME = 'adiyan_book_pages'
 
+# What a genuinely blank/near-blank page gets stored as (see insert_book()
+# below for why this can't just be an empty string). A real module-level
+# constant, not a string duplicated at each call site, because
+# mesh/adiyan_reader/skills/read_next_page.py needs to recognize this exact
+# value too - to skip past and narrate the next real page instead of
+# synthesizing a voice note that just says "this page is blank" (confirmed
+# live: several consecutive front-matter pages in one book all stored this,
+# and reading them out loud one after another was worse than useless).
+BLANK_PAGE_TEXT = '(This page is blank.)'
+
 # search_within_document()'s own default - a bit higher than KB_DEFAULT_TOP_K
 # since the search space here is already narrowed to one document, so
 # returning a few more candidate chunks costs little and raises the odds the
@@ -557,7 +567,7 @@ class MemoryIndex:
             # least one node, closing the gap at the source instead of
             # only handling it defensively downstream.
             self.pages_index.insert(Document(
-                text=finalized or '(This page is blank.)',
+                text=finalized or BLANK_PAGE_TEXT,
                 metadata={'source_filename': source_key, 'page_number': page_no},
             ))
 

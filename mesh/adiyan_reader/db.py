@@ -28,7 +28,7 @@ of it uses `doc.get('last_delivered_at')` rather than indexing directly.
 """
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
@@ -39,6 +39,8 @@ MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
 JOBS_COLLECTION = 'adiyan_reader_jobs'
 QUESTIONS_COLLECTION = 'adiyan_reader_questions'
 EVAL_RESULTS_COLLECTION = 'adiyan_reader_eval_results'
+USAGE_COLLECTION = 'adiyan_reader_daily_usage'
+_IST_OFFSET = timedelta(hours=5, minutes=30)
 
 _client: Optional[MongoClient] = None
 
@@ -277,3 +279,33 @@ def record_eval_result(
         'page_number': page_number, 'match_percentage': match_percentage, 'threshold': threshold,
         'passed': passed, 'transcript': transcript, 'created_at': datetime.now(timezone.utc).isoformat(),
     })
+
+
+def _usage_day_key(phone_number: str) -> str:
+    """<phone>::<IST-date> - IST, not UTC or server-local, since 'today' in
+    a customer-facing daily limit should match the customer's own clock
+    (ABJ's real customers are Chennai-based), not wherever this process
+    happens to run. A fixed +5:30 offset, not zoneinfo - matches what the
+    Chennai/Trichy-based reasoning elsewhere in this codebase already
+    assumes, and IST has no DST to get wrong."""
+    ist_now = datetime.now(timezone.utc) + _IST_OFFSET
+    return f'{phone_number}::{ist_now.date().isoformat()}'
+
+
+def get_daily_usage(conn: Database, phone_number: str) -> Dict[str, int]:
+    """{'new_books': N, 'pages': N} for TODAY (IST) only - a fresh day
+    starts both back at 0 automatically, since _usage_day_key() itself
+    changes at midnight IST rather than anything having to reset a
+    counter. Owner calls never reach this - see agent_executor.py's own
+    is_owner short-circuit - so this never needs to know who's exempt."""
+    doc = conn[USAGE_COLLECTION].find_one({'_id': _usage_day_key(phone_number)}) or {}
+    return {'new_books': doc.get('new_books', 0), 'pages': doc.get('pages', 0)}
+
+
+def increment_daily_usage(conn: Database, phone_number: str, field: str, by: int = 1) -> None:
+    """field is 'new_books' or 'pages'. Upserts today's (IST) row - the
+    same day-key rollover get_daily_usage() relies on means this never
+    needs its own explicit reset logic."""
+    conn[USAGE_COLLECTION].update_one(
+        {'_id': _usage_day_key(phone_number)}, {'$inc': {field: by}}, upsert=True,
+    )

@@ -43,7 +43,7 @@ from pydantic import BaseModel, Field
 from mesh.analysis.constants import AGENT_ID, BROWSER_MCP_URL, MEMORY_AGENT_URL
 from mesh.lib import config_sdk, customer_needs, permissions, tool_resolution
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
-from mesh.lib.agent_sdk import AdiyanAgent
+from mesh.lib.agent_sdk import AdiyanAgent, claude_cli_active, claude_cli_web_research
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.config import load_runtime_config, load_seed_config
 from mesh.lib.errors import describe_exception
@@ -408,6 +408,14 @@ def _make_tools(
         bare topic - describe exactly what to find and what to do with it.
         strict_grounding still applies to whatever comes back: report only
         what was actually found, and say so honestly if nothing was."""
+        # Claude CLI's own web tools when it's answering this request (not for
+        # an incognito contact); the local browser agent below otherwise, and
+        # as the fallback if the CLI call fails.
+        if await claude_cli_active('browse_web'):
+            try:
+                return await claude_cli_web_research(AGENT_ID, task)
+            except Exception as e:
+                logger.warning(f'Claude CLI web research failed, using the local browser agent: {describe_exception(e)}')
         token = permissions.mint_token('analysis', 'service')
         try:
             result = await call_tool(BROWSER_MCP_URL, 'browse', {'task': task}, token=token)
@@ -805,7 +813,9 @@ async def run(
             '(read_document or search_within_document) before treating anything about it as a finding.'
         )
 
-    for _ in range(MAX_STEPS):
+    for i in range(len(tools)): 
+        logger.debug(f'tools list: {[t.name for t in tools]}')  
+        #tool = tools[i] # leave one step for the final answer, if finish() never called
         response = await _decide_next_step(instruction, scratchpad, tools, cfg, strict)
 
         if not response.tool_calls:
@@ -817,6 +827,7 @@ async def run(
                 # finish() but wrote the tool-call JSON out as plain text
                 # instead - see that function's own docstring.
                 return _package_result(_extract_answer_from_raw_content(response.content), source_filename)
+            # if i == len(tools) - 1:
             # Confirmed live: an empty response here (no tool call AND no
             # content - a real, observed model hiccup on decide_next_step,
             # not a hypothetical) used to fall straight to the generic

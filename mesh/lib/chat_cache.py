@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from mesh.lib import config_sdk
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.config import load_seed_config
+from mesh.lib import mongo_shared
 
 # Shared platform prompt, same pseudo agent_id convention as
 # skill_router.py/tool_resolution.py/vision.py - relevance filtering is the
@@ -45,6 +46,40 @@ _SHARED_AGENT_ID = 'chat_cache'
 _agent = AdiyanAgent(_SHARED_AGENT_ID)
 _SEED = load_seed_config(Path(__file__).parent)
 
+# Durable copy of the whole conversation: one document per vertical::contact
+# (_id is _cache_key's output), turns appended in order via $push, so array
+# order is sequence order. The in-memory deque below is rehydrated from it.
+MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
+MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
+HISTORY_COLLECTION = 'chat_history_by_contact'
+
+_hydrated: set = set()
+
+
+def _history_collection():
+    return mongo_shared.database()[HISTORY_COLLECTION]
+
+
+def _ensure_hydrated(key: str) -> None:
+    """Once per key per process: if the in-memory window is empty, refill it
+    from the last _HARD_CAP_TURNS persisted turns. A Mongo failure leaves the
+    key un-hydrated so the next call retries."""
+    with _lock:
+        if key in _hydrated:
+            return
+    try:
+        doc = _history_collection().find_one({'_id': key}, {'turns': {'$slice': -_HARD_CAP_TURNS}})
+    except Exception as e:
+        logger.warning(f'chat_cache hydrate failed for {key!r}: {e}')
+        return
+    persisted = (doc or {}).get('turns', [])
+    with _lock:
+        if key in _hydrated:
+            return
+        turns = _turns_by_contact.setdefault(key, deque(maxlen=_HARD_CAP_TURNS))
+        if not turns:
+            turns.extend(persisted)
+        _hydrated.add(key)
 
 def _seeded(key: str) -> Dict[str, Any]:
     return _SEED.get(key, {'value': '', 'description': ''})
@@ -99,20 +134,28 @@ def _cache_key(contact_name: str, vertical_id: Optional[str]) -> str:
 
 
 def remember_turn(contact_name: str, user_text: str, reply_text: str, vertical_id: Optional[str] = None) -> None:
-    """Best-effort, never raises - a failure here must never break the reply
-    that already went out, same tolerance every other best-effort write in
-    this mesh gets (e.g. mem0_backend.remember()).
-
-    vertical_id must match whatever get_recent_turns()/format_recent_turns()
-    is later called with for this same contact, or this turn will never be
-    found - see _cache_key's own docstring for why this exists."""
+    if reply_text is None:  # a silent-failure turn carries nothing worth recalling
+        return
     key = _cache_key(contact_name, vertical_id)
+    _ensure_hydrated(key)  # before appending, or the deque looks non-empty and old history never loads
+    ts = time.time()
     try:
         with _lock:
             turns = _turns_by_contact.setdefault(key, deque(maxlen=_HARD_CAP_TURNS))
-            turns.append({'user_text': user_text, 'reply_text': reply_text, 'timestamp': time.time()})
+            turns.append({'user_text': user_text, 'reply_text': reply_text, 'timestamp': ts})
     except Exception:
         pass
+    try:
+        _history_collection().update_one(
+            {'_id': key},
+            {
+                '$setOnInsert': {'contact': contact_name, 'vertical_id': vertical_id},
+                '$push': {'turns': {'user_text': user_text, 'reply_text': reply_text, 'timestamp': ts}},
+            },
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f'chat_cache persist failed for {key!r}: {e}')
 
 
 def get_recent_turns(contact_name: str, vertical_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -122,6 +165,7 @@ def get_recent_turns(contact_name: str, vertical_id: Optional[str] = None) -> Li
     vertical_id: see remember_turn's own docstring - must match the write
     side for this contact, or nothing will come back."""
     key = _cache_key(contact_name, vertical_id)
+    _ensure_hydrated(key)
     with _lock:
         turns = list(_turns_by_contact.get(key, ()))
 

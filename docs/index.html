@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Adiyan is an AI agent harness you run on your own machine: a working orchestrator, memory, scheduler and more out of the box, a story-reading agent called Adiyan Reader, a dev kit for adding your own agents, and an opt-in peer network for when your machine needs a hand.">
+<meta name="description" content="Adiyan is a technical harness for building AI agents that run on your own machine: a real orchestrator, memory, and scheduler out of the box, a dev kit for adding agents of your own, and an opt-in peer network for when your machine needs a hand. Adiyan Reader is one agent built on it, not a separate product.">
 <title>Adiyan: An AI Agent Harness</title>
 <style>
 
@@ -652,13 +652,13 @@ h1,h2,h3{
 
 <main class="deck">
 
-<!-- 01 : OFFERING 1 - HERO + AGENT HARNESS -->
+<!-- 01 : HERO + AGENT HARNESS -->
 <section class="slide" id="s1">
   <div class="grid-split">
     <div>
-      <p class="eyebrow">Offering 1 &middot; An agent harness</p>
-      <h1 class="h-hero">One harness. <em>Every agent your business needs.</em></h1>
-      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is an AI agent harness that runs entirely on your own machine. It ships with a working orchestrator, memory, and scheduler - not libraries you assemble yourself.</p>
+      <p class="eyebrow">A technical harness, not a product</p>
+      <h1 class="h-hero">One harness. <em>Build every agent you need.</em></h1>
+      <p class="lede" style="margin-top:1.4rem;">Adiyan (அடியான், "your humble servant") is an AI agent harness that runs entirely on your own machine - a real orchestrator, memory, and scheduler already wired together, not libraries you assemble yourself. Everything past this point - Adiyan Reader, the dev kit, community compute - is something built <em>on</em> the harness, not a separate product next to it.</p>
     </div>
     <div class="phone">
       <div class="thread" id="hero-thread">
@@ -679,7 +679,7 @@ h1,h2,h3{
   </div>
 
   <div style="margin-top:1rem;">
-    <p class="eyebrow">Out of the box</p>
+    <p class="eyebrow">What the harness ships with</p>
     <h2 class="h2" style="font-size:clamp(1.6rem,3vw,2.2rem);">Seven agents, <em>one install.</em></h2>
     <figure class="diagram-figure" style="width:min(100%,760px);margin-top:1rem;">
       <svg viewBox="0 0 700 460" role="img" aria-label="WhatsApp feeds Orchestrator, which routes each message to whichever of Memory, Scheduler, Journal, Analysis, or Agent Registry the moment needs, then replies back." style="width:100%;height:auto;">
@@ -729,13 +729,13 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 02 : OFFERING 2 - ADIYAN READER -->
+<!-- 02 : ADIYAN READER, BUILT ON THE HARNESS -->
 <section class="slide" id="s2">
-  <p class="eyebrow">Offering 2 &middot; Adiyan Reader</p>
+  <p class="eyebrow">Built on the harness &middot; Adiyan Reader</p>
   <h2 class="h2">It reads. <em>You listen, then it checks.</em></h2>
   <div class="grid-split">
     <div>
-      <p class="prose">Send Adiyan a book. It splits it into daily pages, reads that day's page aloud as a WhatsApp voice note every night, and asks you a couple of questions on it the next day.</p>
+      <p class="prose">One example of what a harness-native agent looks like, not a bolted-on feature. Send Adiyan a book. It splits it into daily pages, reads that day's page aloud as a WhatsApp voice note every night, and asks you a couple of questions on it the next day - the same orchestrator, memory, and scheduler every other agent uses, doing this one's job.</p>
       <p class="pull">A reading habit that runs itself, and checks whether you followed it.</p>
       <div class="tag-row" style="margin-top:1.4rem;">
         <span class="chip">Any book you upload</span>
@@ -792,9 +792,9 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 03 : OFFERING 3 - THE DEV KIT -->
+<!-- 03 : THE DEV KIT - THE ACTUAL POINT OF THE HARNESS -->
 <section class="slide" id="s3">
-  <p class="eyebrow">Offering 3 &middot; The dev kit</p>
+  <p class="eyebrow">This is the harness &middot; The dev kit</p>
   <h2 class="h2">Add an agent. <em>Orchestrator finds it.</em></h2>
   <p class="prose" style="margin-top:1rem;max-width:66ch;">Every agent under the hood is the same handful of files - a scaffold called <code style="font-family:inherit;font-style:italic;color:var(--ink);">example_agent</code> ships in the repo specifically so you can copy it. It rolls a die, on purpose: trivial enough that what's boilerplate and what's actually yours to write is obvious at a glance.</p>
   <div class="tag-row" style="margin-top:1rem;">
@@ -925,9 +925,9 @@ h1,h2,h3{
   </div>
 </section>
 
-<!-- 04 : OFFERING 4 - COMMUNITY / PEER-TO-PEER -->
+<!-- 04 : COMMUNITY / PEER-TO-PEER, BUILT ON THE HARNESS -->
 <section class="slide" id="s4">
-  <p class="eyebrow">Offering 4 &middot; Community</p>
+  <p class="eyebrow">Built on the harness &middot; Community compute</p>
   <h2 class="h2">Don't buy compute for your peak. <em>Borrow it.</em></h2>
   <div class="grid-split">
     <div>
@@ -997,7 +997,7 @@ h1,h2,h3{
     <div class="download-steps">
       <p><b>Ollama</b> - runs the model itself. Installed automatically by the script. Prefer to do it yourself first? <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>.</p>
       <p><b>ngrok</b> - exposes your WhatsApp webhook to the internet. One-time setup: <a href="https://ngrok.com/download" target="_blank" rel="noopener">ngrok.com/download</a> (or <code style="font-family:inherit;">brew install ngrok</code>), then <code style="font-family:inherit;">ngrok config add-authtoken</code> with a free account's token.</p>
-      <p><b>Tailscale</b> - only if you want Offering 4: lets your machine reach a peer's when you opt a message into the community. Skip it if you're not using that. <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>.</p>
+      <p><b>Tailscale</b> - only if you want community compute: lets your machine reach a peer's when you opt a message into the community. Skip it if you're not using that. <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>.</p>
     </div>
   </div>
 

@@ -15,6 +15,7 @@ _compose_generic, mesh/analysis/skills/analyze.py's strict_grounding) - if
 the book has run out of pages, that's said plainly and the reading job is
 deactivated, not silently looped or papered over with invented content.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,14 @@ _SEED = load_seed_config(AGENT_CODE_DIR)
 # whatsapp_mcp's permission check entirely - see the Developer Guide's
 # pitfall section.
 _agent = AdiyanAgent(AGENT_ID)
+logger = logging.getLogger(AGENT_ID)
+
+# Must match mesh/memory/memory_index.py's BLANK_PAGE_TEXT exactly - not
+# imported from there, since this agent only ever talks to Memory Agent
+# over A2A (get_book_page), the same process-boundary every other
+# cross-agent call in this mesh respects, rather than reaching into
+# another agent's internals directly.
+BLANK_PAGE_TEXT = '(This page is blank.)'
 
 
 def _seeded(key: str) -> Dict[str, Any]:
@@ -91,6 +100,18 @@ async def _synthesize_and_send_page(
         return None
 
     page_text = page_result['text']
+    if page_text == BLANK_PAGE_TEXT:
+        # Confirmed live: several consecutive front-matter pages in one
+        # book (the trailing-sentence carry-forward in
+        # memory_index.py's insert_book() can push ALL of a short run of
+        # pages' real content onto the next page that actually completes
+        # a sentence) all stored nothing but this exact marker. Narrating
+        # "this page is blank" once is marginal; narrating it three times
+        # in a row before the story actually starts is worse than saying
+        # nothing - treated exactly like a missing page, so
+        # _find_readable_page's own gap-skip window carries the caller
+        # straight to the next page with real content instead.
+        return None
 
     # speech_text is what actually gets narrated - page_text (the real page
     # content) stays untouched below for _generate_questions(), which needs

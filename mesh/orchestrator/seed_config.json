@@ -11,6 +11,10 @@
     "open_enrollment": {
       "value": false,
       "description": "False (the platform default) on every vertical unless its own spec explicitly sets it true - a real vertical then auto-registers a first-time stranger's very first summoned message with zero signup step, the same zero-friction grant demo verticals already get unconditionally (see rules_engine.py's _is_open_enrollment()). Seeded here as a real boolean, not left unset, so a vertical spec's own true/false value coerces correctly instead of landing as an always-truthy string - see mesh/config_agent/skills/update_config.py's _coerce() for why matching an existing typed default matters."
+    },
+    "session_carry_over": {
+      "value": false,
+      "description": "False (the platform default) on every vertical unless its own spec explicitly sets it true - a real vertical then extends demo verticals' own 30-minute phrase-less follow-up window (db.SESSION_WINDOW_SECONDS) to its own real customers, via rules_engine.py's _has_session_carry_over(). Seeded here as a real boolean for the exact same reason open_enrollment above is - confirmed live: applying a spec with this key before it had any seeded default coerced the new value into the literal string 'True' instead of a real bool, since _coerce() matches types against whatever's currently stored and an unseeded key's current value is a bare empty string."
     }
   }
 }

@@ -25,14 +25,30 @@ from typing import Any, Dict
 from mesh.adiyan_reader import db
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.adiyan_reader.skills import read_next_page
+from mesh.lib import config_sdk
 from mesh.lib.paths import state_db_path
 
 
-async def run(phone_number: str) -> Dict[str, Any]:
+async def run(phone_number: str, is_owner: bool = False) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = db.get_active_reading_jobs_by_phone(conn, phone_number)
     if not jobs:
         return {'status': 'no_active_job', 'result_summary': "No active reading job for this number - nothing to read."}
+
+    # is_owner comes from agent_executor.py's own token check, never from a
+    # customer-suppliable param. The nightly cron fire never reaches this
+    # skill at all (cron_trigger calls read_next_page directly) - this cap
+    # only ever throttles a customer's own on-demand pulls.
+    if not is_owner:
+        limit = await config_sdk.get_constant(
+            AGENT_ID, 'daily_on_demand_page_limit', 10,
+            description='Max on-demand pages (read now / next N / read all / restart / reread) a customer can pull per day (IST). Nightly reading is uncapped. The owner is exempt.',
+        )
+        if db.get_daily_usage(conn, phone_number)['pages'] >= limit:
+            return {
+                'status': 'daily_limit_reached', 'limit': limit,
+                'result_summary': f"That's {limit} pages today - more tomorrow, or tonight's regular page still comes through!",
+            }
 
     # Most recent if more than one - "now" has no book name to disambiguate
     # with, unlike start_reading's own explicit source_filename. Good
@@ -40,4 +56,7 @@ async def run(phone_number: str) -> Dict[str, Any]:
     # need Orchestrator to ask, not something this skill can do on a
     # DataPart-only call.
     job = jobs[0]
-    return await read_next_page.run(job['id'])
+    result = await read_next_page.run(job['id'])
+    if not is_owner and result.get('status') == 'completed':
+        db.increment_daily_usage(conn, phone_number, 'pages')
+    return result

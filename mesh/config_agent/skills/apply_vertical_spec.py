@@ -71,7 +71,7 @@ logger = logging.getLogger('ApplyVerticalSpec')
 # ships the exact same list to whichever LLM drafts the spec in the first
 # place, so a well-behaved spec should never even attempt one of these.
 _ALLOWED_CONSTANTS = {
-    'orchestrator': {'summon_phrase', 'card_description', 'business_persona_context', 'open_enrollment'},
+    'orchestrator': {'summon_phrase', 'card_description', 'business_persona_context', 'open_enrollment', 'session_carry_over'},
     'analysis': {'strict_grounding', 'business_persona_context'},
     'scheduler': {'business_persona_context'},
     'journal': {'business_persona_context'},

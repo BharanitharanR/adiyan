@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from mesh.adiyan_reader import db
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.adiyan_reader.skills import read_next_page
+from mesh.lib import config_sdk
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.paths import state_db_path
 
@@ -43,7 +44,9 @@ def _match_job(jobs: List[Dict[str, Any]], book_reference: str) -> Optional[Dict
     return None
 
 
-async def _reread_one(conn, job: Dict[str, Any], clearer: bool, slower: bool) -> Dict[str, Any]:
+async def _reread_one(
+    conn, job: Dict[str, Any], clearer: bool, slower: bool, phone_number: str, is_owner: bool,
+) -> Dict[str, Any]:
     """Reread of exactly one job's current page - pulled out of run() so
     all_books=True can call it once per active job without duplicating the
     slower-rate/resolve/resend logic."""
@@ -70,24 +73,41 @@ async def _reread_one(conn, job: Dict[str, Any], clearer: bool, slower: bool) ->
         # delivered fine the first time, but not impossible.
         return {'title': title, 'ok': False, 'reason': 'resend_failed'}
 
+    if not is_owner:
+        db.increment_daily_usage(conn, phone_number, 'pages')
     return {'title': title, 'ok': True, 'page': job['current_page']}
 
 
 async def run(
     phone_number: str, book_reference: Optional[str] = None,
-    clearer: bool = False, slower: bool = False, all_books: bool = False,
+    clearer: bool = False, slower: bool = False, all_books: bool = False, is_owner: bool = False,
 ) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = db.get_active_reading_jobs_by_phone(conn, phone_number)
     if not jobs:
         return {'status': 'no_active_job', 'result_summary': "No active reading job for this number - nothing to reread."}
 
+    # is_owner comes from agent_executor.py's own token check, never from a
+    # customer-suppliable param. Unlike restart_reading.py, a reread has no
+    # free/unconditional component (no bookmark reset happening regardless)
+    # - with nothing left today, there's nothing useful to do but say so.
+    if not is_owner:
+        limit = await config_sdk.get_constant(
+            AGENT_ID, 'daily_on_demand_page_limit', 10,
+            description='Max on-demand pages (read now / next N / read all / restart / reread) a customer can pull per day (IST). Nightly reading is uncapped. The owner is exempt.',
+        )
+        if db.get_daily_usage(conn, phone_number)['pages'] >= limit:
+            return {
+                'status': 'daily_limit_reached', 'limit': limit,
+                'result_summary': f"That's {limit} pages today - more tomorrow, or tonight's regular page still comes through!",
+            }
+
     # The answer to this skill's own "more than one active book - which
     # one?" prompt when the caller says "all"/"both" - see
     # handle_message.py's own pending-clarification mechanism for how a
     # bare "for all" turns into this flag.
     if all_books:
-        results = [await _reread_one(conn, job, clearer, slower) for job in jobs]
+        results = [await _reread_one(conn, job, clearer, slower, phone_number, is_owner) for job in jobs]
         succeeded = [r['title'] for r in results if r['ok']]
         if not succeeded:
             return {'status': 'failed', 'result_summary': "Couldn't reread any of your books right now."}
@@ -114,7 +134,7 @@ async def run(
             'result_summary': 'More than one active book - which one should I reread?',
         }
 
-    result = await _reread_one(conn, job, clearer, slower)
+    result = await _reread_one(conn, job, clearer, slower, phone_number, is_owner)
     if not result['ok']:
         if result['reason'] == 'nothing_read_yet':
             return {'status': 'nothing_read_yet', 'title': result['title'], 'result_summary': f"Haven't read any of {result['title']} yet - nothing to reread."}

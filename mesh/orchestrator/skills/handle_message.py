@@ -29,7 +29,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from a2a.types import AgentSkill
 from indic_transliteration import detect as script_detect
@@ -37,14 +37,15 @@ from indic_transliteration import sanscript
 from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 
-from mesh.lib import chat_cache, config_sdk, customer_record, permissions, persona_hook, vision
+from mesh.lib import chat_cache, config_sdk, customer_record, model_confidentiality, permissions, persona_hook, privacy_mode, skill_store, vision
 from mesh.lib.a2a_client import call_agent, call_agent_with_text
-from mesh.lib.agent_sdk import AdiyanAgent
+from mesh.lib.agent_sdk import AdiyanAgent, claude_cli_active
 from mesh.lib.audio_transcribe import language_display_name, transcribe_audio
 from mesh.lib.config import load_runtime_config
 from mesh.lib.errors import describe_exception
 from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
+from mesh.lib.registry_client import list_agents
 from mesh.lib.skill_router import classify, extract
 from mesh.orchestrator import db, router, rules_engine
 from mesh.orchestrator.constants import AGENT_ID, WHATSAPP_MCP_URL
@@ -972,6 +973,9 @@ async def _start_book_reading(
         logger.error(f'start_reading failed for {chat_id}: {e}')
         return None
 
+    if started.get('status') == 'daily_limit_reached':
+        return started.get('result_summary') or "That's your new books for today - more tomorrow!"
+
     title = source_filename.split('/', 1)[-1]
     already_active = started.get('already_active', False)
 
@@ -1168,6 +1172,248 @@ async def _read_page_range(
         return None
 
     return result.get('result_summary') or "Couldn't read those pages right now - try again in a moment."
+
+
+# ---------------------------------------------------------------------------
+# One merged classification over every reading skill - used ONLY when the
+# Claude CLI is the model answering this request (see claude_cli_active).
+#
+# On local Ollama the per-skill chain in run() stays: a small model degrades
+# once it has to weigh this many options at once, and each single-skill yes/no
+# gate is what a small model can do reliably. A hosted model does the opposite
+# - given every competing option in one prompt it picks the best one, which is
+# what the single-skill gates could never do (e.g. "help document" taken for a
+# book title, "read it then" taken for a read-everything request), and it
+# replaces up to eight sequential calls with one.
+#
+# The chain's ORDER used to be the precedence between near-duplicates ("voice
+# samples" before "change voice", "read range" before "read now"); in one pool
+# that has to live in the descriptions, so the three that lacked it get a
+# merged-pool copy below. Everything else reuses the existing skill objects.
+# ---------------------------------------------------------------------------
+_SHOW_CAPABILITIES_SKILLS = [
+    AgentSkill(
+        id='show_capabilities',
+        name='Show What I Can Do',
+        description=(
+            'The caller asks what this assistant can do - what commands or things they can ask '
+            'for, how to use it, or whether there is a help guide or document. A request for the '
+            'list of capabilities, not a request to actually do one of them.'
+        ),
+        tags=['adiyan_reader', 'help'],
+        examples=[
+            'What can you do',
+            'Do you have a help document',
+            'Show me all your commands',
+            'How do I use this',
+            'What are the things I can ask you',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+# What the caller sees for show_capabilities - fixed text so a help request
+# never depends on a model composing a list that might invent a feature.
+_CAPABILITY_LINES = [
+    ('Start a book', 'say "read me <title>" and I\'ll read it to you a page at a time, a voice note each night'),
+    ('Read ahead', '"read the next 5 pages", "read page 1 to 10", or "read all"'),
+    ('Next page now', '"send me the next page now" instead of waiting for tonight'),
+    ('Hear a page again', '"read that again", "slower" or "more clearly"'),
+    ('Start over', '"start over" restarts the book you\'re on from page 1'),
+    ('Pick a voice', '"play me voice samples", then "use <name>\'s voice"'),
+    ('Stop', '"stop reading <book>" or "stop the questions" (keeps the reading going)'),
+    ('Privacy', '"go incognito" for private mode; "use regular" switches back'),
+]
+
+
+def _reading_capabilities_text() -> str:
+    lines = '\n'.join(f'- {name}: {how}' for name, how in _CAPABILITY_LINES)
+    return f"Here's what you can ask me:\n{lines}\nOr just tell me what you'd like to hear."
+
+
+# Skills the registry lists that are plumbing, not something a person asks for.
+_NOT_USER_FACING_AGENTS = {'orchestrator', 'genie'}
+
+
+async def _permitted_capabilities(tier: str) -> list:
+    """(name, description) for every skill the mesh advertises that this tier
+    may use, from the Agent Registry - so a skill added to any agent shows up
+    here with no change to this file. The reading controls aren't advertised
+    there (adiyan_reader lists no skills), so they join as one entry when the
+    tier may start a reading."""
+    claims = {'tier': tier}
+    items = []
+    try:
+        agents = await list_agents()
+    except Exception as e:
+        logger.warning(f'Agent registry unavailable for the capabilities list: {describe_exception(e)}')
+        agents = []
+    for agent in sorted(agents, key=lambda a: a.get('agent_id', '')):
+        agent_id = agent.get('agent_id')
+        if not agent_id or agent_id in _NOT_USER_FACING_AGENTS:
+            continue
+        for skill in agent.get('skills', []):
+            if permissions.is_allowed(claims, f"{agent_id}.{skill.get('id')}"):
+                description = ' '.join((skill.get('description') or '').split())
+                items.append((skill.get('name') or skill.get('id'), description[:260]))
+    if permissions.is_allowed(claims, 'adiyan_reader.start_reading'):
+        items.append((
+            'Audiobooks',
+            'Reads a book aloud as voice notes a page at a time; read ahead, replay a page slower or clearer, '
+            'restart, choose a narrator voice, or stop; read-me-a-book from any public-domain title.',
+        ))
+    return items
+
+
+async def _capabilities_reply(tier: str, vertical_id: Optional[str]) -> str:
+    """The answer to "what can you do". A business vertical gets its own
+    curated list (today: the reading controls). The platform assistant gets
+    every skill this person's tier may use, described in plain language by the
+    model from the registry's own descriptions - grounded in that list only,
+    and falling back to a plain rendering of it if the model call fails."""
+    if vertical_id:
+        return _reading_capabilities_text()
+    items = await _permitted_capabilities(tier)
+    if not items:
+        return _reading_capabilities_text()
+    listing = '\n'.join(f'- {name}: {description}' for name, description in items)
+    prompt = (
+        "A person asked what you can do for them. Write a short, friendly WhatsApp message listing what they "
+        "can ask for, using ONLY the capabilities below - do not add anything that is not listed.\n"
+        "Rules: plain everyday language, one short line per capability with a concrete example of what to say, "
+        "no technical names or identifiers, no mention of agents, models, or technology, at most 8 lines, "
+        "then one closing line inviting them to ask.\n\n"
+        f"Capabilities:\n{listing}"
+    )
+    try:
+        text = (await _agent.ask(prompt, stage='capabilities')).strip()
+    except Exception as e:
+        logger.warning(f'Capabilities wording failed, using the plain list: {describe_exception(e)}')
+        text = ''
+    if text:
+        return text
+    plain = '\n'.join(f"- {name}: {description.split('. ')[0].rstrip('.')}" for name, description in items)
+    return f"Here's what you can ask me:\n{plain}"
+
+
+def _reworded(skill: AgentSkill, description: str, extra_examples: Optional[list] = None) -> AgentSkill:
+    return AgentSkill(
+        id=skill.id, name=skill.name, description=description, tags=list(skill.tags),
+        examples=list(skill.examples) + list(extra_examples or []),
+        input_modes=list(skill.input_modes), output_modes=list(skill.output_modes),
+    )
+
+
+_START_BOOK_MERGED = _reworded(
+    _BOOK_READING_SKILLS[0],
+    'The caller wants a book read to them that is not already being read - a nightly voice note of '
+    'the next page. Includes a reply that accepts a book just recommended or named earlier in the '
+    'conversation ("read it", "proceed with that", "yes, that one"). Not for a book already being '
+    'read (restart, reread, read next/more pages), a question about how it works, or a passing '
+    'mention of a title.',
+    ['Read it then (after a book was just recommended)', 'Proceed with that', 'Yes, start that one'],
+)
+
+_READ_RANGE_MERGED = _reworded(
+    _READ_RANGE_SKILLS[0],
+    _READ_RANGE_SKILLS[0].description +
+    ' Never for a bare "read it" / "go ahead" / "proceed" with no page range, count, or "all" in '
+    'the message itself - those refer to a book from the conversation (start_book_reading) or one page '
+    '(read_now).',
+)
+
+# Code defaults for the 'reading' scope in the `skills` collection
+# (mesh/lib/skill_store.py): seeded into it for any id it lacks, and used as-is
+# if the collection can't be read. The collection is what the classifier
+# actually sees, so a description edited there wins.
+_READING_SCOPE = 'reading'
+_READING_SKILLS = (
+    _VOICE_SAMPLES_SKILLS + _CHANGE_VOICE_SKILLS + _REREAD_SKILLS + _RESTART_READING_SKILLS
+    + _STOP_READING_SKILLS + [_START_BOOK_MERGED, _READ_RANGE_MERGED] + _READ_NOW_SKILLS + _SHOW_CAPABILITIES_SKILLS
+)
+
+
+class _ResolvedBookRequest(BaseModel):
+    book_reference: str = Field(
+        default='',
+        description=(
+            "The book the caller wants read. If the new message refers back to a book named earlier in the "
+            "conversation ('read it', 'that one', 'proceed with that'), give that book's title from the "
+            "conversation. Otherwise copy their own wording. Leave empty if no specific book can be "
+            "identified - never invent one."
+        ),
+    )
+
+
+# A bare "read" with no page range or count is only a burst-read-everything
+# request when the message itself says so. Without this check a stray "read it
+# then" that slipped into read_range would read the rest of a whole book.
+_WHOLE_BOOK_WORDS = re.compile(
+    r"\b(all|rest|everything|whole|entire|finish\w*|complet\w*|end|continuous\w*|until|through)\b", re.IGNORECASE,
+)
+
+_ReadingAction = Callable[[str, Optional[str], str, Optional[str]], Awaitable[Optional[str]]]
+
+
+async def _classify_reading_message(llm_input: str, text: str, cfg: Dict[str, Any]) -> Optional[_ReadingAction]:
+    """One classify over every reading skill, then one extract for whichever
+    won. Returns the action to run, or None for no match / ambiguous / any
+    failure - the caller then falls through to normal routing, same degrade-
+    on-failure contract as the per-skill resolvers.
+
+    classify() sees llm_input (recent conversation + the new message) so a
+    reference like "it" can resolve. Extraction sees only `text` - the new
+    message - so a page number or voice name from an earlier turn can't leak
+    into the parameters - except the book title, which needs the history."""
+    try:
+        skills = await skill_store.load_skills(_READING_SCOPE, _READING_SKILLS)
+        choice = await classify(llm_input, skills, cfg['book_reading_intent'])
+    except Exception as e:
+        logger.error(f'Merged reading-intent classification failed: {describe_exception(e)}')
+        return None
+    skill_id = choice.skill_id
+    if skill_id is None:
+        return None
+    extract_cfg = cfg['extract_parameters']
+    try:
+        if skill_id == 'request_voice_samples':
+            return lambda c, f, t, v: _send_voice_samples(c, f, t, vertical_id=v)
+        if skill_id == 'read_now':
+            return lambda c, f, t, v: _read_page_now(c, f, t, vertical_id=v)
+        if skill_id == 'show_capabilities':
+            return lambda c, f, t, v: _capabilities_reply(t, v)
+        if skill_id == 'change_voice':
+            request = await extract(text, 'change_voice', _ChangeVoiceRequest, extract_cfg)
+            return lambda c, f, t, v: _change_voice(request, c, f, t, vertical_id=v)
+        if skill_id == 'reread_page':
+            request = await extract(text, 'reread_page', _RereadPageRequest, extract_cfg)
+            return lambda c, f, t, v: _reread_page(request, c, f, t, vertical_id=v)
+        if skill_id == 'restart_book_reading':
+            request = await extract(text, 'restart_book_reading', _RestartReadingRequest, extract_cfg)
+            return lambda c, f, t, v: _restart_book_reading(request, c, f, t, vertical_id=v)
+        if skill_id == 'stop_book_reading':
+            request = await extract(text, 'stop_book_reading', _StopReadingRequest, extract_cfg)
+            return lambda c, f, t, v: _stop_book_reading(request, c, f, t, vertical_id=v)
+        if skill_id == 'start_book_reading':
+            request = await extract(llm_input, 'start_book_reading', _ResolvedBookRequest, extract_cfg)
+            book_reference = request.book_reference.strip()
+            if not book_reference:
+                return None
+            return lambda c, f, t, v: _start_book_reading(book_reference, c, f, t, vertical_id=v)
+        if skill_id == 'read_range':
+            request = await extract(text, 'read_range', _ReadRangeRequest, extract_cfg)
+            if request.start_page is None and request.end_page is None and request.page_count is None \
+                    and not _WHOLE_BOOK_WORDS.search(text):
+                return None
+            return lambda c, f, t, v: _read_page_range(
+                c, f, t, request.start_page, request.end_page, page_count=request.page_count, vertical_id=v,
+            )
+    except Exception as e:
+        logger.error(f'Merged reading-skill extraction failed for {skill_id!r}: {describe_exception(e)}')
+        return None
+    logger.warning(f'Skill {skill_id!r} is in the skills collection but has no handler in handle_message - ignoring it')
+    return None
 
 
 async def _ingest_into_knowledge_base(
@@ -1411,6 +1657,116 @@ async def _apply_vertical_spec_upload(media: Dict[str, Any], chat_id: str, tier:
     )
 
 
+# Same shape as _VERTICAL_SPEC_SKILLS: a single-skill classify pool checked
+# BEFORE the normal knowledge-base ingestion path, owner-only for now - the
+# family-finance agent currently has exactly one real data source (the
+# owner's own bank export), so there's no customer-facing story yet for
+# "whose statement is this" the way _ingest_into_knowledge_base already
+# handles for an ordinary document. Widening this to customers is a design
+# decision (how a customer's own data stays scoped to them), not a one-line
+# change.
+_FINANCIAL_STATEMENT_SKILLS = [
+    AgentSkill(
+        id='financial_statement_upload',
+        name='Financial Statement Upload',
+        description=(
+            'The caption says this uploaded file is a bank or financial statement to record '
+            'for the family finance tracker - not an ordinary document to search or read, and '
+            'not a business/vertical configuration spec. Only matches an explicit statement/'
+            'transactions upload, never a document that merely mentions money or a bank in '
+            'passing.'
+        ),
+        tags=['family-finance', 'statement', 'bank'],
+        examples=[
+            'This is my HDFC bank statement',
+            'Here is my statement for this month, add it to my spending',
+            "This is Bharani's bank statement",
+            'Add this to my family finance tracker',
+        ],
+        input_modes=['text/plain'],
+        output_modes=['application/json'],
+    ),
+]
+
+
+async def _resolve_financial_statement_intent(caption: str, cfg: Dict[str, Any]) -> bool:
+    """True only if the caption explicitly says this upload is a bank/
+    financial statement - False (falls through to normal knowledge-base
+    ingestion) for an empty caption or any classification failure, same
+    degrade-toward-the-safer-default contract as _resolve_vertical_spec_intent:
+    misreading an ordinary document as a statement would try to parse it as
+    an HDFC export and fail loudly; misreading a real statement as an
+    ordinary document just files it away, recoverable by asking again with
+    a clearer caption."""
+    if not caption or not caption.strip():
+        return False
+    try:
+        choice = await classify(caption, _FINANCIAL_STATEMENT_SKILLS, cfg)
+    except Exception as e:
+        logger.error(f'Financial-statement intent classification failed: {describe_exception(e)}')
+        return False
+    return choice.skill_id == 'financial_statement_upload'
+
+
+async def _ingest_financial_statement_upload(
+    media: Dict[str, Any], chat_id: str, tier: str, contact_name: Optional[str],
+) -> Optional[str]:
+    """Reply text, or None only for a genuinely unexpected failure - same
+    silent-on-failure convention as _apply_vertical_spec_upload. Writes the
+    uploaded bytes to a real file on disk first: family_finance_agent's
+    ingest_statement skill parses an actual bank export with xlrd, which
+    needs a real file path, not base64 sitting in memory. Saved under a
+    per-sender subfolder so two different uploaders' files never collide,
+    then handed straight to the family_finance agent over A2A - the same
+    "this agent already knows exactly what it wants, no classify needed"
+    shape _apply_vertical_spec_upload's own call uses.
+
+    person_id is only a best-effort default from the sender's contact
+    name - dataModel/hdfcBank_csv_parser.py's own logic overrides it with
+    whatever name it finds printed inside the statement itself (MR./MRS./
+    MS. lines), so this only matters when that in-file name line is
+    missing. tier is minted into the outgoing token as-is (never hardcoded
+    to 'owner') - the call site below only reaches this function at all
+    when tier == 'owner', but the token must still reflect who's actually
+    asking, not an assumption baked in here."""
+    family_finance_url = router.get_agent_url('family_finance')
+    if family_finance_url is None:
+        return "The family finance tracker isn't reachable right now - try again in a moment."
+
+    filename = media.get('filename') or 'statement.xls'
+    safe_chat_id = re.sub(r'[^A-Za-z0-9_@.-]', '_', chat_id)
+    upload_dir = Path.home() / '.Adiyan' / 'family_finance' / 'uploads' / safe_chat_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = upload_dir / f'{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")}_{filename}'
+    try:
+        file_path.write_bytes(base64.b64decode(media['data']))
+    except Exception as e:
+        logger.error(f'Could not save uploaded statement for {chat_id}: {e}')
+        return None
+
+    person_id = (contact_name or chat_id).split()[0].upper()
+    token = permissions.mint_token(chat_id, tier)
+    try:
+        result = await call_agent(family_finance_url, 'ingest_statement', {
+            'file_path': str(file_path), 'person_id': person_id,
+        }, token=token)
+    except Exception as e:
+        logger.error(f'ingest_statement failed for {chat_id}: {e}')
+        return None
+
+    if result.get('error'):
+        return f"Couldn't add that statement: {result['error']}"
+    zetaris_note = '' if result.get('zetaris_refreshed') else ' (the live query table may take a moment to catch up)'
+    # int(...): the same A2A/protobuf Struct float-crossing cast
+    # _ingest_into_knowledge_base's own 'chunks' field already needs -
+    # transactions_ingested is a genuine int on family_finance_agent's own
+    # side but arrives here as a double regardless.
+    return (
+        f"Added {int(result['transactions_ingested'])} transactions for "
+        f"{result.get('person_id', person_id)}{zetaris_note}."
+    )
+
+
 async def _resolve_upload_instruction(caption: str, cfg: Dict[str, Any]) -> Optional[str]:
     """None if caption is just a label, not an instruction - the caller
     then does a plain ingest-only reply, same as before this existed.
@@ -1477,6 +1833,15 @@ async def _resolve_image_intent(text: str, image: Optional[Dict[str, Any]]) -> t
         return text, True
     return text, False
 
+def format_history(turns: list[Dict[str, Any]], new_message: str) -> str:
+    """Plain-text history (timestamps dropped) followed by the new message.
+    Returns just new_message when there is no history."""
+    if not turns:
+        return new_message
+    exchanges = '\n\n'.join(
+        f"User: {t['user_text']}\nAssistant: {t['reply_text'] or ''}" for t in turns
+    )
+    return f'Conversation so far:\n{exchanges}\n\nNew message: {new_message}'
 
 async def run(
     text: str,
@@ -1637,6 +2002,12 @@ async def run(
             await persona_hook.resolve_persona_context(AGENT_ID, {'tier': tier, 'vertical_id': vertical_id})
         )
 
+    # Same re-set-after-the-gate reasoning as the persona just above: bootstrap's
+    # wrapper resolved this before vertical_id was known. Decides whether
+    # this contact's LLM calls may use the Claude CLI or stay on local Ollama
+    # (see mesh/lib/privacy_mode.py).
+    privacy_mode.CURRENT_INCOGNITO.set(await privacy_mode.is_incognito(db.resolve_identity_key(chat_id), vertical_id))
+
     # Strip whichever phrase actually matched - vertical_id is None for the
     # platform default, or a specific vertical whose OWN phrase won instead
     # (see rules_engine.check()'s own docstring on why "which vertical
@@ -1665,9 +2036,22 @@ async def run(
         description="Word a sender includes anywhere in their message to opt this one reply into compute_share's peer-sharing network.",
     )
     community = None
+    try:
+        turns = chat_cache.get_recent_turns(contact_name or chat_id, vertical_id)
+        logger.error(f'CHECKIN {turns}')
+    except Exception as e:
+        logger.error(f'Error formatting recent turns for {contact_name or chat_id}: {e}')
+        turns = []
     if trigger_word and trigger_word.lower() in text.lower():
         text = re.sub(re.escape(trigger_word), '', text, flags=re.IGNORECASE).strip()
         community = 'communitySearch'
+    # Built after the trigger word is stripped so it never carries it, and
+    # always defined even if reading the history failed.
+    llm_input = format_history(turns, text)
+    # One merged classification when the Claude CLI is answering this request
+    # (see _classify_reading_message); the per-skill chain below otherwise.
+    use_merged = await claude_cli_active('classify', community)
+
 
     pending_document = None
     pending_image = None
@@ -1690,6 +2074,18 @@ async def run(
             pending_image = {
                 'filename': 'adiyan_logo.png', 'content_b64': _LOGO_B64, 'mimetype': 'image/png',
             }
+    elif not kb_pending and (privacy_switch := privacy_mode.parse_command(text)) is not None:
+        # A fixed-phrase command ("go incognito" / "use regular"), never LLM-
+        # classified - see privacy_mode.parse_command's own docstring. Not
+        # remembered: should_remember stays False, same as a registration.
+        await privacy_mode.set_incognito(db.resolve_identity_key(chat_id), vertical_id, privacy_switch)
+        privacy_mode.CURRENT_INCOGNITO.set(privacy_switch)
+        reply = privacy_mode.INCOGNITO_ON_REPLY if privacy_switch else privacy_mode.INCOGNITO_OFF_REPLY
+    elif not kb_pending and model_confidentiality.is_model_question(text):
+        # An explicit "what model/LLM/company powers you" question gets a fixed
+        # answer with no model involved - see mesh/lib/model_confidentiality.py.
+        # Not remembered: should_remember stays False.
+        reply = model_confidentiality.DEFLECTION_REPLY
     elif kb_pending:
         # Only reachable once the gate above has already let this sender
         # through (owner or a registered client) - a stranger's image or
@@ -1720,6 +2116,8 @@ async def run(
         is_yaml_upload = filename.lower().endswith(('.yaml', '.yml'))
         if tier == 'owner' and (is_yaml_upload or await _resolve_vertical_spec_intent(text, cfg['caption_intent'])):
             reply = await _apply_vertical_spec_upload(media_for_upload, chat_id, tier)
+        elif tier == 'owner' and await _resolve_financial_statement_intent(text, cfg['caption_intent']):
+            reply = await _ingest_financial_statement_upload(media_for_upload, chat_id, tier, contact_name)
         else:
             # Resolved from the caption BEFORE ingestion, not after - once
             # Docling has already spent 30-50s/page skipping OCR it thought
@@ -1783,36 +2181,43 @@ async def run(
         should_remember = True
         pending_action, pending_request = pending_book
         reply = await pending_action(pending_request, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif await _resolve_voice_samples_request(text, cfg):
+    elif use_merged and (reading_action := await _classify_reading_message(llm_input, text, cfg)) is not None:
+        # Claude CLI only: one classify over every reading skill (including
+        # "what can you do"), one extract for the winner. When nothing
+        # matches this falls through, and the per-skill branches below are
+        # skipped (use_merged) so a no-match costs one call, not eight.
+        should_remember = True
+        reply = await reading_action(chat_id, from_number, tier, vertical_id)
+    elif not use_merged and await _resolve_voice_samples_request(text, cfg):
         # Checked BEFORE _resolve_book_reading_request and _CHANGE_VOICE_SKILLS
         # - "what voices do you have" must never be classified as a request
         # to start a book named that, or as already naming a specific voice.
         should_remember = True
         reply = await _send_voice_samples(chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (change_voice_request := await _resolve_change_voice_request(text, cfg)) is not None:
+    elif not use_merged and (change_voice_request := await _resolve_change_voice_request(text, cfg)) is not None:
         # Checked BEFORE _resolve_book_reading_request too, same reasoning.
         should_remember = True
         reply = await _change_voice(change_voice_request, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (reread_request := await _resolve_reread_page_request(text, cfg)) is not None:
+    elif not use_merged and (reread_request := await _resolve_reread_page_request(text, cfg)) is not None:
         # Checked BEFORE _resolve_book_reading_request - see _REREAD_SKILLS'
         # own comment for why "read that again"/"slower" must never be
         # classified as a request to start a new book.
         should_remember = True
         reply = await _reread_page(reread_request, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (restart_request := await _resolve_restart_reading_request(text, cfg)) is not None:
+    elif not use_merged and (restart_request := await _resolve_restart_reading_request(text, cfg)) is not None:
         # Checked BEFORE _resolve_book_reading_request - see
         # _RESTART_READING_SKILLS' own comment for why "start all over
         # again" must never be classified as a request to start a NEW book
         # (it isn't a book title) - a real subscriber hit exactly this gap.
         should_remember = True
         reply = await _restart_book_reading(restart_request, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (stop_request := await _resolve_stop_reading_request(text, cfg)) is not None:
+    elif not use_merged and (stop_request := await _resolve_stop_reading_request(text, cfg)) is not None:
         # Checked BEFORE _resolve_book_reading_request - see
         # _STOP_READING_SKILLS' own comment for why a "stop reading X" must
         # never fall through to being classified as a request to start one.
         should_remember = True
         reply = await _stop_book_reading(stop_request, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
+    elif not use_merged and (book_reference := await _resolve_book_reading_request(text, cfg)) is not None:
         # Only reached once the gate has already let this sender through and
         # there's no image/document attached - a stranger or an upload
         # caption never gets here, same reasoning kb_pending's own comment
@@ -1837,7 +2242,7 @@ async def run(
         # through the generic fallback path once.
         should_remember = True
         reply = await _start_book_reading(book_reference, chat_id, from_number, tier, vertical_id=vertical_id)
-    elif (range_pages := await _resolve_read_range_request(text, cfg)) is not None:
+    elif not use_merged and (range_pages := await _resolve_read_range_request(text, cfg)) is not None:
         # Checked BEFORE _resolve_read_now_request - "read all" or "read
         # page 1 to 10" would otherwise also plausibly match read_now's own
         # single-next-page description. Same lazy-evaluation reasoning as
@@ -1847,7 +2252,7 @@ async def run(
             chat_id, from_number, tier, range_pages[0], range_pages[1], page_count=range_pages[2],
             vertical_id=vertical_id,
         )
-    elif await _resolve_read_now_request(text, cfg):
+    elif not use_merged and await _resolve_read_now_request(text, cfg):
         # Same lazy-evaluation reasoning as the book-reading branch above -
         # only classified once nothing earlier in this chain already
         # claimed the message.
@@ -1871,7 +2276,7 @@ async def run(
         # not for a lesser version of the normal answer.
         should_remember = True
         try:
-            reply = await _agent.ask(text, stage='community_direct', community=community)
+            reply = await _agent.ask(llm_input, stage='community_direct', community=community)
         except Exception as e:
             # Same silent-on-unexpected-failure convention as the routing
             # branch below (see its own comment on why: a raw exception
@@ -2035,6 +2440,13 @@ async def run(
             # above, not a best-effort apology message users have to parse.
             logger.error(f'Failed to handle message for {chat_id}: {e}')
             reply = None
+
+    # Last line of defence against a reply that says what powers it - see
+    # mesh/lib/model_confidentiality.py. Runs before delivery and before the
+    # reply is remembered, so neither the sender nor the history ever sees it.
+    if model_confidentiality.reveals_model(reply):
+        logger.warning(f'Reply to {chat_id} stated what powers the assistant - replaced with the fixed deflection')
+        reply = model_confidentiality.DEFLECTION_REPLY
 
     if reply is not None and just_auto_registered:
         # This identity was just silently auto-registered (a demo vertical,

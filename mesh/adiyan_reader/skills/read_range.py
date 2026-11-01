@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional
 from mesh.adiyan_reader import db
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.adiyan_reader.skills import read_next_page
+from mesh.lib import config_sdk
 from mesh.lib.agent_sdk import AdiyanAgent
 from mesh.lib.paths import state_db_path
 
@@ -53,8 +54,22 @@ _agent = AdiyanAgent(AGENT_ID)
 
 async def run(
     phone_number: str, start_page: Optional[int] = None, end_page: Optional[int] = None,
-    page_count: Optional[int] = None,
+    page_count: Optional[int] = None, is_owner: bool = False,
 ) -> Dict[str, Any]:
+    # These three travel here as an A2A DataPart (protobuf Struct), whose
+    # only numeric type is `double` - confirmed live: a Struct built from
+    # a genuine Python int round-trips as a float on the receiving end, no
+    # exception raised anywhere in between. The type hints above are
+    # honest about the caller's intent but don't enforce it at runtime, so
+    # re-coerce here, once, at the one boundary every caller crosses -
+    # read_next_page._find_readable_page()'s `range(start_page, ...)`
+    # genuinely requires a true int and crashed with "'float' object
+    # cannot be interpreted as an integer" on "read me the first N pages"
+    # before this.
+    start_page = int(start_page) if start_page is not None else None
+    end_page = int(end_page) if end_page is not None else None
+    page_count = int(page_count) if page_count is not None else None
+
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = db.get_active_reading_jobs_by_phone(conn, phone_number)
     if not jobs:
@@ -68,6 +83,25 @@ async def run(
     chat_id = await _agent.resolve_chat_id(job['phone_number'])
     if chat_id is None:
         return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': f"Could not resolve WhatsApp chat for {job['phone_number']}."}
+
+    # is_owner comes from agent_executor.py's own token check, never from a
+    # customer-suppliable param. remaining_budget caps the loop below at
+    # whatever's LEFT of the daily allowance, not a hard "already used it
+    # all -> refuse outright" the way start_reading/read_now can afford to -
+    # "read all"/an explicit range should still send as much as it's
+    # allowed to, then say so, rather than sending nothing at all.
+    remaining_budget: Optional[int] = None
+    if not is_owner:
+        limit = await config_sdk.get_constant(
+            AGENT_ID, 'daily_on_demand_page_limit', 10,
+            description='Max on-demand pages (read now / next N / read all / restart / reread) a customer can pull per day (IST). Nightly reading is uncapped. The owner is exempt.',
+        )
+        remaining_budget = limit - db.get_daily_usage(conn, phone_number)['pages']
+        if remaining_budget <= 0:
+            return {
+                'reading_job_id': reading_job_id, 'status': 'daily_limit_reached', 'limit': limit,
+                'result_summary': f"That's {limit} pages today - more tomorrow, or tonight's regular page still comes through!",
+            }
 
     if start_page is not None and start_page < 1:
         return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': 'start_page must be 1 or greater.'}
@@ -97,7 +131,11 @@ async def run(
         # (current_page + page_count) would let a skipped gap quietly eat
         # into the count instead - the caller asked for 5 pages of content,
         # not "whatever's within these 5 page-numbers."
+        budget_hit = False
         while (end_page is None or page <= end_page) and (page_count is None or len(pages_sent) < page_count):
+            if remaining_budget is not None and len(pages_sent) >= remaining_budget:
+                budget_hit = True
+                break
             # _find_readable_page, not a bare _synthesize_and_send_page
             # call - see that helper's own docstring for the confirmed-live
             # incident (an isolated ingestion gap, not the real end of the
@@ -110,6 +148,8 @@ async def run(
                 finished_book = True
                 break
             pages_sent.append(actual_page)
+            if not is_owner:
+                db.increment_daily_usage(conn, phone_number, 'pages')
             # Persisted the moment this page is actually sent, not batched
             # until the whole burst finishes - see this module's own
             # docstring on why (a mid-burst failure must not discard pages
@@ -124,6 +164,8 @@ async def run(
                 db.deactivate_reading_job(conn, reading_job_id)
                 await _agent.send_message_to(chat_id, f"We've finished reading {job['source_filename']} together - every page has been read out. 📖")
                 return {'reading_job_id': reading_job_id, 'status': 'completed', 'result_summary': 'Book finished, reading job deactivated.'}
+            if budget_hit:
+                return {'reading_job_id': reading_job_id, 'status': 'daily_limit_reached', 'result_summary': "That's your pages for today - more tomorrow!"}
             return {'reading_job_id': reading_job_id, 'status': 'failed', 'result_summary': 'No pages were sent - check the requested range.'}
 
         last_page_sent = pages_sent[-1]
@@ -134,6 +176,18 @@ async def run(
             return {
                 'reading_job_id': reading_job_id, 'status': 'completed', 'pages_sent': pages_sent,
                 'result_summary': f"Sent pages {pages_sent[0]}-{last_page_sent} of {job['source_filename']}, then the book finished.",
+            }
+
+        if budget_hit:
+            # Book isn't over and there's real budget left tomorrow - keep
+            # the ongoing nightly schedule going, same as the normal
+            # not-finished path below, just with a different message telling
+            # the customer why the burst stopped short of what they asked for.
+            next_reading_at = await read_next_page._register_next_reading(reading_job_id)
+            return {
+                'reading_job_id': reading_job_id, 'status': 'daily_limit_reached', 'pages_sent': pages_sent,
+                'next_reading_at': next_reading_at,
+                'result_summary': f"Sent pages {pages_sent[0]}-{last_page_sent} of {job['source_filename']} - that's your pages for today, more tomorrow!",
             }
 
         # Book isn't over - keep the ongoing nightly habit going from the

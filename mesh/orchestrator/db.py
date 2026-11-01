@@ -37,6 +37,7 @@ from mesh.lib.identity import resolve_identity_key  # noqa: F401
 MONGO_URL = os.environ.get('ADIYAN_MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB_NAME = os.environ.get('ADIYAN_MONGO_DB_DATA', 'adiyan')
 COLLECTION_NAME = 'orchestrator_clients'
+BROADCASTS_COLLECTION_NAME = 'orchestrator_broadcasts'
 
 _client: Optional[MongoClient] = None
 
@@ -50,6 +51,19 @@ def connect(_state_db_path: Any = None) -> Collection:
     if _client is None:
         _client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
     return _client[MONGO_DB_NAME][COLLECTION_NAME]
+
+
+def get_broadcasts_collection() -> Collection:
+    """The `orchestrator_broadcasts` collection - one document per one-time
+    proactive send (e.g. broadcast_help_menu.py's own marker), keyed by a
+    fixed, versioned _id so a duplicate cron registration or an accidental
+    re-fire of the same skill is a safe no-op rather than a second blast to
+    every customer. Same singleton client as connect() above, just a
+    different collection in the same database."""
+    global _client
+    if _client is None:
+        _client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
+    return _client[MONGO_DB_NAME][BROADCASTS_COLLECTION_NAME]
 
 
 def is_whitelisted(conn: Collection, chat_id: str) -> bool:

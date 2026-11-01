@@ -44,6 +44,32 @@ def _agent_limits() -> dict:
         return {}
 
 
+# Non-agent services exposed through the same single tunnel/port. Adding a
+# service is one entry here: 'exact' matches one path, 'prefix' a whole
+# subtree; 'https_self_signed' turns off upstream cert verification for the
+# mesh's own self-signed backends (whatsapp_mcp's receiver is one).
+SERVICE_ROUTES: List[Dict[str, Any]] = [
+    {'match': 'exact', 'path': '/webhook/whatsapp', 'upstream': 'https://127.0.0.1:8425', 'https_self_signed': True},
+    {'match': 'prefix', 'path': '/verticals/', 'upstream': 'https://127.0.0.1:8425', 'https_self_signed': True},
+]
+
+
+def _render_service_route(route: Dict[str, Any]) -> str:
+    operator = '= ' if route['match'] == 'exact' else ''
+    ssl_line = '        proxy_ssl_verify off;\n' if route.get('https_self_signed') else ''
+    return (
+        f"    location {operator}{route['path']} {{\n"
+        f"        proxy_pass {route['upstream']};\n"
+        + ssl_line +
+        '        proxy_set_header Host $host;\n'
+        '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
+        '        client_max_body_size 50m;\n'
+        '        proxy_read_timeout 300s;\n'
+        '        proxy_send_timeout 300s;\n'
+        '    }\n'
+    )
+
+
 def render_config(agents: List[Dict[str, Any]], gateway_port: int = DEFAULT_GATEWAY_PORT) -> str:
     """One `location /agents/<agent_id>/` block per registry entry,
     stripping the /agents/<agent_id> prefix before proxying (so the target
@@ -74,7 +100,8 @@ def render_config(agents: List[Dict[str, Any]], gateway_port: int = DEFAULT_GATE
             + ''.join(f'        {line}\n' for line in limits.get(agent_id, []))
             + '    }\n'
         )
-    return header + '\n'.join(blocks) + '\n}\n'
+    service_blocks = [_render_service_route(r) for r in SERVICE_ROUTES]
+    return header + '\n'.join(service_blocks + blocks) + '\n}\n'
 
 
 def write_if_changed(content: str, path: Path = GENERATED_CONFIG_PATH) -> bool:

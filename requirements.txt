@@ -69,3 +69,10 @@ indic-transliteration>=2.3.0
 
 # Dev/test only - needed to run Tests/http/, not by the running app itself.
 pytest>=8.0.0
+
+# family_finance plugin: queries Zetaris's HiveServer2 endpoint directly
+pyhive
+thrift
+thrift_sasl
+pure-sasl
+xlrd

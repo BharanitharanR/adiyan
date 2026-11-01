@@ -26,7 +26,9 @@ from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 
 
-async def run(phone_number: str, source_filename: str, voice: Optional[str] = None) -> Dict[str, Any]:
+async def run(
+    phone_number: str, source_filename: str, voice: Optional[str] = None, is_owner: bool = False,
+) -> Dict[str, Any]:
     # voice=None means "no explicit choice" - stored as '' (not a real
     # voice name, matches _NO_VOICE_OVERRIDE in read_next_page.py) rather
     # than resolving default_voice once and freezing it into this job
@@ -73,7 +75,25 @@ async def run(phone_number: str, source_filename: str, voice: Optional[str] = No
             'first_reading_at': next_run_at,
         }
 
+    # is_owner comes from agent_executor.py's own token check, never from a
+    # customer-suppliable param - see that file's own docstring on why. Only
+    # a genuinely NEW book counts against this - resuming an already-active
+    # job (the branch just above) never does, and neither does the nightly
+    # re-read of a book already in progress.
+    if not is_owner:
+        limit = await config_sdk.get_constant(
+            AGENT_ID, 'daily_new_book_limit', 2,
+            description='Max new books a customer can start reading per day (IST). The owner is exempt.',
+        )
+        if db.get_daily_usage(conn, phone_number)['new_books'] >= limit:
+            return {
+                'started': False, 'status': 'daily_limit_reached', 'limit': limit,
+                'result_summary': f"That's {limit} new books today - plenty more tomorrow!",
+            }
+
     job = db.create_reading_job(conn, phone_number, source_filename, stored_voice)
+    if not is_owner:
+        db.increment_daily_usage(conn, phone_number, 'new_books')
 
     token = permissions.mint_token(AGENT_ID, 'adiyan_reader_service')
     cron_trigger_url = await config_sdk.get_constant(

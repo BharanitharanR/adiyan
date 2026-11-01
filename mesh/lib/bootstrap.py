@@ -57,7 +57,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore
 from a2a.types import AgentCard, AgentSkill
 
-from mesh.lib import agent_activity, config_sdk, customer_record_hook, memory_hook, permissions, persona_hook, registry_client
+from mesh.lib import agent_activity, config_sdk, customer_record_hook, memory_hook, permissions, persona_hook, privacy_mode, registry_client
 
 logger = logging.getLogger('bootstrap')
 
@@ -111,9 +111,15 @@ class _PlatformWiredExecutor(AgentExecutor):
         persona_reset_token = persona_hook.CURRENT_PERSONA_CONTEXT.set(persona_value)
         customer_record_value = await customer_record_hook.resolve_customer_record_context(self._agent_id, claims)
         customer_record_reset_token = customer_record_hook.CURRENT_CUSTOMER_RECORD.set(customer_record_value)
+        # Whether this person asked for incognito (local-only LLM) - same
+        # identity and vertical the token carries, read by ask() via
+        # privacy_mode.CURRENT_INCOGNITO. See that module's own docstring.
+        incognito_value = await privacy_mode.is_incognito(identity_key, (claims or {}).get('vertical_id'))
+        incognito_reset_token = privacy_mode.CURRENT_INCOGNITO.set(incognito_value)
         try:
             await self._inner.execute(context, event_queue)
         finally:
+            privacy_mode.CURRENT_INCOGNITO.reset(incognito_reset_token)
             # Always reset, even on failure/cancellation - a ContextVar set
             # here must never leak into whatever task this same worker
             # picks up next. Framework guarantees single execution per

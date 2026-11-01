@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from mesh.adiyan_reader import db
 from mesh.adiyan_reader.constants import AGENT_ID
 from mesh.adiyan_reader.skills import read_next_page
+from mesh.lib import config_sdk
 from mesh.lib.paths import state_db_path
 
 
@@ -35,40 +36,70 @@ def _match_job(jobs: List[Dict[str, Any]], book_reference: str) -> Optional[Dict
     return None
 
 
-async def _restart_one(conn, job: Dict[str, Any]) -> Dict[str, Any]:
+async def _restart_one(conn, job: Dict[str, Any], phone_number: str, is_owner: bool, remaining_budget: Optional[int]) -> Dict[str, Any]:
     """Reset + immediate-read for exactly one job - pulled out of run() so
     all_books=True can call it once per active job without duplicating the
-    reset/best-effort-read logic."""
+    reset/best-effort-read logic. The RESET always happens, unconditionally
+    - it's a state change, not a synthesis, so it never competes with the
+    daily page budget. Only the immediate page-1 read is gated: with no
+    budget left, this still resets the bookmark and reports "you'll get it
+    fresh tonight" (the same fallback wording already used when the
+    immediate read fails for any other reason), rather than refusing the
+    whole restart outright."""
     title = _title(job)
     db.reset_reading_job_page(conn, job['id'])
+    if not is_owner and remaining_budget is not None and remaining_budget <= 0:
+        return {'title': title, 'page_sent': None, 'budget_hit': True}
+
     try:
         first_page = await read_next_page.run(job['id'])
     except Exception:
         first_page = {}
     if first_page.get('status') == 'completed' and 'page_sent' in first_page:
-        return {'title': title, 'page_sent': first_page['page_sent']}
-    return {'title': title, 'page_sent': None}
+        if not is_owner:
+            db.increment_daily_usage(conn, phone_number, 'pages')
+        return {'title': title, 'page_sent': first_page['page_sent'], 'budget_hit': False}
+    return {'title': title, 'page_sent': None, 'budget_hit': False}
 
 
 async def run(
-    phone_number: str, book_reference: Optional[str] = None, all_books: bool = False,
+    phone_number: str, book_reference: Optional[str] = None, all_books: bool = False, is_owner: bool = False,
 ) -> Dict[str, Any]:
     conn = db.connect(state_db_path(AGENT_ID))
     jobs = db.get_active_reading_jobs_by_phone(conn, phone_number)
     if not jobs:
         return {'status': 'no_active_job', 'result_summary': "No active reading job for this number - nothing to restart."}
 
+    # is_owner comes from agent_executor.py's own token check, never from a
+    # customer-suppliable param. Read fresh once, before any resets, so
+    # every book in an all_books=True restart competes for the SAME budget
+    # snapshot rather than each _restart_one() call re-reading (and
+    # decrementing against) a moving target.
+    remaining_budget: Optional[int] = None
+    if not is_owner:
+        limit = await config_sdk.get_constant(
+            AGENT_ID, 'daily_on_demand_page_limit', 10,
+            description='Max on-demand pages (read now / next N / read all / restart / reread) a customer can pull per day (IST). Nightly reading is uncapped. The owner is exempt.',
+        )
+        remaining_budget = limit - db.get_daily_usage(conn, phone_number)['pages']
+
     # The answer to this skill's own "more than one active book - which
     # one?" prompt when the caller says "all"/"both" - see
     # handle_message.py's own pending-clarification mechanism for how a
     # bare "for all" turns into this flag.
     if all_books:
-        results = [await _restart_one(conn, job) for job in jobs]
+        results = []
+        for job in jobs:
+            r = await _restart_one(conn, job, phone_number, is_owner, remaining_budget)
+            if remaining_budget is not None:
+                remaining_budget -= 1 if r['page_sent'] is not None else 0
+            results.append(r)
         titles = [r['title'] for r in results]
-        return {
-            'status': 'restarted_all', 'titles': titles,
-            'result_summary': f"Starting all {len(titles)} of your books over from page 1.",
-        }
+        any_capped = any(r['budget_hit'] for r in results)
+        summary = f"Starting all {len(titles)} of your books over from page 1."
+        if any_capped:
+            summary = f"Reset all {len(titles)} of your books to page 1 - out of pages for today, so some will start fresh tonight instead of right now."
+        return {'status': 'restarted_all', 'titles': titles, 'result_summary': summary}
 
     if book_reference:
         job = _match_job(jobs, book_reference)
@@ -100,7 +131,7 @@ async def run(
     # reaching it) - if the immediate read fails for any reason, the
     # bookmark reset itself already succeeded, so the nightly schedule
     # still correctly picks up from page 1.
-    result = await _restart_one(conn, job)
+    result = await _restart_one(conn, job, phone_number, is_owner, remaining_budget)
     if result['page_sent'] is not None:
         return {
             'status': 'restarted', 'title': result['title'], 'page_sent': result['page_sent'],
