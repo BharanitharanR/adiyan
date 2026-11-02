@@ -263,7 +263,10 @@ async def _ask_claude_cli(agent_id: str, stage: str, prompt: str, schema, tools=
     except Exception as e:
         llm_log.log_call(agent_id, stage, mode, f'claude-cli:{model}', prompt, None, error=str(e))
         raise
-    llm_log.log_call(agent_id, stage, mode, f"claude-cli:{model} (${data.get('total_cost_usd', 0):.4f})", prompt, result)
+    llm_log.log_call(
+        agent_id, stage, mode, f"claude-cli:{model} (${data.get('total_cost_usd', 0):.4f})", prompt, result,
+        usage=data.get('usage'),
+    )
     return result
 
 

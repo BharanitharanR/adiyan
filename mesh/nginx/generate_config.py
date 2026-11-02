@@ -57,6 +57,18 @@ SERVICE_ROUTES: List[Dict[str, Any]] = [
     # actual redirect URI registered in Google Cloud Console, not
     # 127.0.0.1:8447 directly.
     {'match': 'exact', 'path': '/oauth2callback', 'upstream': 'http://127.0.0.1:8447'},
+    # Orchestrator's own short-link redirector (mesh/orchestrator/
+    # short_links.py) - a stand-in for a long URL (e.g. workspace-mcp's
+    # full-scope Google auth URL, ~2,750 characters, confirmed live too
+    # long for WhatsApp to render as a reliable tappable link) that this
+    # process generated and holds itself. Orchestrator already listens
+    # on 8426 for its own A2A traffic - this is the same process, not a
+    # new component.
+    {'match': 'prefix', 'path': '/g/', 'upstream': 'http://127.0.0.1:8426'},
+    # Orchestrator's generic document-upload page (mesh/orchestrator/
+    # upload_links.py) - same process/port as the short-link redirector
+    # above, just a different route prefix.
+    {'match': 'prefix', 'path': '/u/', 'upstream': 'http://127.0.0.1:8426'},
 ]
 
 

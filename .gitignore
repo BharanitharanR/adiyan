@@ -28,6 +28,7 @@ logs/
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Qdrant binary - not committed, rebuilt by mesh/qdrant/fetch_binary.sh
 mesh/qdrant/qdrant-bin

@@ -23,7 +23,7 @@ from mesh.lib.card import adiyan_card
 from mesh.lib.config import load_mcp_config
 from mesh.lib.paths import tasks_db_path
 from mesh.observability.tracing import setup_tracing
-from mesh.orchestrator import router
+from mesh.orchestrator import router, short_links, upload_links
 from mesh.orchestrator.agent_executor import OrchestratorAgentExecutor
 from mesh.orchestrator.constants import AGENT_ID, HOST, PORT
 from mesh.orchestrator.skills_catalog import get_skills
@@ -89,4 +89,10 @@ if __name__ == '__main__':
         # this agent's own internal classify decisions - see
         # bootstrap.py's own module docstring.
         skills_refresher=get_skills,
+        # /g/<token> - short links for URLs too long for WhatsApp to
+        # render reliably (see short_links.py's own docstring). /u/<token> -
+        # the generic document-upload page (see upload_links.py's own
+        # docstring). Plain HTTP, same as the A2A routes themselves - no
+        # JSON-RPC envelope.
+        extra_routes=short_links.ROUTES + upload_links.ROUTES,
     )

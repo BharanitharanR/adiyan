@@ -144,17 +144,20 @@ TARGET_NAMES=("$@")
 # do_start()/do_stop() below for how that's handled without needing a fake
 # port just to fit this shape.
 COMPONENTS=(
-    "phoenix|6006|phoenix serve"
+    # Disabled for the hackathon-demo trim (2026-11-01) - not on the
+    # Orchestrator/WA/Workspace-MCP/Finance/Wayfinder path. Re-enable by
+    # uncommenting if AdiyanReader/voicebox/p2p work resumes.
+    # "phoenix|6006|phoenix serve"
     "mongodb|27017|mongod --config /opt/homebrew/etc/mongod.conf"
     "qdrant|6339|mesh/qdrant/qdrant-bin --config-path mesh/qdrant/config.yaml"
-    "graph_db|7687|neo4j console"
-    "mongo_mcp|3000|mongodb-mcp-server --readOnly --transport http --httpPort 3000 --httpHost 127.0.0.1 --connectionScope global"
+    # "graph_db|7687|neo4j console"
+    # "mongo_mcp|3000|mongodb-mcp-server --readOnly --transport http --httpPort 3000 --httpHost 127.0.0.1 --connectionScope global"
     "agent_registry|8424|mesh.mcp.agent_registry.server"
-    "cron_trigger|8421|mesh.mcp.cron_trigger.server"
-    "scheduler|8420|mesh.scheduler.server"
+    # "cron_trigger|8421|mesh.mcp.cron_trigger.server"
+    # "scheduler|8420|mesh.scheduler.server"
     "memory|8423|mesh.memory.server"
-    "journal|8422|mesh.journal.server"
-    "adiyan_reader|8429|mesh.adiyan_reader.server"
+    # "journal|8422|mesh.journal.server"
+    # "adiyan_reader|8429|mesh.adiyan_reader.server"
     # AdiyanReader's optional Chatterbox Turbo TTS path (mesh/adiyan_reader/
     # tts.py's own VOICEBOX_URL comment) - github.com/jamiepine/voicebox,
     # run natively (its own venv under voicebox/.venv, NOT Docker/Tauri) as
@@ -180,17 +183,17 @@ COMPONENTS=(
     # `uvicorn` itself understands) is what makes `backend` importable as
     # `-m` resolves it, since actually `cd`-ing isn't an option for this
     # array's raw `nohup $cmd` launch shape.
-    "voicebox|17493|env PYTHONPATH=$REPO_ROOT/voicebox $REPO_ROOT/voicebox/.venv/bin/python -m backend.main --data-dir $REPO_ROOT/voicebox/data --host 127.0.0.1 --port 17493"
-    "analysis|8427|mesh.analysis.server"
-    "config_agent|8428|mesh.config_agent.server"
-    "config_server|8500|mesh.config_server.server"
+    # "voicebox|17493|env PYTHONPATH=$REPO_ROOT/voicebox $REPO_ROOT/voicebox/.venv/bin/python -m backend.main --data-dir $REPO_ROOT/voicebox/data --host 127.0.0.1 --port 17493"
+    # "analysis|8427|mesh.analysis.server"
+    # "config_agent|8428|mesh.config_agent.server"
+    # "config_server|8500|mesh.config_server.server"
     # Platform infrastructure, not something any agent author touches or
     # needs to know exists - mesh/lib/agent_sdk.py's ask() is the only
     # caller, for every plain-text LLM call. The actual "run this locally
     # or offload to a peer" decision, including whether this machine is
     # currently busy, lives entirely here - see mesh/inference_router/
     # skills/complete.py.
-    "inference_router|8441|mesh.inference_router.server"
+    # "inference_router|8441|mesh.inference_router.server"
     # Platform infrastructure, not something any agent author touches or
     # needs to know exists - Inference Router (above) is the only caller,
     # when it decides a call should go to a peer instead of running here
@@ -201,7 +204,7 @@ COMPONENTS=(
     # the raw UDP worker port (P2P_UDP_PORT, default 9998) needs to
     # actually bind 0.0.0.0/a Tailscale-reachable interface to be
     # discoverable cross-machine - see mesh/p2p/server.py's own docstring.
-    "p2p|8462|mesh.p2p.server"
+    # "p2p|8462|mesh.p2p.server"
     # Real web browsing (search, read, click, fill forms) for Analysis
     # Agent's ReAct loop (mesh/analysis/skills/analyze.py's browse_web
     # tool), via browser-use driving a fresh, short-lived Chromium per call
@@ -209,14 +212,14 @@ COMPONENTS=(
     # paid API. Deliberately NOT a persistent browser session reused
     # across calls - see mesh/mcp/browser/server.py's own docstring for
     # why that would repeat OpenWA's exact chronic degradation pattern.
-    "browser|8463|mesh.mcp.browser.server"
+    # "browser|8463|mesh.mcp.browser.server"
     # Superseded by p2p (above) as Inference Router's offload backend -
     # left running, unused in that path, rather than torn out, in case
     # anything still depends on its own A2A peer-exchange skills directly.
     # Loopback-only by default (COMPUTE_SHARE_HOST/PORT env vars
     # override for a real cross-machine peer test) - see mesh/compute_share/
     # README.md and the Peer Exchange design for the full picture.
-    "compute_share|8460|mesh.compute_share.server"
+    # "compute_share|8460|mesh.compute_share.server"
     # NODE_EXTRA_CA_CERTS set via `env` here, not penwa/.env - Node reads that
     # var once at its own process bootstrap (before dotenv-style application
     # code runs), so setting it only in .env is silently too late. Trusts
@@ -266,7 +269,7 @@ COMPONENTS=(
     # anywhere for do_stop()'s pkill -f to find. launch_component()'s own
     # n8n branch below still runs the real wrapper script; cmd here exists
     # only so pkill -f matches what the process actually becomes.
-    "n8n|5678|n8n start"
+    # "n8n|5678|n8n start"
     "nginx_gateway_watcher|-|mesh.nginx.watcher"
 )
 # The hardcoded core set ends here. Everything appended past this index is a
@@ -320,7 +323,14 @@ sys.exit(0 if get_secret('GOOGLE_OAUTH_CLIENT_ID') and get_secret('GOOGLE_OAUTH_
     done
     if kill -0 "$_wmcp_check_pid" 2>/dev/null; then
         kill -9 "$_wmcp_check_pid" 2>/dev/null
-        wait "$_wmcp_check_pid" 2>/dev/null
+        # Bare, not part of the if/elif's own condition - under `set -e`
+        # (line 89), `wait` reporting the 137 from the kill -9 just above
+        # as a plain statement's exit status aborts this whole script on
+        # the spot, before a single component starts. Confirmed live:
+        # this path is only reached when the Keychain read actually times
+        # out (a freshly-locked login keychain after a reboot, not the
+        # common case), so it went unnoticed until exactly that moment.
+        wait "$_wmcp_check_pid" 2>/dev/null || true
     elif wait "$_wmcp_check_pid" 2>/dev/null; then
         WORKSPACE_MCP_USABLE=1
     fi

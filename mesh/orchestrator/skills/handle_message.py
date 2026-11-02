@@ -50,7 +50,7 @@ from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.registry_client import list_agents
 from mesh.lib.skill_router import classify, extract
-from mesh.orchestrator import db, router, rules_engine
+from mesh.orchestrator import db, router, rules_engine, short_links, wayfinder_session
 from mesh.orchestrator.constants import AGENT_ID, FINANCE_MCP_REPO_PATH, WHATSAPP_MCP_URL, WORKSPACE_MCP_URL
 from mesh.orchestrator.humanize import humanize
 from mesh.orchestrator.router import route_to_agent
@@ -2168,6 +2168,33 @@ async def run(
             pending_image = {
                 'filename': 'adiyan_logo.png', 'content_b64': _LOGO_B64, 'mimetype': 'image/png',
             }
+    elif vertical_id == 'wayfinder':
+        # Deliberately ahead of every generic feature-detection elif below
+        # (book reading, privacy mode, etc.) - once a message is summoned
+        # into the wayfinder vertical, it must always go through
+        # Wayfinder's own intake/clarification loop, never get
+        # accidentally reclassified as an unrelated feature request just
+        # because the customer happened to use a matching phrase.
+        #
+        # should_remember stays False here (not set at all - defaults to
+        # False) - wayfinder_session.py is deliberately its own history
+        # store (see its own module docstring on why mem0/chat_cache/
+        # customer_record don't fit this), so this conversation isn't
+        # ALSO written into those generic stores.
+        if document is not None or image is not None:
+            # The secure upload page (upload_links.py) is the one
+            # ingestion path - it has the password prompt a bare WhatsApp
+            # attachment has no way to ask for, and its per-file status
+            # reply (needs_password/wrong_password/ok) a plain chat
+            # attachment can't give either. A document/image attached
+            # directly here is redirected there rather than silently
+            # ingested through a second, inconsistent path.
+            reply = (
+                "Please use the upload link I sent you to share documents, rather than attaching them here - "
+                "that page can handle a password if one of your files needs it."
+            )
+        else:
+            reply = await wayfinder_session.handle_customer_message(from_number or chat_id, text)
     elif not kb_pending and (privacy_switch := privacy_mode.parse_command(text)) is not None:
         # A fixed-phrase command ("go incognito" / "use regular"), never LLM-
         # classified - see privacy_mode.parse_command's own docstring. Not
@@ -2208,12 +2235,48 @@ async def run(
                 WORKSPACE_MCP_URL, 'list_calendars', {'user_google_email': ''}, token=connect_token,
             ))
         except Exception as e:
-            logger.error(f'Google connect attempt failed: {describe_exception(e)}')
-            reply = (
-                "Couldn't reach the Google connection service - make sure workspace_mcp is running "
-                "(see mesh/tools/run_workspace_mcp.sh) and that GOOGLE_OAUTH_CLIENT_ID/SECRET are set, "
-                "then try again."
-            )
+            error_text = describe_exception(e)
+            logger.error(f'Google connect attempt failed: {error_text}')
+            # workspace-mcp returns isError=True for "no credentials yet, here's
+            # the auth URL" the same as for a genuine failure (confirmed live -
+            # mesh/lib/mcp_client.py's call_tool raises RuntimeError on any
+            # isError response), so mcp_client's own exception text is the only
+            # place the real, actionable Authorization URL survives to. Pull it
+            # back out rather than discarding it behind a generic apology - the
+            # one case this whole elif branch exists for. Must search
+            # describe_exception(e)'s OWN output, not str(e) - confirmed live
+            # the real RuntimeError arrives wrapped in an ExceptionGroup (from
+            # the MCP client's own asyncio TaskGroup), whose bare str() is just
+            # "unhandled errors in a TaskGroup (1 sub-exception)"; only
+            # describe_exception() unwraps it to the actual message.
+            # [^\s\\]+ , not \S+ - confirmed live the source text's line
+            # breaks arrive as a literal two-character "\n" (backslash then
+            # the letter n), not a real newline, so \S+ swallows straight
+            # through it and grabs "...gmail.com\n2." as part of the "URL."
+            # Stopping at a literal backslash too keeps the match to the
+            # actual URL.
+            url_match = re.search(r'Authorization URL:\s*([^\s\\]+)', error_text)
+            if url_match:
+                # The real URL runs to ~2,750 characters (every workspace-mcp
+                # scope requested at once) - confirmed live that's too long
+                # for WhatsApp to render as a reliable tappable link. Hand
+                # back a short link through Orchestrator's own redirector
+                # (short_links.py) instead of the raw URL.
+                try:
+                    short_url = short_links.create_short_link(url_match.group(1))
+                except Exception as e2:
+                    logger.error(f'Failed to create short link for Google connect: {describe_exception(e2)}')
+                    short_url = url_match.group(1)
+                reply = (
+                    f'Open this link to connect your Google account:\n{short_url}\n\n'
+                    'After you approve it, say "connect my Google account" again.'
+                )
+            else:
+                reply = (
+                    "Couldn't reach the Google connection service - make sure workspace_mcp is running "
+                    "(see mesh/tools/run_workspace_mcp.sh) and that GOOGLE_OAUTH_CLIENT_ID/SECRET are set, "
+                    "then try again."
+                )
     elif not kb_pending and model_confidentiality.is_model_question(text):
         # An explicit "what model/LLM/company powers you" question gets a fixed
         # answer with no model involved - see mesh/lib/model_confidentiality.py.

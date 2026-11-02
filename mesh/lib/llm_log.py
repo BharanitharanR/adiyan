@@ -68,6 +68,7 @@ def log_call(
     prompt: str,
     response: Any,
     error: Optional[str] = None,
+    usage: Optional[dict] = None,
 ) -> None:
     """Appends one call's record. `mode` names which ask() branch this was
     (text/schema/tools/image) - the four paths log differently-shaped
@@ -77,6 +78,16 @@ def log_call(
     failed call is exactly as worth seeing here as a successful one, since
     "what did we actually send it" is often the first thing worth checking
     when a skill's output looks wrong.
+
+    `usage`: the real token counts a backend actually returned for this
+    call (Claude CLI's own JSON reply already carries input_tokens/
+    output_tokens/cache_creation_input_tokens/total_cost_usd - confirmed
+    live, this was being silently discarded by every caller except
+    claude_cli_web_research, which only captured the cost figure, not
+    tokens). Written as its own line so a later pass can grep/sum real
+    per-call cost across a whole flow instead of estimating from text
+    length. None for a backend that doesn't report usage (e.g. Ollama via
+    this module's own callers today).
 
     Best-effort: any failure writing this log is swallowed (logged as a
     warning to this module's own stdlib logger, never raised) - a broken
@@ -94,6 +105,10 @@ def log_call(
             lines += ['--- ERROR ---', error]
         else:
             lines += ['--- RESPONSE ---', _stringify(response)]
+        if usage:
+            input_tokens = usage.get('input_tokens', 0) + usage.get('cache_creation_input_tokens', 0) + usage.get('cache_read_input_tokens', 0)
+            output_tokens = usage.get('output_tokens', 0)
+            lines += ['--- USAGE ---', f'input_tokens={input_tokens} output_tokens={output_tokens} total_tokens={input_tokens + output_tokens}']
         lines.append('')
         with open(LLM_LOG_PATH, 'a') as f:
             f.write('\n'.join(lines) + '\n')

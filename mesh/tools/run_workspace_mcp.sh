@@ -50,6 +50,13 @@ export GOOGLE_OAUTH_CLIENT_ID="$CLIENT_ID"
 export GOOGLE_OAUTH_CLIENT_SECRET="$CLIENT_SECRET"
 export GOOGLE_OAUTH_REDIRECT_URI="${PUBLIC_URL}/oauth2callback"
 export WORKSPACE_MCP_PORT="$WORKSPACE_MCP_PORT"
+# --single-user mode still needs to know WHOSE credentials to look up/start
+# OAuth for - without this, auth/service_decorator.py's
+# _get_configured_user_google_email() returns None and every tool call
+# (including the very first one that's supposed to hand back the Google
+# consent URL) hard-fails with "'user_google_email' parameter is required
+# but was not found" instead of ever reaching the OAuth-start path.
+export USER_GOOGLE_EMAIL="bharani3ran@gmail.com"
 
 
 # Explicit venv path, not a bare `workspace-mcp` - confirmed live this
