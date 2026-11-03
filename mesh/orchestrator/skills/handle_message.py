@@ -50,7 +50,7 @@ from mesh.lib.mcp_client import call_tool
 from mesh.lib.paths import state_db_path
 from mesh.lib.registry_client import list_agents
 from mesh.lib.skill_router import classify, extract
-from mesh.orchestrator import db, router, rules_engine, short_links, wayfinder_session
+from mesh.orchestrator import db, router, rules_engine, short_links, trip_recap, wayfinder_session
 from mesh.orchestrator.constants import AGENT_ID, FINANCE_MCP_REPO_PATH, WHATSAPP_MCP_URL, WORKSPACE_MCP_URL
 from mesh.orchestrator.humanize import humanize
 from mesh.orchestrator.router import route_to_agent
@@ -2181,14 +2181,30 @@ async def run(
         # store (see its own module docstring on why mem0/chat_cache/
         # customer_record don't fit this), so this conversation isn't
         # ALSO written into those generic stores.
-        if document is not None or image is not None:
+        if image is not None:
+            # Ingested directly, unlike a document attachment just below -
+            # a trip photo is never password-protected and never needs
+            # the secure upload page's per-file status reply, so there's
+            # no reason to make the customer leave the chat for it. Same
+            # function wayfinder_web.py's /api/upload route calls for the
+            # web UI's own photo path (trip_recap.handle_photo_upload),
+            # so a photo behaves identically whether it arrives from
+            # WhatsApp or the browser. WhatsApp never gives an image its
+            # own filename (see mesh/mcp/whatsapp/server.py's own
+            # docstring on this), so one is synthesized from the mimetype.
+            import mimetypes as _mimetypes
+            filename = image.get('filename') or ('trip_photo' + (_mimetypes.guess_extension(image['mimetype']) or '.jpg'))
+            content = base64.b64decode(image['data'])
+            photo = await trip_recap.handle_photo_upload(from_number or chat_id, filename, content)
+            reply = 'Got it - ' + photo['caption']
+        elif document is not None:
             # The secure upload page (upload_links.py) is the one
-            # ingestion path - it has the password prompt a bare WhatsApp
-            # attachment has no way to ask for, and its per-file status
-            # reply (needs_password/wrong_password/ok) a plain chat
-            # attachment can't give either. A document/image attached
-            # directly here is redirected there rather than silently
-            # ingested through a second, inconsistent path.
+            # ingestion path for documents - it has the password prompt a
+            # bare WhatsApp attachment has no way to ask for, and its
+            # per-file status reply (needs_password/wrong_password/ok) a
+            # plain chat attachment can't give either. A document
+            # attached directly here is redirected there rather than
+            # silently ingested through a second, inconsistent path.
             reply = (
                 "Please use the upload link I sent you to share documents, rather than attaching them here - "
                 "that page can handle a password if one of your files needs it."

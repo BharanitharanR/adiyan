@@ -43,7 +43,7 @@ actual trip-matching step the original spec explicitly left as future
 work; research() below is a minimal, single-choice entry point for that,
 not a multi-turn ReAct loop.
 """
-from datetime import date, timedelta
+from datetime import date
 from typing import List, Optional
 
 from langchain_core.tools import tool
@@ -207,7 +207,7 @@ _RECOMMEND_PROMPT = """You are Wayfinder, planning an actual trip for a customer
 
 {profile_summary}
 
-Today's date is {today}. Decide what to look up next to put together a real recommendation - typically flights first, then a hotel at the destination, though use your judgment about order and whether a web_search for destination-specific advice is also worth doing. For flights, prefer search_flights_letsfg over search_flights: only a search_flights_letsfg offer can actually be booked later through this chat if the customer says yes, so use search_flights (Kiwi, link-out only) only if search_flights_letsfg genuinely fails or returns nothing useful. You have already made these tool calls this session:
+Today's date is {today}. Use the creative discovery and evaluation evidence already gathered. If the destination is flexible, choose the strongest evidence-backed destination direction that fits the family's interests; if fixed, do not change it. Then look up actual transport and accommodation options. Decide what to look up next to put together a real recommendation - typically flights first, then a hotel at the destination. For flights, prefer search_flights_letsfg over search_flights: only a search_flights_letsfg offer can actually be booked later through this chat if the customer says yes, so use search_flights (Kiwi, link-out only) only if search_flights_letsfg genuinely fails or returns nothing useful. You have already made these tool calls this session:
 
 {calls_so_far}
 
@@ -221,9 +221,77 @@ Here is everything your research tool calls actually found:
 
 {calls_so_far}
 
-Write a short, concrete recommendation grounded ONLY in the real data above - cite the actual prices and booking links that came back, never invent a number, hotel, or flight that wasn't in the tool results above. If a tool call failed or found nothing, say so plainly rather than making something up to fill the gap. If predicted period windows or a kids' school calendar were given in the profile above, prefer picking/confirming travel dates that avoid both, within whatever the stated travel_window/leave dates actually allow - if every date in the leave window conflicts with one of them, say so plainly rather than silently picking a date that conflicts. Keep it to a few short paragraphs, suitable to send over WhatsApp.
+Write a short, concrete, creative recommendation grounded ONLY in the research above - explain why the discovered experiences fit the family's interests and cite actual prices and booking links that came back. Preserve inline source IDs such as [S1] beside every material factual claim, and retain the matching Sources list and URLs from the research results; do not strip or renumber citations. Never say a price, opening hour, availability or travel time is verified unless a cited source directly supports that exact claim. Search snippets and general articles are not live availability or price checks. If a research result has no URL citations, label its factual claims unverified. Never invent a number, hotel, attraction fact, or flight that wasn't in the tool results above. Do not call a trip affordable merely because its cost is below average monthly surplus; only a deterministic safe trip budget can establish affordability. If attraction costs or opening hours were not verified, say so and label them as items to confirm. If a tool call failed or found nothing, say so plainly rather than making something up to fill the gap. If a kids' school calendar was voluntarily provided, respect it. Do not request or infer menstrual/cycle information. Keep it to a few short paragraphs, suitable to send over WhatsApp.
 
 If (and only if) a search_flights_letsfg call above returned a real offer_id for the flight you are actually recommending, also fill in bookable_offer with that exact search_id/offer_id/price/currency, PLUS the exact adults/children you passed into that same search_flights_letsfg call (a booking must match the same party size or it's rejected) - and end recommendation_text by asking the customer to reply yes to book it. Leave bookable_offer null if you're recommending a Kiwi (search_flights) result instead, or if you're not confident enough in a specific offer to recommend booking it yet - never invent a search_id/offer_id/adults/children that didn't come from a real tool result above."""
+
+
+class ExperienceSearchTask(BaseModel):
+    destination: str = Field(description='A destination or specific local area to investigate. Must respect a fixed destination if the customer named one.')
+    rationale: str = Field(description='Why this destination or experience fits the family interests.')
+    search_task: str = Field(description='A concrete live-web research query for family-friendly experiences, unusual attractions, practical logistics and indicative costs. Do not ask the search engine to invent prices.')
+
+
+class CreativeDiscoveryPlan(BaseModel):
+    tasks: List[ExperienceSearchTask] = Field(description='Up to three distinct research directions. If the destination is fixed, investigate different experience themes there. If destination_flexible is true, explore genuinely different destinations that fit the family.')
+
+
+class ExperienceEvaluation(BaseModel):
+    interest_fit: int = Field(ge=1, le=5, description='How well the evidence matches the family interests, 1 to 5.')
+    novelty: int = Field(ge=1, le=5, description='How distinctive and non-generic the discovered experiences are, 1 to 5.')
+    practicality: int = Field(ge=1, le=5, description='How well distance, dates, family suitability and logistics are supported, 1 to 5.')
+    evidence_gaps: List[str] = Field(default_factory=list, description='Important facts not verified by research, especially costs, opening days, distance or availability.')
+    next_search_task: str = Field(default='', description='One additional targeted research query if a material evidence gap can be resolved. Empty when no useful additional search is needed.')
+    evaluation_summary: str = Field(description='Brief critique of what is promising and what remains uncertain. Do not claim affordability without a deterministic budget.')
+
+
+async def discover_experiences(profile) -> tuple[str, str]:
+    """Muse Spark proposes a small set of interest-led research directions;
+    Meta web search then grounds them in real-world evidence. The model
+    proposes what to investigate, but search results remain the evidence."""
+    destination = profile.destination_hint or '(no fixed destination)'
+    flexibility = bool(getattr(profile, 'destination_flexible', False))
+    prompt = f"""You are Wayfinder's creative experience-discovery planner.
+
+Family profile:
+{_format_profile(profile)}
+
+Destination: {destination}
+Destination flexibility explicitly stated by customer: {flexibility}
+
+Create at most three genuinely useful research directions.
+- If a destination is named and destination_flexible is false, keep research within that destination and nearby areas; do not replace it.
+- If destination_flexible is true, suggest distinct destinations that make sense from the stated origin, dates, family interests and financial signal. Do not assume a numeric trip budget from average monthly surplus.
+- Discover experiences, not just famous tourist destinations: science/aviation/technology, nature, culture, local food, hands-on activities and lesser-known attractions where relevant to stated interests.
+- Explain why each direction fits this particular family's stated interests.
+- Search queries must ask for source-backed attractions, family suitability, travel time/distance, opening days and published prices where available. Never fabricate any of those facts.
+- Prefer variety across the three directions rather than three versions of the same generic destination.
+"""
+    plan = await meta_model_client.ask_schema(AGENT_ID, 'creative_discovery_plan', prompt, CreativeDiscoveryPlan)
+    findings = []
+    for task in plan.tasks[:3]:
+        result = await meta_model_client.web_search(AGENT_ID, 'experience_discovery', task.search_task)
+        findings.append(
+            f"DISCOVERY: {task.destination}\nWHY IT MAY FIT: {task.rationale}\n"
+            f"RESEARCH QUERY: {task.search_task}\nGROUNDED FINDINGS:\n{result}"
+        )
+    return '\n\n'.join(findings) if findings else '(No experience discovery results.)', destination
+
+
+async def evaluate_experience_research(profile, research: str) -> ExperienceEvaluation:
+    """A separate critique pass identifies evidence gaps and may request one
+    targeted follow-up search. It cannot approve affordability."""
+    prompt = f"""Evaluate this Wayfinder experience research against the family's interests and trip context.
+
+PROFILE:
+{_format_profile(profile)}
+
+RESEARCH EVIDENCE:
+{research}
+
+Score interest fit, novelty and practicality from 1 to 5. List material evidence gaps. If one additional search can resolve a meaningful gap, provide exactly one targeted search query; otherwise leave it empty.
+Do not infer prices, availability, opening hours or affordability. The deterministic budget engine, not you, owns affordability. The current statement profile may contain average monthly surplus only; that is NOT a safe total trip budget. Unless a separately calculated safe_trip_budget is explicitly supplied, present researched costs as estimates and say affordability is not yet verified."""
+    return await meta_model_client.ask_schema(AGENT_ID, 'evaluate_experience_research', prompt, ExperienceEvaluation)
 
 
 class BookableOffer(BaseModel):
@@ -241,46 +309,37 @@ class TripRecommendation(BaseModel):
     bookable_offer: Optional[BookableOffer] = Field(default=None, description='Set only when recommending a specific search_flights_letsfg offer the customer could book by replying yes. Null otherwise - never invented.')
 
 
-def predict_period_windows(last_period_start: str, cycle_length_days: int, period_length_days: int = 5, horizon_days: int = 90) -> List[str]:
-    """Pure local calendar-based prediction - no AI model, no external
-    service, nothing about this leaves the machine. Standard calendar-
-    method cycle prediction is just arithmetic (next period = last start
-    + cycle length); there's no reason sensitive health data like this
-    should ever touch a third-party API to compute something this
-    simple - see this session's own research into existing APIs/MCP
-    servers for this, all of which would mean sending it off-device.
-
-    Returns each predicted window as 'YYYY-MM-DD to YYYY-MM-DD', every
-    `cycle_length_days` from `last_period_start` out to `horizon_days` -
-    enough windows for a date-picking step to check a travel_window
-    against, without needing today's date passed in separately."""
-    start = date.fromisoformat(last_period_start)
-    windows = []
-    cursor = start
-    while (cursor - start).days <= horizon_days:
-        windows.append(f'{cursor.isoformat()} to {(cursor + timedelta(days=period_length_days - 1)).isoformat()}')
-        cursor += timedelta(days=cycle_length_days)
-    return windows
-
-
 def _format_profile(profile) -> str:
     lines = [
         f"- Family: {profile.family_size or '?'} people - {profile.family_notes or '(no notes)'}",
         f"- Preferences: {profile.preferences_summary or '(none stated)'}",
         f"- Budget: {profile.budget_signal or '(not grounded)'}",
         f"- From: {profile.origin_city or '(unknown)'}",
-        f"- To: {profile.destination_hint or '(unknown)'}",
-        f"- When: {profile.travel_window or '(unknown)'}",
+        f"- To: {profile.destination_hint or ('open to discovery' if getattr(profile, 'destination_flexible', False) else '(not selected)')}",
+        f"- Candidate destinations: {', '.join(getattr(profile, 'destination_options', []) or []) or '(none)' }",
+        f"- When: {profile.travel_window or '(unknown)' }",
+        f"- Destination flexibility: {'yes' if getattr(profile, 'destination_flexible', False) else 'no'}",
     ]
-    if getattr(profile, 'last_period_start', '') and getattr(profile, 'average_cycle_length_days', None):
-        windows = predict_period_windows(profile.last_period_start, profile.average_cycle_length_days)
-        lines.append(f"- Predicted period windows to avoid when picking dates: {', '.join(windows)}")
     if getattr(profile, 'has_kids', False) and getattr(profile, 'kids_school_calendar', ''):
         lines.append(f"- Kids' school calendar (avoid clashing with term dates): {profile.kids_school_calendar}")
     return '\n'.join(lines)
 
 
-async def recommend_trip(profile) -> TripRecommendation:
+async def _emit_progress(progress_callback, stage: str, status: str, message: str) -> None:
+    """Send customer-safe milestones without exposing prompts or internal reasoning."""
+    if progress_callback is None:
+        return
+    try:
+        result = progress_callback({'type': 'stage_update', 'stage': stage,
+                                    'status': status, 'message': message})
+        if hasattr(result, '__await__'):
+            await result
+    except Exception:
+        # A disconnected UI must never break trip planning.
+        return
+
+
+async def recommend_trip(profile, progress_callback=None) -> TripRecommendation:
     """The actual "prescribe a trip" step, called once a CustomerSnapshot
     has nothing left in missing_info - a small, bounded ReAct loop (not
     Analysis Agent's full multi-turn one): up to 3 rounds of "choose one
@@ -298,6 +357,22 @@ async def recommend_trip(profile) -> TripRecommendation:
     profile_summary = _format_profile(profile)
     calls_so_far: list[str] = []
 
+    # Start with divergent, interest-led experience discovery rather than
+    # assuming the customer already knows which destination to search.
+    await _emit_progress(progress_callback, 'DISCOVERY', 'IN_PROGRESS',
+                         'Exploring destinations and experiences that match your family.')
+    discovery, _ = await discover_experiences(profile)
+    calls_so_far.append(f'[creative experience discovery]\\n{discovery}')
+    evaluation = await evaluate_experience_research(profile, discovery)
+    calls_so_far.append(f'[experience evaluation]\\n{evaluation.model_dump_json(indent=2)}')
+    if evaluation.next_search_task:
+        follow_up = await meta_model_client.web_search(AGENT_ID, 'experience_research_replan', evaluation.next_search_task)
+        calls_so_far.append(f'[targeted follow-up research: {evaluation.next_search_task}]\\n{follow_up}')
+    await _emit_progress(progress_callback, 'DISCOVERY', 'COMPLETED',
+                         'Experience research is complete; comparing the strongest directions.')
+    await _emit_progress(progress_callback, 'AFFORDABILITY', 'NEEDS_ATTENTION',
+                         'Reviewing your financial context. A safe total trip limit is not yet verified.')
+
     for _ in range(3):
         prompt = _RECOMMEND_PROMPT.format(
             profile_summary=profile_summary, today=date.today().isoformat(),
@@ -313,14 +388,34 @@ async def recommend_trip(profile) -> TripRecommendation:
         if tool_fn is None:
             calls_so_far.append(f'[{name}] unknown tool chosen - skipped.')
             continue
+        stage = ('TRANSPORT' if 'flight' in name.lower()
+                 else 'ACCOMMODATION' if 'hotel' in name.lower()
+                 else 'DISCOVERY')
+        stage_label = ('Searching for suitable flight options.' if stage == 'TRANSPORT'
+                       else 'Comparing family-friendly accommodation.' if stage == 'ACCOMMODATION'
+                       else 'Checking additional destination details.')
+        await _emit_progress(progress_callback, stage, 'IN_PROGRESS', stage_label)
         try:
             result = await tool_fn.ainvoke(args)
+            failed = isinstance(result, str) and (' failed:' in result.lower() or result.lower().startswith('failed:'))
         except Exception as e:
             result = f'failed: {describe_exception(e)}'
+            failed = True
+        message = ('The search could not be completed; the final answer will explain the limitation.'
+                   if failed else
+                   'Flight research is complete.' if stage == 'TRANSPORT' else
+                   'Accommodation research is complete.' if stage == 'ACCOMMODATION' else
+                   'Additional destination research is complete.')
+        await _emit_progress(progress_callback, stage, 'FAILED' if failed else 'COMPLETED', message)
         calls_so_far.append(f'[{name}({args})]\n{result}')
 
+    await _emit_progress(progress_callback, 'FINALIZING', 'IN_PROGRESS',
+                         'Bringing the research together into your trip recommendations.')
     final_prompt = _FINAL_RECOMMENDATION_PROMPT.format(
         profile_summary=profile_summary,
         calls_so_far='\n\n'.join(calls_so_far) if calls_so_far else '(no research calls were made)',
     )
-    return await meta_model_client.ask_schema(AGENT_ID, 'final_recommendation', final_prompt, TripRecommendation)
+    recommendation = await meta_model_client.ask_schema(AGENT_ID, 'final_recommendation', final_prompt, TripRecommendation)
+    await _emit_progress(progress_callback, 'FINALIZING', 'COMPLETED',
+                         'Your trip recommendations are ready.')
+    return recommendation
